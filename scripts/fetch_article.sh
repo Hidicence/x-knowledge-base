@@ -5,7 +5,7 @@
 set -e
 
 # 設定
-JINA_API="https://r.jina.ai/http"
+JINA_API="https://r.jina.ai/https"
 BOOKMARKS_FILE="${BOOKMARKS_FILE:-/tmp/new_bookmarks.txt}"
 OUTPUT_DIR="${OUTPUT_DIR:-/home/ubuntu/clawd/memory/bookmarks}"
 

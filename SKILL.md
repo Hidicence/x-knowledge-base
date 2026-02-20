@@ -1,6 +1,6 @@
 ---
 name: x-knowledge-base
-version: 1.0.0
+version: 1.0.2
 description: 自動收集 X 書籤並轉化為 Obsidian 知識庫，配備 AI 濃縮與交叉連結功能，支援自我進化趨勢分析
 ---
 
@@ -151,3 +151,11 @@ https://r.jina.ai/http://x.com/用戶名/status/ID
 - Jina AI（免費）
 - MiniMax API
 - Brave Search API（可選）
+
+## 環境變數（必填/選填）
+
+- `BIRD_AUTH_TOKEN`（必填）
+- `BIRD_CT0`（必填）
+- `MINIMAX_API_KEY`（選填，不填則略過 AI 濃縮）
+- `MINIMAX_ENDPOINT`（選填，預設 `https://api.minimax.io/anthropic/v1/messages`）
+- `MINIMAX_MODEL`（選填，預設 `MiniMax-M2.5`）

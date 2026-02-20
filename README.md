@@ -18,12 +18,22 @@ openclaw skill install x-knowledge-base
    - 免費使用
    - URL: https://r.jina.ai/http://...
 
-2. **MiniMax API**（AI 濃縮）
+2. **MiniMax API**（AI 濃縮，可選）
    - 需要 API key
    - endpoint: https://api.minimax.io/anthropic/v1/messages
 
 3. **Brave Search API**（趨勢分析，可選）
    - 需要 API key
+
+4. **環境變數（安全）**
+
+```bash
+export BIRD_AUTH_TOKEN="..."
+export BIRD_CT0="..."
+export MINIMAX_API_KEY="..."        # 可不填；不填即跳過 AI 濃縮
+export MINIMAX_ENDPOINT="https://api.minimax.io/anthropic/v1/messages"
+export MINIMAX_MODEL="MiniMax-M2.5"
+```
 
 ## 使用
 
