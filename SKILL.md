@@ -166,7 +166,7 @@ python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 - `rclone`（若要同步到 Google Drive）
 - `RCLONE_REMOTE`（可選；預設 `pan-drive:OpenClaw-Bookmarks`）
 
-不要把 `.env` 或其他 secrets 放進 skill 目錄；改由工作區環境變數、外部環境管理，或工作區 `.secrets/x-knowledge-base.env`。
+不要把 `.env` 或其他 secrets 放進 skill 目錄；改由環境變數、外部環境管理，或透過 `XKB_ENV_FILE` / `SECRETS_FILE` 指向你自己的私有 env 檔。
 
 ## 重要檔案
 

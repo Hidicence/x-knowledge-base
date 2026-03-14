@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+import os
 import re
 import shutil
 from pathlib import Path
 
-WORKSPACE_DIR = Path('/root/.openclaw/workspace')
-BOOKMARKS_DIR = Path(__import__('os').getenv('BOOKMARKS_DIR', str(WORKSPACE_DIR / 'memory/bookmarks')))
-EXPORT_DIR = WORKSPACE_DIR / 'memory/notebooklm_exports'
+WORKSPACE_DIR = Path(os.getenv('WORKSPACE_DIR', os.getenv('OPENCLAW_WORKSPACE', str(Path.home() / '.openclaw/workspace'))))
+BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE_DIR / 'memory/bookmarks')))
+EXPORT_DIR = Path(os.getenv('EXPORT_DIR', str(WORKSPACE_DIR / 'memory/notebooklm_exports')))
 CARDS_DIR = EXPORT_DIR / 'cards'
 TOPICS_DIR = EXPORT_DIR / 'topics'
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-WORKSPACE = Path('/root/.openclaw/workspace')
-BOOKMARKS_DIR = WORKSPACE / 'memory/bookmarks'
-QUEUE_PATH = WORKSPACE / 'memory/x-knowledge-base/tiege-queue.json'
+WORKSPACE = Path(os.getenv('WORKSPACE_DIR', os.getenv('OPENCLAW_WORKSPACE', str(Path.home() / '.openclaw/workspace'))))
+BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE / 'memory/bookmarks')))
+QUEUE_PATH = Path(os.getenv('QUEUE_PATH', str(WORKSPACE / 'memory/x-knowledge-base/tiege-queue.json')))
 
 
 def rel(p: Path) -> str:

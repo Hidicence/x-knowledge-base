@@ -11,10 +11,10 @@ MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
 PREPARE_ONLY="${PREPARE_ONLY:-0}"
 export BOOKMARKS_DIR
 
-# Twitter 認證（從環境變數讀取；若工作區有 secrets 檔則一併載入）
-SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
-if [[ -f "$SECRETS_FILE" ]]; then
-    source "$SECRETS_FILE"
+# Twitter 認證（從環境變數讀取；若有自訂 env 檔則一併載入）
+ENV_FILE="${XKB_ENV_FILE:-${SECRETS_FILE:-}}"
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
+    source "$ENV_FILE"
 fi
 BIRD_AUTH_TOKEN="${BIRD_AUTH_TOKEN:-}"
 BIRD_CT0="${BIRD_CT0:-}"

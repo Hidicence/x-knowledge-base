@@ -9,11 +9,11 @@ BOOKMARKS_DIR="${BOOKMARKS_DIR:-$WORKSPACE_DIR/memory/bookmarks}"
 BOOKMARKS_TMP_FILE="${BOOKMARKS_TMP_FILE:-/tmp/new_bookmarks.txt}"
 PROCESSED_FILE="$BOOKMARKS_DIR/urls.txt"
 
-# 從環境變數讀取；若工作區有 secrets 檔則一併載入
+# 從環境變數讀取；若有自訂 env 檔則一併載入
 SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
-SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
-if [[ -f "$SECRETS_FILE" ]]; then
-  source "$SECRETS_FILE"
+ENV_FILE="${XKB_ENV_FILE:-${SECRETS_FILE:-}}"
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
+  source "$ENV_FILE"
 fi
 BIRD_AUTH_TOKEN="${BIRD_AUTH_TOKEN:-}"
 BIRD_CT0="${BIRD_CT0:-}"
