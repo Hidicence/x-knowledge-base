@@ -1,134 +1,86 @@
-# x-knowledge-base
+# 🚀 X Knowledge Base
+> **Make Knowledge Reappear | A Proactive Personal Knowledge Recall System for AI Agents**
 
-Turn X/Twitter bookmarks into a reusable knowledge base for OpenClaw.
+[![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
+*(Click the image above to watch our 3-minute concept presentation)*
 
-`x-knowledge-base` is not just a bookmark saver.
-It is designed to help you:
+## 📖 The Story: Why This Exists
 
-- collect valuable X bookmarks and related context
-- turn them into reusable knowledge cards
-- search and recall them later in real conversations
-- prepare the library for future NotebookLM / cloud workflows
+**"We spend our entire lives accumulating knowledge, but we never truly own it."**
 
-## What this skill does
+Modern knowledge work creates a constant sense of information overload. We save thousands of bookmarks, threads, and insights because they feel valuable in the moment, only to draw a blank when we actually need them. Browsers and note-taking apps have essentially become a graveyard of links. 
 
-### 1. Capture bookmarks
-- fetch new X/Twitter bookmarks
-- deduplicate by tweet id
-- enrich with thread / author additions / external links / GitHub context
+This project started from a personal itch: *Why should we manually search for knowledge? Our knowledge should know when we need it.* **X Knowledge Base** is not just another bookmark saver. It is an infrastructure designed to help AI agents (like OpenClaw) proactively surface your previously saved knowledge right when you are brainstorming or making decisions in a real conversation.
 
-### 2. Turn bookmarks into knowledge cards
-- generate structured summaries
-- auto-categorize into topics
-- add cross-links between related cards
-- keep a searchable local knowledge base in Markdown
+## ✨ Core Breakthrough: Shattering the Context Window
 
-### 3. Support conversation recall
-- search existing bookmark knowledge
-- rank relevant cards for the current topic
-- provide chat-ready recall output
-- help an agent proactively bring back useful saved knowledge
+We are in the era of AI Agents, but all agents face the same bottleneck: **limited context windows and expensive memory costs.** Stuffing your entire personal knowledge base into every LLM prompt is highly inefficient. X Knowledge Base acts as a bridge between your "Personal Library" and the "AI Agent". It allows agents to break free from context limitations by utilizing **Proactive Contextual Recall**. 
 
-### 4. Prepare for future library workflows
-- export for NotebookLM
-- sync to Google Drive
-- support future semantic / vector recall upgrades
+Instead of waiting for you to search, the skill quietly fetches relevant insights, summaries, and original links, handing them to you exactly when the conversation calls for them.
 
-## Why this exists
+## 🛠️ What This Skill Does
 
-Modern knowledge work creates a constant sense of information overload.
-You save things because they feel valuable, but later you often forget what you saved or why it mattered.
+### 1. Robust Capture & Ingestion
+- Automatically fetch new X/Twitter bookmarks.
+- Deduplicate by tweet ID.
+- Enrich content with thread context, author additions, external links, and GitHub context via multi-layer fallbacks.
 
-This skill is built around a simple idea:
+### 2. Turn Bookmarks into Knowledge Cards
+- Generate LLM-powered structured summaries.
+- Auto-categorize into topics and add cross-links between related cards.
+- Maintain a highly searchable, privacy-first local knowledge base in Markdown.
 
-> bookmarks should become reusable knowledge, not just a graveyard of links.
+### 3. Proactive Conversation Recall (Current Focus)
+- Search existing bookmark knowledge based on semantic intent.
+- Rank relevant cards for the current topic.
+- Provide chat-ready recall output to help an agent *proactively* bring back useful saved knowledge without interrupting your workflow.
 
-## Current focus: conversation recall
+### 4. Prepare for Future Cloud Workflows
+- Export seamlessly for Google NotebookLM.
+- Auto-sync to Google Drive.
 
-The current vNext direction focuses on **conversation recall**:
-
-- when a conversation needs examples, workflows, decisions, or context
-- the skill can help surface previously saved bookmark knowledge
-- the goal is to make saved knowledge reappear at the right moment
-
-See:
-- `references/conversation-recall.md`
-
-## Main entry points
+## 💻 Usage & Main Entry Points
 
 ### Full ingest + summarize flow
-
 ```bash
 bash scripts/fetch_and_summarize.sh
-```
-
-### Search existing bookmarks
-
-```bash
+Search existing bookmarks
+Bash
 bash scripts/search_bookmarks.sh "openclaw seo"
-```
-
-### Conversation recall
-
-```bash
+Conversation recall (Agent Integration)
+Bash
 python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory"
 python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
-```
-
-### Export NotebookLM
-
-```bash
+Export to NotebookLM
+Bash
 python3 scripts/export_notebooklm.py
-```
-
-### Sync to Drive
-
-```bash
+Sync to Google Drive
+Bash
 bash scripts/sync_to_drive.sh
-```
-
-## Repository structure
-
-```text
+📂 Repository Structure
+Plaintext
 x-knowledge-base/
-├── SKILL.md
-├── assets/
-├── config/
-├── evals/
-├── references/
-├── scripts/
-└── tools/
-```
+├── SKILL.md                 # Core behavioral prompt for AI Agents
+├── assets/                  # Media and UI assets
+├── config/                  # System configurations
+├── evals/                   # Evaluation metrics for recall accuracy
+├── references/              # Documentation (e.g., conversation-recall.md)
+├── scripts/                 # Core executable flows
+└── tools/                   # Helper utilities
+🗺️ Roadmap
+v1 (MVP): Working bookmark ingestion, local knowledge cards, keyword search index, and v1 conversation recall rules. (Completed)
 
-## Roadmap
+v2 (Quality & Context): Better summary quality, robust source URL coverage, stronger ranking, and enhanced recall usefulness in real chats.
 
-### v1
-- working bookmark ingestion
-- local knowledge cards
-- search index
-- conversation recall rules v1
-- public reference docs and examples
+v3 (Semantic Upgrade): Implementing semantic / vector recall (e.g., integrating LanceDB + Google Embedding models) for deeper query understanding and wording-agnostic relevance matching.
 
-### v2
-- better summary quality
-- better source URL coverage
-- stronger ranking and filtering
-- better recall usefulness in real chat
+v4 (The Cloud Library): Polished NotebookLM integration, advanced library sync, and laying the groundwork for an opt-in collective knowledge network.
 
-### v3
-- semantic / vector recall
-- better query understanding
-- stronger relevance matching across different wording
+🤝 Notes & Contributing
+This repository is the public skill repo. If you want to understand the architectural design rather than just copying scripts, we highly recommend starting with:
 
-### v4
-- NotebookLM / cloud library workflow
-- more polished library sync and source management
+SKILL.md
 
-## Notes
+references/conversation-recall.md
 
-This repository is the public skill repo.
-The working OpenClaw workspace version may evolve faster before being synced here.
-
-If you want to understand the design rather than only copy scripts, start with:
-- `SKILL.md`
-- `references/conversation-recall.md`
+Your knowledge deserves to be remembered. Join us in building the next generation of Personal Knowledge Management (PKM) systems! PRs and issues are welcome.
