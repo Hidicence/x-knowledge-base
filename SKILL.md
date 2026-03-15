@@ -89,8 +89,8 @@ DRY_RUN=1 bash scripts/sync_to_drive.sh
 ### 什麼時候用
 
 優先用在這些情境：
-- Pan 在問做法、workflow、案例、靈感、決策方向
-- Pan 在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
+- 在問做法、workflow、案例、靈感、決策方向
+- 在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
 - 當前主題明顯落在常見收藏領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM
 - 你判斷書籤庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
 
@@ -111,7 +111,7 @@ DRY_RUN=1 bash scripts/sync_to_drive.sh
 - 有像樣摘要
 - 有原文連結
 - relevance 高
-- 能幫 Pan 推進當前任務或決策
+- 能幫用戶推進當前任務或決策
 
 ### 什麼時候不要用
 
