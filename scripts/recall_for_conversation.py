@@ -337,16 +337,28 @@ def main() -> int:
     vector_path = Path(args.vector_file)
     use_semantic = (not args.no_semantic) and (args.semantic or vector_path.exists())
 
+    search_mode = "keyword"
     if use_semantic:
         results = semantic_recall(query, args.limit, vector_path, Path(args.index_file))
-        if not results:
+        if results:
+            search_mode = "semantic"
+        else:
             # fallback to keyword if semantic returned nothing
             results = recall(query, args.limit, args.min_score, Path(args.index_file))
+            search_mode = "keyword_fallback"
     else:
         results = recall(query, args.limit, args.min_score, Path(args.index_file))
 
+    _mode_labels = {
+        "semantic": "🔍 語意向量搜尋",
+        "keyword": "🔤 關鍵字搜尋",
+        "keyword_fallback": "🔤 關鍵字搜尋（語意降級）",
+    }
+    if not args.json:
+        print(f"[搜尋模式：{_mode_labels.get(search_mode, search_mode)}]")
+
     if args.json:
-        print(json.dumps({"query": query, "results": results}, ensure_ascii=False, indent=2))
+        print(json.dumps({"query": query, "results": results, "search_mode": search_mode}, ensure_ascii=False, indent=2))
     elif args.format == "prompt":
         print_prompt(results, query)
     elif args.format == "chat":

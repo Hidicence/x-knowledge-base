@@ -168,11 +168,23 @@ def get_provider() -> EmbeddingProvider:
         return OllamaProvider(base_url=base_url, model=model or "nomic-embed-text")
 
     elif provider_name == "":
-        raise EnvironmentError(
-            "EMBEDDING_PROVIDER is not set.\n"
-            "Set it to one of: gemini, openai, ollama\n"
-            "See .env.example for details."
-        )
+        # Auto-detect from available API keys
+        if os.getenv("GEMINI_API_KEY"):
+            return GeminiProvider(
+                api_key=os.getenv("GEMINI_API_KEY"),
+                model=model or "gemini-embedding-2-preview"
+            )
+        elif os.getenv("OPENAI_API_KEY"):
+            return OpenAIProvider(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                model=model or "text-embedding-3-small"
+            )
+        else:
+            raise EnvironmentError(
+                "No embedding provider configured. "
+                "Set EMBEDDING_PROVIDER=gemini|openai|ollama, "
+                "or provide GEMINI_API_KEY / OPENAI_API_KEY."
+            )
     else:
         raise EnvironmentError(
             f"Unknown EMBEDDING_PROVIDER: '{provider_name}'. "
