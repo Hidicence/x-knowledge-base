@@ -71,6 +71,13 @@ def parse_record(f: Path):
             source_url = (_mu.group(1) if _mu.groups() else _mu.group(0)).strip().strip('"')
             break
 
+    # fallback: derive source_url from tweet_id frontmatter
+    if not source_url:
+        _tid = re.search(r'^tweet_id:\s*"?([0-9]+)"?\s*$', text, re.MULTILINE)
+        if _tid:
+            source_url = "https://x.com/i/status/" + _tid.group(1).strip()
+
+
     searchable = "\n".join([
         title,
         category,
