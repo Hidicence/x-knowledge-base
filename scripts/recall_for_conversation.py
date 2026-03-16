@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import os
 import sys
@@ -14,6 +15,7 @@ from typing import List, Dict, Any
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
+VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
 
 STOPWORDS = {
     "的", "了", "是", "我", "你", "他", "她", "它", "在", "有", "和", "與", "就", "也", "都", "很",
@@ -118,6 +120,91 @@ def score_item(item: Dict[str, Any], query_tokens: List[str], query_text: str) -
     return score
 
 
+
+def _cosine_similarity(a: list, b: list) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    denom = norm_a * norm_b
+    return dot / denom if denom > 1e-9 else 0.0
+
+
+def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
+                    index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
+    """Semantic recall using vector similarity. Falls back to keyword if index missing."""
+    if not vector_file.exists():
+        print(f"⚠️  Vector index not found: {vector_file}", file=sys.stderr)
+        print("   Falling back to keyword search. Run: python3 scripts/build_vector_index.py", file=sys.stderr)
+        return []
+
+    # Load vector index
+    import json as _json
+    vdata = _json.loads(vector_file.read_text(encoding="utf-8"))
+    vectors = vdata.get("vectors", {})
+    if not vectors:
+        return []
+
+    # Embed the query
+    try:
+        import sys as _sys, os as _os
+        _skill_dir = Path(__file__).resolve().parent.parent
+        if str(_skill_dir) not in _sys.path:
+            _sys.path.insert(0, str(_skill_dir))
+        from tools.embedding_providers import get_provider
+        provider = get_provider()
+        query_vec = provider.embed(query)
+    except EnvironmentError as e:
+        print(f"⚠️  {e}", file=sys.stderr)
+        print("   Falling back to keyword search.", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"⚠️  Embedding failed: {e}", file=sys.stderr)
+        return []
+
+    # Compute cosine similarity for all cards
+    scored = []
+    for rel_path, vec in vectors.items():
+        sim = _cosine_similarity(query_vec, vec)
+        scored.append((rel_path, sim))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = scored[:limit * 2]  # fetch extra to allow filtering
+
+    # Load search index for metadata
+    data = load_index(index_file)
+    items = data.get("items", [])
+    index_by_path = {
+        (item.get("relative_path") or item.get("path") or ""): item
+        for item in items
+    }
+
+    results = []
+    for rel_path, sim in top:
+        if sim < 0.3:
+            break
+        item = index_by_path.get(rel_path)
+        if not item:
+            continue
+
+        source_url = item.get("source_url") or ""
+        if not source_url:
+            md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+            source_url = extract_source_url(md_path)
+
+        results.append({
+            "title": item.get("title") or "(untitled)",
+            "summary": clean_summary(item.get("summary") or ""),
+            "category": item.get("category") or "general",
+            "tags": item.get("tags") or [],
+            "relative_path": rel_path,
+            "source_url": source_url,
+            "score": round(sim, 4),
+            "relevance_reason": f"語意相似度 {sim:.0%}",
+        })
+        if len(results) >= limit:
+            break
+
+    return results
+
 def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
     data = load_index(index_file)
     items = data.get("items", [])
@@ -216,6 +303,9 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--format", choices=["markdown", "prompt", "chat"], default="markdown")
     parser.add_argument("--index-file", default=str(INDEX_FILE))
+    parser.add_argument("--semantic", action="store_true",
+                        help="Use semantic vector search (requires vector_index.json)")
+    parser.add_argument("--vector-file", default=str(VECTOR_FILE))
     args = parser.parse_args()
 
     query = args.query or ""
@@ -225,7 +315,13 @@ def main() -> int:
         print("請提供 query", file=sys.stderr)
         return 1
 
-    results = recall(query, args.limit, args.min_score, Path(args.index_file))
+    if args.semantic:
+        results = semantic_recall(query, args.limit, Path(args.vector_file), Path(args.index_file))
+        if not results:
+            # fallback to keyword if semantic returned nothing
+            results = recall(query, args.limit, args.min_score, Path(args.index_file))
+    else:
+        results = recall(query, args.limit, args.min_score, Path(args.index_file))
 
     if args.json:
         print(json.dumps({"query": query, "results": results}, ensure_ascii=False, indent=2))
