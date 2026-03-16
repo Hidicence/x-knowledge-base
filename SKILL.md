@@ -94,14 +94,14 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 >
 > **v1 技術說明**：目前使用 **關鍵字 token 比對**（非語意向量搜尋）。查詢詞與書籤的 title / tags / summary 做字串命中計分。優點是零依賴、速度快；缺點是同義詞、中英混用時召回率較低。向量搜尋規劃於 v3 實作。
 
-Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved bookmarks first, then decide whether to surface them to Pan.
-把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給 Pan。
+Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved bookmarks first, then decide whether to surface them to the user.
+把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給使用者。
 
 ### When to Use / 什麼時候用
 
 Prioritize these situations / 優先用在這些情境：
-- Pan is asking about approaches, workflows, case studies, inspiration, or decision direction / Pan 在問做法、workflow、案例、靈感、決策方向
-- Pan is organizing ideas, context, comparing options, or needs external examples to aid decision-making / Pan 在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
+- The user is asking about approaches, workflows, case studies, inspiration, or decision direction / 使用者在問做法、workflow、案例、靈感、決策方向
+- The user is organizing ideas, context, comparing options, or needs external examples to aid decision-making / 使用者在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
 - The current topic clearly falls within frequently bookmarked domains: OpenClaw / agent / workflow, SEO / GEO / AEO, AI video / prompts / content, automation / tools / GitHub, startup / SaaS / GTM / 當前主題明顯落在常見收藏領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM
 - You judge the bookmark library likely has reusable content, and proactively surfacing it would improve the conversation quality / 你判斷書籤庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
 
@@ -115,21 +115,21 @@ In practice, at least one of the following must match / 實際判斷時，至少
 - The question is looking for approaches, case studies, workflows, or decision direction / 問法像在找做法、案例、workflow、決策方向
 - The question is organizing context, perspectives, or next steps / 問法像在整理脈絡、觀點、下一步
 - The topic falls within high-frequency bookmark domains / 主題落在高頻收藏領域
-- Your subjective judgment: Pan's bookmark library is more likely to provide valuable references than general knowledge / 你主觀判斷：Pan 的書籤庫比通用知識更可能提供有價值的參考
+- Your subjective judgment: the user's bookmark library is more likely to provide valuable references than general knowledge / 你主觀判斷：使用者的書籤庫比通用知識更可能提供有價值的參考
 
 Results then pass a second-layer filter; worth surfacing only if at least two apply / 召回結果再過第二層過濾；至少符合其中兩項才值得提：
 - Has a clear title / 有清楚標題
 - Has a decent summary / 有像樣摘要
 - Has a source URL / 有原文連結
 - High relevance / relevance 高
-- Can help Pan advance the current task or decision / 能幫 Pan 推進當前任務或決策
+- Can help the user advance the current task or decision / 能幫使用者推進當前任務或決策
 
 ### When NOT to Use / 什麼時候不要用
 
 - Pure casual chat / 純閒聊
 - Simple factual questions (unless closely related to saved knowledge) / 簡單事務題（除非和收藏知識高度相關）
 - Only a very tenuous connection / 只有很勉強的關聯
-- Already proactively surfaced this round and Pan didn't follow up / 同一輪已主動提醒過，Pan 沒追問
+- Already proactively surfaced this round and the user didn't follow up / 同一輪已主動提醒過，使用者沒追問
 - Results have no source URL, too thin a summary, or are clearly low value / 結果沒有原文連結、摘要太空、或明顯低價值
 
 ### How to Use / 使用方式
@@ -152,7 +152,7 @@ python3 scripts/recall_for_conversation.py "query" --no-semantic
 ### Response Principles / 回覆原則
 
 - Default: proactively surface at most once per conversation turn / 每輪對話預設最多主動提 1 次
-- Default: bring up at most 1–2 items; expand to 3 only if Pan follows up / 預設最多帶 1–2 篇；除非 Pan 追問，再展開到 3 篇
+- Default: bring up at most 1–2 items; expand to 3 only if the user follows up / 預設最多帶 1–2 篇；除非使用者追問，再展開到 3 篇
 - Only surface results that genuinely help / 只提真的能幫上忙的結果
 - Prioritize actionable case studies, content close to the current project, content with workflow/SOP, and content with source URLs / 優先提可落地案例、接近當前專案、帶 workflow / SOP、且有原文連結的內容
 - Keep responses short: one-sentence summary + why it's relevant + source URL / 回覆格式維持短：一句話摘要 + 為什麼相關 + 原文連結
@@ -253,7 +253,7 @@ Ensure at least the following variables or tools are available / 至少確認下
 - `xreach` (recommended / 建議)
 - `gh` (recommended / 建議)
 - `rclone` (required for Google Drive sync / 若要同步到 Google Drive)
-- `RCLONE_REMOTE` (optional; default `pan-drive:OpenClaw-Bookmarks` / 可選；預設 `pan-drive:OpenClaw-Bookmarks`)
+- `RCLONE_REMOTE` (optional; e.g. `my-drive:XKnowledgeBase-Bookmarks` / 可選；例如 `my-drive:XKnowledgeBase-Bookmarks`)
 
 Do not place `.env` or other secrets inside the skill directory. Use workspace environment variables, external environment management, or workspace `.secrets/x-knowledge-base.env` instead.
 不要把 `.env` 或其他 secrets 放進 skill 目錄；改由工作區環境變數、外部環境管理，或工作區 `.secrets/x-knowledge-base.env`。
