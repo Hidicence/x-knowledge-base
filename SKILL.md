@@ -134,12 +134,19 @@ Results then pass a second-layer filter; worth surfacing only if at least two ap
 
 ### How to Use / 使用方式
 
+Semantic search is **automatic** — if `vector_index.json` exists, it is used by default.
+語意搜尋會**自動啟用**——只要 `vector_index.json` 存在，預設就使用語意召回。
+
 First ensure `search_index.json` exists and is up to date, then run / 先確保 `search_index.json` 存在且是新的，再執行：
 
 ```bash
+# Auto (semantic if index exists, keyword fallback) / 自動模式（有索引用語意，無索引降級 keyword）
 python3 scripts/recall_for_conversation.py "主動召回 書籤知識 對話回用"
 python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --limit 5 --json
 python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
+
+# Force keyword only / 強制 keyword（忽略向量索引）
+python3 scripts/recall_for_conversation.py "query" --no-semantic
 ```
 
 ### Response Principles / 回覆原則

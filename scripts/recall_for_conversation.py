@@ -304,7 +304,9 @@ def main() -> int:
     parser.add_argument("--format", choices=["markdown", "prompt", "chat"], default="markdown")
     parser.add_argument("--index-file", default=str(INDEX_FILE))
     parser.add_argument("--semantic", action="store_true",
-                        help="Use semantic vector search (requires vector_index.json)")
+                        help="Force semantic search (default: auto-detect)")
+    parser.add_argument("--no-semantic", action="store_true",
+                        help="Force keyword search even if vector index exists")
     parser.add_argument("--vector-file", default=str(VECTOR_FILE))
     args = parser.parse_args()
 
@@ -315,8 +317,12 @@ def main() -> int:
         print("請提供 query", file=sys.stderr)
         return 1
 
-    if args.semantic:
-        results = semantic_recall(query, args.limit, Path(args.vector_file), Path(args.index_file))
+    # Auto-detect: use semantic if vector index exists, unless --no-semantic is set
+    vector_path = Path(args.vector_file)
+    use_semantic = (not args.no_semantic) and (args.semantic or vector_path.exists())
+
+    if use_semantic:
+        results = semantic_recall(query, args.limit, vector_path, Path(args.index_file))
         if not results:
             # fallback to keyword if semantic returned nothing
             results = recall(query, args.limit, args.min_score, Path(args.index_file))
