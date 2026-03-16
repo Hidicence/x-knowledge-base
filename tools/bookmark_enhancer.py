@@ -190,7 +190,7 @@ def get_all_bookmarks():
         title = title_match.group(1) if title_match else f.stem
         tags = re.findall(r"#(\w+)", content)
         # Check frontmatter source_url first, then legacy **原始連結** body format
-        fm_url = re.search(r"^source_url:\s*"?([^"\n]+)"?\s*$", content, re.MULTILINE)
+        fm_url = re.search(r'^source_url:\s*"?([^"\n]+)"?\s*$', content, re.MULTILINE)
         if fm_url:
             url = fm_url.group(1).strip().strip('"')
         else:
@@ -230,7 +230,7 @@ def get_inbox_bookmarks():
         title = title_match.group(1) if title_match else f.stem
         tags = re.findall(r"#(\w+)", content)
         # Check frontmatter source_url first, then legacy **原始連結** body format
-        fm_url = re.search(r"^source_url:\s*"?([^"\n]+)"?\s*$", content, re.MULTILINE)
+        fm_url = re.search(r'^source_url:\s*"?([^"\n]+)"?\s*$', content, re.MULTILINE)
         if fm_url:
             url = fm_url.group(1).strip().strip('"')
         else:
