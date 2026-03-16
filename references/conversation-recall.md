@@ -171,12 +171,14 @@ python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --format chat
 ```
 
-### 目前版本特性
+### 目前版本特性（v1）
 
 - 依賴既有 `search_index.json`
-- 使用 title / tags / category / summary 做 relevance scoring
+- **召回方式：關鍵字 token 比對**（非語意向量搜尋）
+  - query 分詞後對 title (+8) / tags (+6) / category (+4) / summary (+3) 做字串命中計分
+  - 同義詞、縮寫、中英混用時命中率會下降，屬已知限制
 - 可輸出 markdown / json / prompt / chat 格式
-- 尚未接入向量搜尋
+- 向量搜尋（真正的語意召回）規劃於 v3 實作
 
 ---
 
@@ -213,10 +215,36 @@ python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --fo
 - 讓召回從關鍵字匹配升級到語意召回
 - 當對話和書籤用字不同但意思接近時，仍能找回相關內容
 
+#### 實作方案（建議）
+
+**選項 A：sqlite-vec（推薦，零外部服務）**
+```bash
+pip install sqlite-vec
+```
+- 把每張知識卡的 title + summary 送 embedding API（OpenAI / Jina / 本地 model）
+- 向量存進 SQLite，查詢時直接 cosine similarity
+- 無需額外服務，整個 DB 就是一個 `.db` 檔
+- 適合單人 / 低頻使用場景
+
+**選項 B：chromadb（本地向量 DB）**
+```bash
+pip install chromadb
+```
+- 比 sqlite-vec 功能更完整，支援 metadata filtering
+- 可搭配 OpenAI / HuggingFace embedding
+- 適合未來要擴充多用戶或更複雜查詢的場景
+
+#### 遷移路徑
+
+1. 新增 `scripts/build_vector_index.sh` — 批次 embed 所有知識卡
+2. 新增 `scripts/recall_semantic.py` — 語意召回入口（與 recall_for_conversation.py 並存）
+3. `recall_for_conversation.py` 加 `--semantic` flag，觸發向量查詢路徑
+4. 原有 keyword 召回作為 fallback（當向量 index 不存在時自動降級）
+
 內容：
-- embeddings / semantic index
-- query 語意化
-- 更自然的 recall ranking
+- embeddings / semantic index（sqlite-vec 或 chromadb）
+- query 語意化（直接 embed query text）
+- 更自然的 recall ranking（cosine similarity score）
 - 減少只靠 title / tags 命中的侷限
 
 ### v4：接入 NotebookLM / 雲端圖書館

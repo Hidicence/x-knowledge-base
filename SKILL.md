@@ -1,6 +1,11 @@
 ---
 name: x-knowledge-base
-description: 將 X/Twitter 書籤整理成可檢索、可關聯、可匯出到 NotebookLM 的個人知識庫系統。使用於：抓取與整理 X 書籤、補抓 thread 與作者補充、擷取外部文章與 GitHub 內容、生成知識卡、更新搜尋索引、依主題回用既有知識，或規劃/匯出 NotebookLM 圖書館來源。
+description: |
+  Turns X/Twitter bookmarks into a searchable, proactive personal knowledge base for AI agents.
+  Use for: fetching & organizing X bookmarks, enriching threads, generating knowledge cards,
+  building search index, recalling saved knowledge during conversations, exporting to NotebookLM.
+  將 X/Twitter 書簽整理成可檢索、可關聯、可匯出到 NotebookLM 的個人知識庫系統。
+  使用於：抓取與整理 X 書簽、生成知識卡、更新搜尋索引、對話中主動召回既存知識，或匯出 NotebookLM。
 ---
 
 # X Knowledge Base
@@ -83,6 +88,8 @@ DRY_RUN=1 bash scripts/sync_to_drive.sh
 - 失敗時要 fallback，不中斷整批入庫
 
 ## 對話主動召回（v1）
+
+> **v1 技術說明**：目前使用 **關鍵字 token 比對**（非語意向量搜尋）。查詢詞與書籤的 title / tags / summary 做字串命中計分。優點是零依賴、速度快；缺點是同義詞、中英混用時召回率較低。向量搜尋規劃於 v3 實作。
 
 把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給 Pan。
 

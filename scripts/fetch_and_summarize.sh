@@ -124,7 +124,7 @@ PY
             echo "---"
             echo "tweet_id: $tweet_id"
             echo "source: $source_method"
-            echo "original_url: https://x.com/i/status/$tweet_id"
+            echo "source_url: https://x.com/i/status/$tweet_id"
             echo "---"
             echo ""
             echo "# Tweet $tweet_id"

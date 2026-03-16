@@ -133,14 +133,18 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
             continue
 
         rel_path = item.get("relative_path") or item.get("path") or ""
-        md_path = BOOKMARKS_DIR / rel_path if rel_path and not rel_path.startswith("/") else Path(rel_path)
+        # Use pre-indexed source_url first; fall back to file scan only if missing
+        source_url = item.get("source_url") or ""
+        if not source_url:
+            md_path = BOOKMARKS_DIR / rel_path if rel_path and not rel_path.startswith("/") else Path(rel_path)
+            source_url = extract_source_url(md_path)
         results.append({
             "title": item.get("title") or "(untitled)",
             "summary": clean_summary(item.get("summary") or ""),
             "category": item.get("category") or "general",
             "tags": item.get("tags") or [],
             "relative_path": rel_path,
-            "source_url": extract_source_url(md_path),
+            "source_url": source_url,
             "score": score,
             "relevance_reason": build_relevance_reason(item, query_tokens),
         })

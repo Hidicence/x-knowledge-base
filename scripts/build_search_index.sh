@@ -57,6 +57,20 @@ def parse_record(f: Path):
         if m:
             summary = m.group(1).strip()[:200]
 
+    # extract source_url at index time (avoids re-reading file at recall time)
+    source_url = ""
+    for _pat in [
+        r'^source_url:\s*"?([^"\n]+)"?\s*$',
+        r'^original_url:\s*"?([^"\n]+)"?\s*$',
+        r'\*\*原始連結\*\*：\s*(\S+)',
+        r'https://x\.com/\S+',
+        r'https://twitter\.com/\S+',
+    ]:
+        _mu = re.search(_pat, text, re.MULTILINE)
+        if _mu:
+            source_url = (_mu.group(1) if _mu.groups() else _mu.group(0)).strip().strip('"')
+            break
+
     searchable = "\n".join([
         title,
         category,
@@ -73,6 +87,7 @@ def parse_record(f: Path):
         "category": category,
         "tags": tags,
         "summary": summary,
+        "source_url": source_url,
         "searchable": searchable,
         "mtime": int(st.st_mtime),
         "size": int(st.st_size),

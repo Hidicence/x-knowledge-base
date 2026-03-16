@@ -189,8 +189,13 @@ def get_all_bookmarks():
         title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
         title = title_match.group(1) if title_match else f.stem
         tags = re.findall(r"#(\w+)", content)
-        url_match = re.search(r"\*\*原始連結\*\*：(.+)", content)
-        url = url_match.group(1).strip() if url_match else ""
+        # Check frontmatter source_url first, then legacy **原始連結** body format
+        fm_url = re.search(r"^source_url:\s*"?([^"\n]+)"?\s*$", content, re.MULTILINE)
+        if fm_url:
+            url = fm_url.group(1).strip().strip('"')
+        else:
+            url_match = re.search(r"\*\*原始連結\*\*：(.+)", content)
+            url = url_match.group(1).strip() if url_match else ""
 
         bookmarks.append({
             "path": str(f),
@@ -224,8 +229,13 @@ def get_inbox_bookmarks():
         title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
         title = title_match.group(1) if title_match else f.stem
         tags = re.findall(r"#(\w+)", content)
-        url_match = re.search(r"\*\*原始連結\*\*：(.+)", content)
-        url = url_match.group(1).strip() if url_match else ""
+        # Check frontmatter source_url first, then legacy **原始連結** body format
+        fm_url = re.search(r"^source_url:\s*"?([^"\n]+)"?\s*$", content, re.MULTILINE)
+        if fm_url:
+            url = fm_url.group(1).strip().strip('"')
+        else:
+            url_match = re.search(r"\*\*原始連結\*\*：(.+)", content)
+            url = url_match.group(1).strip() if url_match else ""
 
         bookmarks.append({
             "path": str(f),
