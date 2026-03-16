@@ -287,6 +287,67 @@ Metrics / 評估指標：
 - `duplicate_rate` (target <= 0.05 / 重複率，目標 <= 0.05)
 - `noise_rate` (proportion of low-value content, target <= 0.2 / 低價值內容比例，目標 <= 0.2)
 
+
+## YouTube Playlist Integration (v4, Optional) / YouTube 播放清單整合（v4，可選）
+
+Automatically fetches new videos from a designated YouTube playlist, downloads subtitles, and generates knowledge cards in the same format as X bookmarks.
+自動從指定 YouTube 播放清單抓取新影片、下載字幕，生成與 X 書籤相同格式的知識卡。
+
+### Setup / 設定
+
+1. Create a **dedicated public playlist** on YouTube (e.g., "知識庫" / "Knowledge Base")
+   在 YouTube 建立一個**公開的專屬播放清單**（例如命名為「知識庫」）
+
+2. Export YouTube cookies from Chrome using the **"Get cookies.txt LOCALLY"** extension
+   用 Chrome 插件「Get cookies.txt LOCALLY」匯出 YouTube cookies
+
+3. Upload cookies to VPS / 上傳 cookies 至 VPS：
+   ```bash
+   scp cookies.txt server:~/.config/yt-dlp/cookies.txt
+   ```
+
+4. Set `YOUTUBE_PLAYLIST_URL` in your environment / 設定環境變數：
+   ```bash
+   YOUTUBE_PLAYLIST_URL=https://www.youtube.com/playlist?list=PLxxx
+   ```
+
+### How to Use / 使用方式
+
+```bash
+# 預覽有哪些新影片（不實際執行）
+python3 scripts/fetch_youtube_playlist.py --dry-run
+
+# 執行（處理全部新影片）
+python3 scripts/fetch_youtube_playlist.py
+
+# 限制每次最多處理 N 支
+python3 scripts/fetch_youtube_playlist.py --limit 5
+
+# 指定播放清單（覆蓋環境變數）
+python3 scripts/fetch_youtube_playlist.py --playlist "URL"
+
+# 跑完更新語意索引（增量，只處理新卡片）
+python3 scripts/build_vector_index.py --incremental
+```
+
+### How It Works / 運作原理
+
+```
+播放清單 URL
+  → yt-dlp 讀取影片清單（自動跳過已處理的影片）
+  → yt-dlp + cookies 下載字幕（zh-Hans 優先，備選 en）
+  → LLM（MiniMax）生成知識卡（與 X 書籤格式完全一致）
+  → 儲存至 bookmarks/youtube/VIDEO_ID.md
+  → 加入 search_index.json（source 欄位標記為 "youtube"）
+```
+
+### Notes / 注意事項
+
+- YouTube cookies 每隔數週會過期，需重新匯出 / YouTube cookies expire periodically, re-export when needed
+- 影片長度 < 60 秒（Shorts）自動跳過 / Videos shorter than 60s (Shorts) are skipped automatically
+- 需要 `MINIMAX_API_KEY` 才能生成知識卡 / `MINIMAX_API_KEY` required for card generation
+- 卡片儲存在 `bookmarks/youtube/`，與 X 書籤統一被語意召回索引 / Cards stored in `bookmarks/youtube/`, unified with X bookmarks in semantic recall
+
 ## Operating Principles / 工作原則
 
 - Data quality first, then coverage / 先保資料品質，再追求覆蓋率
