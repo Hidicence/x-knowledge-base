@@ -39,6 +39,24 @@ VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
+def _extract_key_points_from_md(md_path: Path) -> str:
+    """Extract the 三個重點 section from a card markdown file."""
+    if not md_path.exists():
+        return ""
+    try:
+        content = md_path.read_text(encoding="utf-8")
+        m = re.search(
+            r'##\s+[\U00000000-\U0010FFFF]*\s*三個重點\s*\n(.+?)(?=\n##|\Z)',
+            content, re.DOTALL
+        )
+        if m:
+            text = re.sub(r'^[\-\*\•]\s*', '', m.group(1).strip(), flags=re.MULTILINE)
+            return text.strip()
+    except Exception:
+        pass
+    return ""
+
+
 def extract_card_text(item: dict) -> str:
     """Build embeddable text from a search index item.
     Uses title + summary (already extracted by build_search_index.sh).
@@ -46,16 +64,17 @@ def extract_card_text(item: dict) -> str:
     """
     title = (item.get("title") or "").strip()
     summary = (item.get("summary") or "").strip()
+    key_points = ""
 
-    if not summary:
-        # Try reading the .md file directly
-        rel_path = item.get("relative_path") or item.get("path") or ""
-        if rel_path:
-            md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+    rel_path = item.get("relative_path") or item.get("path") or ""
+    if rel_path:
+        md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+        if not summary:
             summary = _extract_summary_from_md(md_path)
+        key_points = _extract_key_points_from_md(md_path)
 
-    parts = [p for p in [title, summary] if p]
-    return ". ".join(parts)[:500]  # cap at 500 chars
+    parts = [p for p in [title, summary, key_points] if p]
+    return ". ".join(parts)[:900]  # cap at 900 chars (expanded for key points)
 
 
 def _extract_summary_from_md(md_path: Path) -> str:

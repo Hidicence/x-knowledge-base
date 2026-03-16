@@ -121,6 +121,20 @@ def score_item(item: Dict[str, Any], query_tokens: List[str], query_text: str) -
 
 
 
+def _keyword_score(query: str, item: dict) -> float:
+    """Fraction of query tokens found in title + tags + summary."""
+    import re as _re
+    tokens = set(_re.findall(r'[\w\u4e00-\u9fff]+', query.lower()))
+    if not tokens:
+        return 0.0
+    text = " ".join([
+        (item.get("title") or "").lower(),
+        " ".join(item.get("tags") or []).lower(),
+        (item.get("summary") or "").lower(),
+    ])
+    return sum(1 for t in tokens if t in text) / len(tokens)
+
+
 def _cosine_similarity(a: list, b: list) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
@@ -179,7 +193,7 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
 
     results = []
     for rel_path, sim in top:
-        if sim < 0.3:
+        if sim < 0.25:
             break
         item = index_by_path.get(rel_path)
         if not item:
@@ -190,6 +204,8 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
             md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
             source_url = extract_source_url(md_path)
 
+        kw = _keyword_score(query, item)
+        hybrid = 0.65 * sim + 0.35 * kw
         results.append({
             "title": item.get("title") or "(untitled)",
             "summary": clean_summary(item.get("summary") or ""),
@@ -197,13 +213,13 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
             "tags": item.get("tags") or [],
             "relative_path": rel_path,
             "source_url": source_url,
-            "score": round(sim, 4),
-            "relevance_reason": f"語意相似度 {sim:.0%}",
+            "score": round(hybrid, 4),
+            "relevance_reason": f"語意 {sim:.0%} + 關鍵字 {kw:.0%}",
         })
-        if len(results) >= limit:
-            break
 
-    return results
+    # Re-sort by hybrid score and trim to limit
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:limit]
 
 def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
     data = load_index(index_file)
