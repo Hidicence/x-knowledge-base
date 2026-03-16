@@ -4,48 +4,49 @@ description: |
   Turns X/Twitter bookmarks into a searchable, proactive personal knowledge base for AI agents.
   Use for: fetching & organizing X bookmarks, enriching threads, generating knowledge cards,
   building search index, recalling saved knowledge during conversations, exporting to NotebookLM.
-  將 X/Twitter 書簽整理成可檢索、可關聯、可匯出到 NotebookLM 的個人知識庫系統。
-  使用於：抓取與整理 X 書簽、生成知識卡、更新搜尋索引、對話中主動召回既存知識，或匯出 NotebookLM。
+  將 X/Twitter 書籤整理成可檢索、可關聯、可匯出到 NotebookLM 的個人知識庫系統。
+  使用於：抓取與整理 X 書籤、生成知識卡、更新搜尋索引、對話中主動召回既存知識，或匯出 NotebookLM。
 ---
 
 # X Knowledge Base
 
+Upgrade X bookmarks from "saved" to a "reusable knowledge base".
 把 X 書籤從「收藏」升級成「可回用知識庫」。
 
-## 主入口
+## Main Entry Points / 主入口
 
-完整流程：
+Full pipeline / 完整流程：
 
 ```bash
 bash scripts/fetch_and_summarize.sh
 ```
 
-依「累積書籤偏好」做個人化推薦（從 feed / bookmarks 挑你可能有興趣的內容）：
+Personalized recommendations based on accumulated bookmark preferences (picks content from feed/bookmarks you may be interested in) / 依「累積書籤偏好」做個人化推薦（從 feed / bookmarks 挑你可能有興趣的內容）：
 
 ```bash
 bash scripts/recommend_from_profile.sh
 ```
 
-只抓新書籤：
+Fetch new bookmarks only / 只抓新書籤：
 
 ```bash
 bash scripts/fetch_bookmarks.sh
 ```
 
-建立或增量更新搜尋索引：
+Build or incrementally update the search index / 建立或增量更新搜尋索引：
 
 ```bash
 bash scripts/build_search_index.sh
 bash scripts/build_search_index.sh --incremental
 ```
 
-搜尋既有知識卡／書籤：
+Search existing knowledge cards / bookmarks / 搜尋既有知識卡／書籤：
 
 ```bash
 bash scripts/search_bookmarks.sh "openclaw seo"
 ```
 
-對話主動召回（給當前問題一段 query，找最該主動提的書籤）：
+Proactive conversation recall (given a query about the current topic, finds the most relevant saved bookmarks) / 對話主動召回（給當前問題一段 query，找最該主動提的書籤）：
 
 ```bash
 python3 scripts/recall_for_conversation.py "agent workflow 記憶召回"
@@ -53,84 +54,87 @@ python3 scripts/recall_for_conversation.py "AI SEO 案例" --json
 python3 scripts/recall_for_conversation.py "OpenClaw workflow" --format chat
 ```
 
-匯出 NotebookLM：
+Export to NotebookLM / 匯出 NotebookLM：
 
 ```bash
 python3 scripts/export_notebooklm.py
 python3 scripts/export_notebooklm.py 50
 ```
 
-同步本地書籤 md 到 Google Drive（透過 `rclone`）：
+Sync local bookmark markdown files to Google Drive (via `rclone`) / 同步本地書籤 md 到 Google Drive（透過 `rclone`）：
 
 ```bash
 bash scripts/sync_to_drive.sh
 DRY_RUN=1 bash scripts/sync_to_drive.sh
 ```
 
-## 工作流程
+## Workflow / 工作流程
 
-執行 `fetch_and_summarize.sh` 時，依序做這些事：
+When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `fetch_and_summarize.sh` 時，依序做這些事：
 
-1. 抓近 28 天新書籤並以 tweet id 去重
-2. 取得 tweet 內容（bird / Jina / fallback）
-3. 補抓 thread、作者補充、外部文章、GitHub 內容
-4. 過濾登入頁、404、首頁噪音與低價值內容
-5. 呼叫 `tools/bookmark_enhancer.py` 生成摘要與分類
-6. 更新 `search_index.json`
-7. （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
+1. Fetch new bookmarks from the past 28 days, deduplicated by tweet ID / 抓近 28 天新書籤並以 tweet id 去重
+2. Retrieve tweet content (bird / Jina / fallback) / 取得 tweet 內容（bird / Jina / fallback）
+3. Enrich with thread, author supplements, external articles, GitHub content / 補抓 thread、作者補充、外部文章、GitHub 內容
+4. Filter out login pages, 404s, homepage noise, and low-value content / 過濾登入頁、404、首頁噪音與低價值內容
+5. Call `tools/bookmark_enhancer.py` to generate summaries and categories / 呼叫 `tools/bookmark_enhancer.py` 生成摘要與分類
+6. Update `search_index.json` / 更新 `search_index.json`
+7. (Optional) Run `recommend_from_profile.sh` to estimate interest weights from accumulated bookmarks and auto-generate recommendations from following/for-you / （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
 
-## 補完與品質規則
+## Enrichment & Quality Rules / 補完與品質規則
 
-- 優先抓完整 thread；失敗時回退 tweet-only
-- GitHub 連結優先走 `gh`
-- 外部文章優先抽正文，不保留登入頁或雜訊頁
-- 內容不足時維持簡化卡，不硬補不存在的資訊
-- 失敗時要 fallback，不中斷整批入庫
+- Prioritize fetching full threads; fall back to tweet-only on failure / 優先抓完整 thread；失敗時回退 tweet-only
+- GitHub links go through `gh` first / GitHub 連結優先走 `gh`
+- External articles extract body text first; avoid login pages or noise pages / 外部文章優先抽正文，不保留登入頁或雜訊頁
+- When content is insufficient, keep a simplified card rather than fabricating missing info / 內容不足時維持簡化卡，不硬補不存在的資訊
+- Always fallback on failure; never interrupt an entire batch import / 失敗時要 fallback，不中斷整批入庫
 
-## 對話主動召回（v1）
+## Proactive Conversation Recall (v1) / 對話主動召回（v1）
 
+> **v1 Technical Note**: Currently uses **keyword token matching** (not semantic vector search). Query terms are scored against bookmark title / tags / summary by string hit. Pros: zero dependencies, fast. Cons: lower recall rate when synonyms or mixed Chinese/English are used. Vector search is planned for v3.
+>
 > **v1 技術說明**：目前使用 **關鍵字 token 比對**（非語意向量搜尋）。查詢詞與書籤的 title / tags / summary 做字串命中計分。優點是零依賴、速度快；缺點是同義詞、中英混用時召回率較低。向量搜尋規劃於 v3 實作。
 
+Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved bookmarks first, then decide whether to surface them to Pan.
 把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給 Pan。
 
-### 什麼時候用
+### When to Use / 什麼時候用
 
-優先用在這些情境：
-- Pan 在問做法、workflow、案例、靈感、決策方向
-- Pan 在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
-- 當前主題明顯落在常見收藏領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM
-- 你判斷書籤庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
+Prioritize these situations / 優先用在這些情境：
+- Pan is asking about approaches, workflows, case studies, inspiration, or decision direction / Pan 在問做法、workflow、案例、靈感、決策方向
+- Pan is organizing ideas, context, comparing options, or needs external examples to aid decision-making / Pan 在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
+- The current topic clearly falls within frequently bookmarked domains: OpenClaw / agent / workflow, SEO / GEO / AEO, AI video / prompts / content, automation / tools / GitHub, startup / SaaS / GTM / 當前主題明顯落在常見收藏領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM
+- You judge the bookmark library likely has reusable content, and proactively surfacing it would improve the conversation quality / 你判斷書籤庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
 
-### 觸發規則（v1）
+### Trigger Rules (v1) / 觸發規則（v1）
 
-只有同時滿足這兩件事才主動召回：
-1. 當前對話值得查書籤
-2. 查到的結果真的能推進對話
+Only proactively recall when **both** conditions are met / 只有同時滿足這兩件事才主動召回：
+1. The current conversation is worth checking bookmarks / 當前對話值得查書籤
+2. The results retrieved can genuinely advance the conversation / 查到的結果真的能推進對話
 
-實際判斷時，至少先命中以下其中一項：
-- 問法像在找做法、案例、workflow、決策方向
-- 問法像在整理脈絡、觀點、下一步
-- 主題落在高頻收藏領域
-- 你主觀判斷：Pan 的書籤庫比通用知識更可能提供有價值的參考
+In practice, at least one of the following must match / 實際判斷時，至少先命中以下其中一項：
+- The question is looking for approaches, case studies, workflows, or decision direction / 問法像在找做法、案例、workflow、決策方向
+- The question is organizing context, perspectives, or next steps / 問法像在整理脈絡、觀點、下一步
+- The topic falls within high-frequency bookmark domains / 主題落在高頻收藏領域
+- Your subjective judgment: Pan's bookmark library is more likely to provide valuable references than general knowledge / 你主觀判斷：Pan 的書籤庫比通用知識更可能提供有價值的參考
 
-召回結果再過第二層過濾；至少符合其中兩項才值得提：
-- 有清楚標題
-- 有像樣摘要
-- 有原文連結
-- relevance 高
-- 能幫 Pan 推進當前任務或決策
+Results then pass a second-layer filter; worth surfacing only if at least two apply / 召回結果再過第二層過濾；至少符合其中兩項才值得提：
+- Has a clear title / 有清楚標題
+- Has a decent summary / 有像樣摘要
+- Has a source URL / 有原文連結
+- High relevance / relevance 高
+- Can help Pan advance the current task or decision / 能幫 Pan 推進當前任務或決策
 
-### 什麼時候不要用
+### When NOT to Use / 什麼時候不要用
 
-- 純閒聊
-- 簡單事務題（除非和收藏知識高度相關）
-- 只有很勉強的關聯
-- 同一輪已主動提醒過，Pan 沒追問
-- 結果沒有原文連結、摘要太空、或明顯低價值
+- Pure casual chat / 純閒聊
+- Simple factual questions (unless closely related to saved knowledge) / 簡單事務題（除非和收藏知識高度相關）
+- Only a very tenuous connection / 只有很勉強的關聯
+- Already proactively surfaced this round and Pan didn't follow up / 同一輪已主動提醒過，Pan 沒追問
+- Results have no source URL, too thin a summary, or are clearly low value / 結果沒有原文連結、摘要太空、或明顯低價值
 
-### 使用方式
+### How to Use / 使用方式
 
-先確保 `search_index.json` 存在且是新的，再執行：
+First ensure `search_index.json` exists and is up to date, then run / 先確保 `search_index.json` 存在且是新的，再執行：
 
 ```bash
 python3 scripts/recall_for_conversation.py "主動召回 書籤知識 對話回用"
@@ -138,74 +142,75 @@ python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --li
 python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 ```
 
-### 回覆原則
+### Response Principles / 回覆原則
 
-- 每輪對話預設最多主動提 1 次
-- 預設最多帶 1–2 篇；除非 Pan 追問，再展開到 3 篇
-- 只提真的能幫上忙的結果
-- 優先提可落地案例、接近當前專案、帶 workflow / SOP、且有原文連結的內容
-- 回覆格式維持短：一句話摘要 + 為什麼相關 + 原文連結
-- 若結果普通，就不要硬插話
+- Default: proactively surface at most once per conversation turn / 每輪對話預設最多主動提 1 次
+- Default: bring up at most 1–2 items; expand to 3 only if Pan follows up / 預設最多帶 1–2 篇；除非 Pan 追問，再展開到 3 篇
+- Only surface results that genuinely help / 只提真的能幫上忙的結果
+- Prioritize actionable case studies, content close to the current project, content with workflow/SOP, and content with source URLs / 優先提可落地案例、接近當前專案、帶 workflow / SOP、且有原文連結的內容
+- Keep responses short: one-sentence summary + why it's relevant + source URL / 回覆格式維持短：一句話摘要 + 為什麼相關 + 原文連結
+- If results are mediocre, don't force them into the conversation / 若結果普通，就不要硬插話
 
-## 何時讀額外參考檔
+## When to Read Additional Reference Files / 何時讀額外參考檔
 
-- 想深入理解主動召回的設計原則、觸發規則、回覆格式與公開教學定位時，讀 `references/conversation-recall.md`
-- 調整 NotebookLM 卡片格式或匯出欄位時，讀 `references/notebooklm-schema.md`
-- 使用鐵哥單筆慢清舊庫時，讀：
+- To deeply understand the design principles, trigger rules, response format, and public-facing educational positioning of proactive recall, read `references/conversation-recall.md` / 想深入理解主動召回的設計原則、觸發規則、回覆格式與公開教學定位時，讀 `references/conversation-recall.md`
+- When adjusting NotebookLM card format or export fields, read `references/notebooklm-schema.md` / 調整 NotebookLM 卡片格式或匯出欄位時，讀 `references/notebooklm-schema.md`
+- When using the Tiege single-item slow-clearing workflow, read / 使用鐵哥單筆慢清舊庫時，讀：
   - `references/tiege-single-item-workflow.md`
   - `references/tiege-prompt.md`
   - `config/tiege-queue.example.json`
-- 實際執行中的 queue 狀態檔不要放在 skill 內；改放工作區資料路徑，例如：`memory/x-knowledge-base/tiege-queue.json`
+- The active queue state file should not be placed inside the skill directory; store it in the workspace data path instead, e.g.: `memory/x-knowledge-base/tiege-queue.json` / 實際執行中的 queue 狀態檔不要放在 skill 內；改放工作區資料路徑，例如：`memory/x-knowledge-base/tiege-queue.json`
 
-## 環境需求
+## Environment Requirements / 環境需求
 
-至少確認下列變數或工具可用：
+Ensure at least the following variables or tools are available / 至少確認下列變數或工具可用：
 
 - `BIRD_AUTH_TOKEN`
 - `BIRD_CT0`
-- `TWITTER_AUTH_TOKEN`（可選；若未提供，推薦腳本會回退使用 `BIRD_AUTH_TOKEN`）
-- `TWITTER_CT0`（可選；若未提供，推薦腳本會回退使用 `BIRD_CT0`）
-- `BOOKMARKS_DIR`（可選）
-- `MINIMAX_API_KEY`（可選；未提供時走 fallback）
-- `agent-reach`（建議）
-- `xreach`（建議）
-- `gh`（建議）
-- `rclone`（若要同步到 Google Drive）
-- `RCLONE_REMOTE`（可選；預設 `pan-drive:OpenClaw-Bookmarks`）
+- `TWITTER_AUTH_TOKEN` (optional; if not set, recommendation scripts fall back to `BIRD_AUTH_TOKEN` / 可選；若未提供，推薦腳本會回退使用 `BIRD_AUTH_TOKEN`)
+- `TWITTER_CT0` (optional; if not set, recommendation scripts fall back to `BIRD_CT0` / 可選；若未提供，推薦腳本會回退使用 `BIRD_CT0`)
+- `BOOKMARKS_DIR` (optional / 可選)
+- `MINIMAX_API_KEY` (optional; falls back if not provided / 可選；未提供時走 fallback)
+- `agent-reach` (recommended / 建議)
+- `xreach` (recommended / 建議)
+- `gh` (recommended / 建議)
+- `rclone` (required for Google Drive sync / 若要同步到 Google Drive)
+- `RCLONE_REMOTE` (optional; default `pan-drive:OpenClaw-Bookmarks` / 可選；預設 `pan-drive:OpenClaw-Bookmarks`)
 
+Do not place `.env` or other secrets inside the skill directory. Use workspace environment variables, external environment management, or workspace `.secrets/x-knowledge-base.env` instead.
 不要把 `.env` 或其他 secrets 放進 skill 目錄；改由工作區環境變數、外部環境管理，或工作區 `.secrets/x-knowledge-base.env`。
 
-## 重要檔案
+## Key Files / 重要檔案
 
-- `scripts/fetch_and_summarize.sh` — 主流程入口
-- `scripts/fetch_bookmarks.sh` — 抓新書籤
-- `scripts/auto_categorize.sh` — 依 `config/category-rules.json` 將 inbox 書籤歸類
-- `scripts/build_search_index.sh` — 建索引
-- `scripts/search_bookmarks.sh` — 搜尋
-- `scripts/recommend_from_profile.sh` — 由累積書籤推估興趣，從 feed 產生推薦
-- `scripts/export_notebooklm.py` — 匯出 NotebookLM
-- `scripts/sync_to_drive.sh` — 透過 `rclone` 同步本地 md 到 Google Drive
-- `config/category-rules.json` — 分類規則設定
-- `config/recommendation-topics.json` — 推薦主題與關鍵字設定
-- `tools/bookmark_enhancer.py` — 摘要 / 分類 / 交叉連結
-- `tools/agent_reach_enricher.py` — thread / 外鏈 / GitHub 補完
+- `scripts/fetch_and_summarize.sh` — Main pipeline entry / 主流程入口
+- `scripts/fetch_bookmarks.sh` — Fetch new bookmarks / 抓新書籤
+- `scripts/auto_categorize.sh` — Categorize inbox bookmarks by `config/category-rules.json` / 依 `config/category-rules.json` 將 inbox 書籤歸類
+- `scripts/build_search_index.sh` — Build search index / 建索引
+- `scripts/search_bookmarks.sh` — Search / 搜尋
+- `scripts/recommend_from_profile.sh` — Estimate interests from accumulated bookmarks, generate recommendations from feed / 由累積書籤推估興趣，從 feed 產生推薦
+- `scripts/export_notebooklm.py` — Export to NotebookLM / 匯出 NotebookLM
+- `scripts/sync_to_drive.sh` — Sync local md to Google Drive via `rclone` / 透過 `rclone` 同步本地 md 到 Google Drive
+- `config/category-rules.json` — Category rule configuration / 分類規則設定
+- `config/recommendation-topics.json` — Recommendation topics and keyword configuration / 推薦主題與關鍵字設定
+- `tools/bookmark_enhancer.py` — Summary / categorization / cross-linking / 摘要 / 分類 / 交叉連結
+- `tools/agent_reach_enricher.py` — Thread / external link / GitHub enrichment / thread / 外鏈 / GitHub 補完
 
-## Evals（建議）
+## Evals
 
-- 測試案例：`evals/evals.json`
-- 推薦品質快速評估：
+- Test cases / 測試案例：`evals/evals.json`
+- Quick evaluation of recommendation quality / 推薦品質快速評估：
 
 ```bash
 python3 scripts/eval_recommendations.py
 ```
 
-評估指標：
-- `interest_hit_rate`（Top5 命中目標主題比例，目標 >= 0.8）
-- `duplicate_rate`（重複率，目標 <= 0.05）
-- `noise_rate`（低價值內容比例，目標 <= 0.2）
+Metrics / 評估指標：
+- `interest_hit_rate` (proportion of Top 5 hitting target topics, target >= 0.8 / Top5 命中目標主題比例，目標 >= 0.8)
+- `duplicate_rate` (target <= 0.05 / 重複率，目標 <= 0.05)
+- `noise_rate` (proportion of low-value content, target <= 0.2 / 低價值內容比例，目標 <= 0.2)
 
-## 工作原則
+## Operating Principles / 工作原則
 
-- 先保資料品質，再追求覆蓋率
-- 先結構化，再談同步到 NotebookLM
-- 知識卡要服務回用，不只是保存
+- Data quality first, then coverage / 先保資料品質，再追求覆蓋率
+- Structure first, then sync to NotebookLM / 先結構化，再談同步到 NotebookLM
+- Knowledge cards should serve reuse, not just preservation / 知識卡要服務回用，不只是保存
