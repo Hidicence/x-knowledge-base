@@ -151,6 +151,77 @@ python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 - Keep responses short: one-sentence summary + why it's relevant + source URL / 回覆格式維持短：一句話摘要 + 為什麼相關 + 原文連結
 - If results are mediocre, don't force them into the conversation / 若結果普通，就不要硬插話
 
+
+## Semantic Recall (v3, Optional) / 語意向量召回（v3，可選）
+
+> **Upgrade from v1 keyword matching to true semantic search.**
+> Find relevant bookmarks even when your query uses completely different words from the card.
+> 從 v1 關鍵字比對升級為真正的語意搜尋，查詢用詞和書籤內容不同也能找到。
+
+### Why it matters / 為什麼值得用
+
+| Query / 查詢 | Keyword v1 | Semantic v3 |
+|---|---|---|
+| "省錢跑 AI" | ❌ 只找到含 "AI" 的不相關卡 | ✅ 找到「先用軟體把 workflow 跑通再買硬體」 |
+| "設計品味 anti-slop" | ⚠️ 靠運氣 | ✅ 直接命中 taste-skill |
+| "LinkedIn 自動回覆工具" | ❌ 完全找不到 | ✅ 找到 agent-swarm、自動化 workflow |
+
+### Setup / 設定方式
+
+**Step 1: Set environment variables / 設定環境變數**
+
+Choose one provider / 選擇一個 provider：
+
+```bash
+# Option A: Gemini（recommended — nearly free / 推薦，幾乎免費）
+export EMBEDDING_PROVIDER=gemini
+export EMBEDDING_MODEL=text-embedding-004
+export GEMINI_API_KEY=your_key_here
+
+# Option B: OpenAI
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_MODEL=text-embedding-3-small
+export OPENAI_API_KEY=your_key_here
+
+# Option C: Ollama（local, completely free / 本地，完全免費）
+export EMBEDDING_PROVIDER=ollama
+export EMBEDDING_MODEL=nomic-embed-text
+export OLLAMA_BASE_URL=http://localhost:11434
+```
+
+**Step 2: Build the vector index / 建立向量索引**
+
+```bash
+python3 scripts/build_vector_index.py
+# First run embeds all cards (~430 cards, costs < $0.05 with Gemini)
+# 第一次執行會 embed 所有書籤（約 430 張，Gemini 費用不到 $0.05）
+
+python3 scripts/build_vector_index.py --incremental
+# Subsequent runs: only embed new cards / 之後只需 embed 新書籤
+```
+
+**Step 3: Use semantic recall / 使用語意召回**
+
+```bash
+python3 scripts/recall_for_conversation.py "你的問題" --semantic
+python3 scripts/recall_for_conversation.py "AI agent workflow" --semantic --limit 5
+python3 scripts/recall_for_conversation.py "省錢跑 AI" --semantic --format chat
+```
+
+### How it works / 運作原理
+
+1. Each card's `title + summary` is converted to a vector (1–3K floats) via an embedding model
+2. At recall time, the query is also embedded
+3. Cards are ranked by cosine similarity — meaning nearest in semantic space, not just matching words
+
+每張卡的 `title + summary` 透過 embedding 模型轉成向量，召回時 query 也轉成向量，用 cosine similarity 找語意最近的書籤。
+
+### Notes / 注意事項
+
+- If `vector_index.json` is missing, `--semantic` automatically falls back to keyword search / 若向量索引不存在，`--semantic` 自動降級為關鍵字搜尋
+- `vector_index.json` is personal data — it is **not** committed to the repo / 向量索引是個人資料，**不會**進 GitHub repo
+- Re-run `build_vector_index.py --incremental` after adding new bookmarks / 新增書籤後記得跑增量更新
+
 ## When to Read Additional Reference Files / 何時讀額外參考檔
 
 - To deeply understand the design principles, trigger rules, response format, and public-facing educational positioning of proactive recall, read `references/conversation-recall.md` / 想深入理解主動召回的設計原則、觸發規則、回覆格式與公開教學定位時，讀 `references/conversation-recall.md`
