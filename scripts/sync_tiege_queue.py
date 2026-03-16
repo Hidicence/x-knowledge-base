@@ -5,9 +5,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv('WORKSPACE_DIR', os.getenv('OPENCLAW_WORKSPACE', str(Path.home() / '.openclaw/workspace'))))
-BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE / 'memory/bookmarks')))
-QUEUE_PATH = Path(os.getenv('QUEUE_PATH', str(WORKSPACE / 'memory/x-knowledge-base/tiege-queue.json')))
+WORKSPACE = Path(os.getenv('OPENCLAW_WORKSPACE', os.getenv('WORKSPACE_DIR', str(Path.home() / '.openclaw' / 'workspace'))))
+BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE / 'memory' / 'bookmarks')))
+QUEUE_PATH = Path(os.getenv('XKB_QUEUE_PATH', str(WORKSPACE / 'memory' / 'x-knowledge-base' / 'tiege-queue.json')))
 
 
 def rel(p: Path) -> str:

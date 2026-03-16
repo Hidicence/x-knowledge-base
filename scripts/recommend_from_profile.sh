@@ -4,14 +4,14 @@ set -euo pipefail
 WORKSPACE_DIR="${WORKSPACE_DIR:-${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}}"
 SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
 BOOKMARKS_DIR="${BOOKMARKS_DIR:-$WORKSPACE_DIR/memory/bookmarks}"
-ENV_FILE="${XKB_ENV_FILE:-${SECRETS_FILE:-}}"
+SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
 TOPIC_CONFIG="${TOPIC_CONFIG:-$SKILL_DIR/config/recommendation-topics.json}"
 OUT_DIR="${OUT_DIR:-$WORKSPACE_DIR/memory/x-knowledge-base/recommendations}"
 
 mkdir -p "$OUT_DIR"
 
-if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
-  source "$ENV_FILE"
+if [[ -f "$SECRETS_FILE" ]]; then
+  source "$SECRETS_FILE"
 fi
 
 # 兼容現有 bird 憑證命名

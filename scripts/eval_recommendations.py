@@ -3,8 +3,8 @@ import json
 import os
 from pathlib import Path
 
-WORKSPACE_DIR = Path(os.getenv('WORKSPACE_DIR', os.getenv('OPENCLAW_WORKSPACE', str(Path.home() / '.openclaw/workspace'))))
-p = Path(os.getenv('RECOMMENDATIONS_FILE', str(WORKSPACE_DIR / 'memory/x-knowledge-base/recommendations/latest.json')))
+_workspace = Path(os.getenv('OPENCLAW_WORKSPACE', os.getenv('WORKSPACE_DIR', str(Path.home() / '.openclaw' / 'workspace'))))
+p = Path(os.getenv('XKB_RECOMMENDATIONS_PATH', str(_workspace / 'memory' / 'x-knowledge-base' / 'recommendations' / 'latest.json')))
 if not p.exists():
     print('❌ latest.json not found')
     raise SystemExit(1)

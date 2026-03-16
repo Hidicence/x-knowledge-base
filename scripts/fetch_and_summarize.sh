@@ -11,10 +11,10 @@ MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
 PREPARE_ONLY="${PREPARE_ONLY:-0}"
 export BOOKMARKS_DIR
 
-# Twitter 認證（從環境變數讀取；若有自訂 env 檔則一併載入）
-ENV_FILE="${XKB_ENV_FILE:-${SECRETS_FILE:-}}"
-if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
-    source "$ENV_FILE"
+# Twitter 認證（從環境變數讀取；若工作區有 secrets 檔則一併載入）
+SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
+if [[ -f "$SECRETS_FILE" ]]; then
+    source "$SECRETS_FILE"
 fi
 BIRD_AUTH_TOKEN="${BIRD_AUTH_TOKEN:-}"
 BIRD_CT0="${BIRD_CT0:-}"
@@ -63,7 +63,7 @@ if [[ -f /tmp/new_bookmarks.txt ]]; then
             fi
         fi
 
-        if [[ -z "$content" || "$content" == *"http"* ]]; then
+        if [[ -z "$content" || ( ${#content} -lt 200 && "$content" == *"http"* ) ]]; then
             if [[ -n "$content" ]]; then
                 link=$(echo "$content" | grep -oE 'https?://[^ ]+' | head -1 || true)
                 if [[ -n "$link" ]]; then
@@ -134,14 +134,15 @@ PY
 
         if has_cmd agent-reach && has_cmd xreach; then
             echo "    🧩 Agent Reach: 補抓 thread / 外鏈..."
-            enrich_json=$(python3 "$SKILL_DIR/tools/agent_reach_enricher.py" "$tweet_id" "$filepath" 2>/dev/null || echo '{}')
+            ENRICH_TMP=$(mktemp /tmp/enrich_XXXXXX.json)
+            python3 "$SKILL_DIR/tools/agent_reach_enricher.py" "$tweet_id" "$filepath" > "$ENRICH_TMP" 2>/dev/null || echo "{}"> "$ENRICH_TMP"
             python3 - <<PY
 import json
 from pathlib import Path
 p = Path("$filepath")
 text = p.read_text(encoding='utf-8', errors='ignore')
 try:
-    data = json.loads('''$enrich_json''')
+    data = json.loads(Path("$ENRICH_TMP").read_text(encoding='utf-8'))
 except Exception:
     data = {}
 thread_text = (data.get('thread_text') or '').strip()
@@ -166,6 +167,7 @@ if blocks:
 else:
     print("    ℹ️ 無有效 thread / 外鏈補完內容，維持 tweet-only")
 PY
+            rm -f "$ENRICH_TMP"
         else
             echo "    ⏭️ Agent Reach / xreach 不可用，略過補完"
         fi

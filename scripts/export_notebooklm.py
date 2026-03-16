@@ -4,9 +4,10 @@ import re
 import shutil
 from pathlib import Path
 
-WORKSPACE_DIR = Path(os.getenv('WORKSPACE_DIR', os.getenv('OPENCLAW_WORKSPACE', str(Path.home() / '.openclaw/workspace'))))
-BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE_DIR / 'memory/bookmarks')))
-EXPORT_DIR = Path(os.getenv('EXPORT_DIR', str(WORKSPACE_DIR / 'memory/notebooklm_exports')))
+import os as _os
+WORKSPACE_DIR = Path(_os.getenv('OPENCLAW_WORKSPACE', _os.getenv('WORKSPACE_DIR', str(Path.home() / '.openclaw' / 'workspace'))))
+BOOKMARKS_DIR = Path(__import__('os').getenv('BOOKMARKS_DIR', str(WORKSPACE_DIR / 'memory/bookmarks')))
+EXPORT_DIR = WORKSPACE_DIR / 'memory/notebooklm_exports'
 CARDS_DIR = EXPORT_DIR / 'cards'
 TOPICS_DIR = EXPORT_DIR / 'topics'
 
@@ -98,7 +99,7 @@ confidence: medium
 ## 4. 外部連結重點
 {links or '- 無外部連結內容'}
 
-## 5. 對 Pan 的價值
+## 5. 對 {USER_NAME} 的價值
 {pan_value or '- 待補充'}
 
 ## 6. 關聯主題

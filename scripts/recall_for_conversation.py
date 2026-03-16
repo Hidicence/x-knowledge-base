@@ -6,12 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import os
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-WORKSPACE_DIR = Path.home() / ".openclaw" / "workspace"
-BOOKMARKS_DIR = WORKSPACE_DIR / "memory" / "bookmarks"
+WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 
 STOPWORDS = {

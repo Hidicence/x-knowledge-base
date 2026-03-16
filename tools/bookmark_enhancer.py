@@ -14,8 +14,7 @@ import requests
 from pathlib import Path
 from collections import Counter
 
-WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw/workspace"))))
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory/bookmarks")))
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(Path.home() / ".openclaw" / "workspace" / "memory" / "bookmarks")))
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 MINIMAX_ENDPOINT = os.getenv("MINIMAX_ENDPOINT", "https://api.minimax.io/anthropic/v1/messages")
 MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")

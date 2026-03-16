@@ -22,14 +22,13 @@ echo ""
 
 # 先嘗試靜默增量更新索引（可關閉：AUTO_INDEX_UPDATE=0）
 AUTO_INDEX_UPDATE="${AUTO_INDEX_UPDATE:-1}"
-BUILD_INDEX_SCRIPT="$SKILL_DIR/scripts/build_search_index.sh"
-if [[ "$AUTO_INDEX_UPDATE" == "1" ]] && [[ -x "$BUILD_INDEX_SCRIPT" ]]; then
-    "$BUILD_INDEX_SCRIPT" --incremental >/dev/null 2>&1 || true
+if [[ "$AUTO_INDEX_UPDATE" == "1" ]] && [[ -x ""/scripts/build_search_index.sh"" ]]; then
+    "/scripts/build_search_index.sh" --incremental >/dev/null 2>&1 || true
 fi
 
 # 若索引仍不存在，再做一次全量建立
-if [[ ! -f "$INDEX_FILE" ]] && [[ -x "$BUILD_INDEX_SCRIPT" ]]; then
-    "$BUILD_INDEX_SCRIPT" >/dev/null 2>&1 || true
+if [[ ! -f "$INDEX_FILE" ]] && [[ -x ""/scripts/build_search_index.sh"" ]]; then
+    "/scripts/build_search_index.sh" >/dev/null 2>&1 || true
 fi
 
 if [[ -f "$INDEX_FILE" ]]; then
