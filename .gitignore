@@ -1,0 +1,19 @@
+# ── Runtime / 產生的檔案 ──────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Secrets（絕對不進 repo）────────────────────────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── Runtime state（放 workspace memory/，不放 skill/）────────────────────
+# tiege-queue.json 等執行期狀態檔應放在：
+# $WORKSPACE_DIR/memory/x-knowledge-base/tiege-queue.json
+
+# ── 臨時 / 系統檔案 ──────────────────────────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+/tmp/
