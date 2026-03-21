@@ -16,6 +16,12 @@ WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", 
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
+TOPIC_PROFILE_FILE = Path(
+    os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
+)
+GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
+LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
+LOW_SIGNAL_SOURCES = {"x", "twitter"}
 
 STOPWORDS = {
     "的", "了", "是", "我", "你", "他", "她", "它", "在", "有", "和", "與", "就", "也", "都", "很",
@@ -45,6 +51,33 @@ def clean_summary(text: str) -> str:
     return text.strip()
 
 
+def load_topic_profile(topic_profile_file: Path = TOPIC_PROFILE_FILE) -> Dict[str, Any]:
+    if not topic_profile_file.exists():
+        return {}
+    try:
+        return json.loads(topic_profile_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def get_topic_profile_matches(query_tokens: List[str], topic_profile: Dict[str, Any]) -> Dict[str, Any]:
+    categories = {item.get("name", ""): item.get("weight", 0.0) for item in topic_profile.get("top_categories", [])}
+    tags = {item.get("name", ""): item.get("weight", 0.0) for item in topic_profile.get("top_tags", [])}
+
+    matched_categories = [name for name in categories if name and any(token in name or name in token for token in query_tokens)]
+    matched_tags = [name for name in tags if name and any(token == name or token in name or name in token for token in query_tokens)]
+
+    cat_boost = max((categories[name] for name in matched_categories), default=0.0)
+    tag_boost = max((tags[name] for name in matched_tags), default=0.0)
+    combined = max(cat_boost, tag_boost)
+
+    return {
+        "matched_categories": matched_categories[:3],
+        "matched_tags": matched_tags[:5],
+        "topic_boost": round(combined, 4),
+    }
+
+
 def extract_source_url(md_path: Path) -> str:
     if not md_path.exists():
         return ""
@@ -64,7 +97,7 @@ def extract_source_url(md_path: Path) -> str:
     return ""
 
 
-def build_relevance_reason(item: Dict[str, Any], query_tokens: List[str]) -> str:
+def build_relevance_reason(item: Dict[str, Any], query_tokens: List[str], topic_matches: Dict[str, Any] | None = None) -> str:
     title = (item.get("title") or "").lower()
     category = (item.get("category") or "").lower()
     tags = " ".join(item.get("tags") or []).lower()
@@ -84,6 +117,12 @@ def build_relevance_reason(item: Dict[str, Any], query_tokens: List[str]) -> str
         reasons.append(f"分類相關：{'、'.join(category_hits[:3])}")
     if summary_hits and not reasons:
         reasons.append(f"摘要語意接近：{'、'.join(summary_hits[:3])}")
+
+    if topic_matches:
+        if topic_matches.get("matched_categories"):
+            reasons.append(f"命中使用者高頻分類：{'、'.join(topic_matches['matched_categories'][:2])}")
+        elif topic_matches.get("matched_tags"):
+            reasons.append(f"命中使用者高頻標籤：{'、'.join(topic_matches['matched_tags'][:3])}")
 
     return "；".join(reasons[:2]) or "主題與當前對話高度相關"
 
@@ -154,8 +193,76 @@ def _normalize_vector(vec: Any) -> list[float] | None:
     return normalized
 
 
+def _source_quality(item: Dict[str, Any]) -> float:
+    source = (item.get("source") or "").strip().lower()
+    source_url = (item.get("source_url") or "").strip().lower()
+    title = (item.get("title") or "").strip().lower()
+
+    score = 0.0
+    if source == "youtube":
+        score += 0.05
+    if source_url.startswith("https://"):
+        score += 0.05
+    if "github.com" in source_url:
+        score += 0.05
+    if any(host in source_url for host in ["x.com/", "twitter.com/"]):
+        score += 0.02
+    if re.match(r"^\d{4}-\d{2}-\d{2}-", title):
+        score -= 0.08
+    if source in LOW_SIGNAL_SOURCES and not source_url:
+        score -= 0.03
+    return score
+
+
+def _summary_quality(summary: str) -> float:
+    summary = clean_summary(summary)
+    if not summary:
+        return -0.08
+    if summary in LOW_SIGNAL_SUMMARIES:
+        return -0.12
+    if len(summary) < 12:
+        return -0.05
+    if len(summary) >= 40:
+        return 0.05
+    return 0.02
+
+
+def _category_penalty(item: Dict[str, Any]) -> float:
+    category = (item.get("category") or "").strip().lower()
+    return -0.08 if category in GENERIC_CATEGORIES else 0.0
+
+
+def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) -> Dict[str, float]:
+    topic_boost = topic_matches.get("topic_boost", 0.0)
+    matched_categories = set(topic_matches.get("matched_categories", []))
+    matched_tags = set(topic_matches.get("matched_tags", []))
+
+    item_category = (item.get("category") or "").lower()
+    item_tags = {str(tag).lower() for tag in (item.get("tags") or [])}
+
+    topic_bonus = 0.0
+    if topic_boost > 0:
+        if item_category in matched_categories:
+            topic_bonus += round(topic_boost * 0.12, 4)
+        elif item_tags & matched_tags:
+            topic_bonus += round(topic_boost * 0.08, 4)
+
+    summary_bonus = _summary_quality(item.get("summary") or "")
+    source_bonus = _source_quality(item)
+    category_penalty = _category_penalty(item)
+
+    return {
+        "topic_bonus": topic_bonus,
+        "summary_bonus": summary_bonus,
+        "source_bonus": source_bonus,
+        "category_penalty": category_penalty,
+        "total_adjustment": round(topic_bonus + summary_bonus + source_bonus + category_penalty, 4),
+    }
+
+
 def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
-                    index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
+                    index_file: Path = INDEX_FILE,
+                    topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
     """Semantic recall using vector similarity. Falls back to keyword if index missing."""
     if not vector_file.exists():
         print(f"⚠️  Vector index not found: {vector_file}", file=sys.stderr)
@@ -234,6 +341,9 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         (item.get("relative_path") or item.get("path") or ""): item
         for item in items
     }
+    query_tokens = tokenize(query)
+    topic_profile = load_topic_profile(topic_profile_file)
+    topic_matches = get_topic_profile_matches(query_tokens, topic_profile) if topic_profile else {}
 
     results = []
     for rel_path, sim in top:
@@ -250,6 +360,17 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
 
         kw = _keyword_score(query, item)
         hybrid = 0.65 * sim + 0.35 * kw
+        adjustments = _ranking_adjustments(item, topic_matches)
+        final_score = round(hybrid + adjustments["total_adjustment"], 4)
+        reason = [f"語意 {sim:.0%}", f"關鍵字 {kw:.0%}"]
+        if adjustments["topic_bonus"] > 0:
+            reason.append(f"主題加權 +{adjustments['topic_bonus']:.2f}")
+        if adjustments["summary_bonus"] != 0:
+            reason.append(f"摘要調整 {adjustments['summary_bonus']:+.2f}")
+        if adjustments["source_bonus"] != 0:
+            reason.append(f"來源調整 {adjustments['source_bonus']:+.2f}")
+        if adjustments["category_penalty"] != 0:
+            reason.append(f"泛分類調整 {adjustments['category_penalty']:+.2f}")
         results.append({
             "title": item.get("title") or "(untitled)",
             "summary": clean_summary(item.get("summary") or ""),
@@ -257,15 +378,20 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
             "tags": item.get("tags") or [],
             "relative_path": rel_path,
             "source_url": source_url,
-            "score": round(hybrid, 4),
-            "relevance_reason": f"語意 {sim:.0%} + 關鍵字 {kw:.0%}",
+            "score": final_score,
+            "topic_boost": topic_matches.get("topic_boost", 0.0),
+            "matched_categories": topic_matches.get("matched_categories", []),
+            "matched_tags": topic_matches.get("matched_tags", []),
+            "ranking_adjustments": adjustments,
+            "relevance_reason": " + ".join(reason),
         })
 
     # Re-sort by hybrid score and trim to limit
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]
 
-def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
+def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE,
+           topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
     data = load_index(index_file)
     items = data.get("items", [])
     query = query.strip()
@@ -273,9 +399,16 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
     if not query_tokens and not query:
         return []
 
+    topic_profile = load_topic_profile(topic_profile_file)
+    topic_matches = get_topic_profile_matches(query_tokens, topic_profile) if topic_profile else {}
+    topic_boost = topic_matches.get("topic_boost", 0.0)
+
     results = []
     for item in items:
-        score = score_item(item, query_tokens, query.lower())
+        base_score = float(score_item(item, query_tokens, query.lower()))
+        adjustments = _ranking_adjustments(item, topic_matches)
+        score = base_score + adjustments["total_adjustment"] * 10
+
         if score < min_score:
             continue
 
@@ -292,8 +425,12 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
             "tags": item.get("tags") or [],
             "relative_path": rel_path,
             "source_url": source_url,
-            "score": score,
-            "relevance_reason": build_relevance_reason(item, query_tokens),
+            "score": round(score, 4),
+            "topic_boost": topic_boost,
+            "matched_categories": topic_matches.get("matched_categories", []),
+            "matched_tags": topic_matches.get("matched_tags", []),
+            "ranking_adjustments": adjustments,
+            "relevance_reason": build_relevance_reason(item, query_tokens, topic_matches),
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
@@ -368,6 +505,7 @@ def main() -> int:
     parser.add_argument("--no-semantic", action="store_true",
                         help="Force keyword search even if vector index exists")
     parser.add_argument("--vector-file", default=str(VECTOR_FILE))
+    parser.add_argument("--topic-profile-file", default=str(TOPIC_PROFILE_FILE))
     args = parser.parse_args()
 
     query = args.query or ""
@@ -381,17 +519,19 @@ def main() -> int:
     vector_path = Path(args.vector_file)
     use_semantic = (not args.no_semantic) and (args.semantic or vector_path.exists())
 
+    topic_profile_path = Path(args.topic_profile_file)
+
     search_mode = "keyword"
     if use_semantic:
-        results = semantic_recall(query, args.limit, vector_path, Path(args.index_file))
+        results = semantic_recall(query, args.limit, vector_path, Path(args.index_file), topic_profile_path)
         if results:
             search_mode = "semantic"
         else:
             # fallback to keyword if semantic returned nothing
-            results = recall(query, args.limit, args.min_score, Path(args.index_file))
+            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
             search_mode = "keyword_fallback"
     else:
-        results = recall(query, args.limit, args.min_score, Path(args.index_file))
+        results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
 
     _mode_labels = {
         "semantic": "🔍 語意向量搜尋",

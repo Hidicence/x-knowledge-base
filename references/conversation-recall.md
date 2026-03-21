@@ -63,6 +63,15 @@
 - 當前主題明顯落在高頻收藏領域
 - 代理判斷：書籤庫比通用知識更可能提供有價值的答案
 
+#### 強觸發類型（v1）
+
+以下題型應優先視為值得查書籤：
+
+- 做法 / workflow / SOP / framework 類問題
+- 案例 / 靈感 / 參考 / 對照類問題
+- 策略 / 決策 / 優先順序類問題
+- 高頻收藏主題（OpenClaw / agent / workflow / AI SEO / automation / GitHub tools / content systems / startup / GTM）
+
 ### 高頻收藏領域（v1）
 
 - OpenClaw / agent / workflow
@@ -94,6 +103,28 @@
 - 結果缺摘要、缺來源、內容太空或明顯低價值
 
 ---
+
+## Query 生成規則（v1）
+
+不要把整段對話原封不動拿去查。
+先抽成一個短 query，原則是：
+
+1. 主題詞
+2. 問題意圖詞（做法 / 比較 / 案例 / 規劃）
+3. 1–2 個有幫助的上下文字
+
+### query 範例
+
+- `OpenClaw memory recall workflow`
+- `AI SEO case study content system`
+- `agent workflow planning`
+
+### 反例
+
+不要這樣做：
+- 直接把使用者整段對話貼進 recall
+- 把無關贅字、情緒語氣、寒暄一起丟進去
+- query 長到失去主題焦點
 
 ## 回覆格式 v1
 

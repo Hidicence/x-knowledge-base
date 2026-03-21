@@ -40,6 +40,13 @@ bash scripts/build_search_index.sh
 bash scripts/build_search_index.sh --incremental
 ```
 
+Build per-user topic profile for dynamic recall triggers / 建立每位使用者自己的 topic profile，供動態召回觸發使用：
+
+```bash
+python3 scripts/build_topic_profile.py
+python3 scripts/build_topic_profile.py --dry-run
+```
+
 Search existing knowledge cards / bookmarks / 搜尋既有知識卡／書籤：
 
 ```bash
@@ -107,15 +114,36 @@ Prioritize these situations / 優先用在這些情境：
 
 ### Trigger Rules (v1) / 觸發規則（v1）
 
+Default stance / 預設立場：
+- Do **not** recall on every turn. Recall only when the current question is the kind of thing where saved knowledge is likely to beat generic knowledge. / **不要每輪都查**；只有當前問題屬於「查既有知識很可能比通用知識更有幫助」的類型時，才優先召回。
+- The first goal is deterministic behavior on the right question types, not maximum recall volume. / 第一目標是讓「對的題型」觸發更穩定，而不是把召回次數拉滿。
+
 Only proactively recall when **both** conditions are met / 只有同時滿足這兩件事才主動召回：
 1. The current conversation is worth checking bookmarks / 當前對話值得查書籤
 2. The results retrieved can genuinely advance the conversation / 查到的結果真的能推進對話
+
+Treat the following as **strong trigger classes** / 以下題型視為 **強觸發類型**：
+- How-to / workflow / SOP / framework questions / 做法、workflow、SOP、framework 類問題
+- Case study / inspiration / reference / comparison questions / 案例、靈感、參考、對照類問題
+- Strategy / decision / prioritization questions / 策略、決策、優先順序類問題
+- Topics that clearly fall into high-frequency bookmark domains / 明顯落在高頻收藏主題的問題
 
 In practice, at least one of the following must match / 實際判斷時，至少先命中以下其中一項：
 - The question is looking for approaches, case studies, workflows, or decision direction / 問法像在找做法、案例、workflow、決策方向
 - The question is organizing context, perspectives, or next steps / 問法像在整理脈絡、觀點、下一步
 - The topic falls within high-frequency bookmark domains / 主題落在高頻收藏領域
 - Your subjective judgment: the user's bookmark library is more likely to provide valuable references than general knowledge / 你主觀判斷：使用者的書籤庫比通用知識更可能提供有價值的參考
+
+Generate a **short, intention-focused query** before recall / 召回前先產生**短而聚焦意圖的 query**：
+- Extract topic words / 抽主題詞
+- Extract intent words (how-to / compare / case study / planning) / 抽意圖詞（做法、比較、案例、規劃）
+- Add 1–2 task-context words if useful / 若有幫助，再補 1–2 個任務上下文字
+- Do not dump the entire conversation into recall / 不要把整段對話直接塞進 recall
+
+Example query shapes / query 例子：
+- `OpenClaw memory recall workflow`
+- `AI SEO case study content system`
+- `agent workflow planning`
 
 Results then pass a second-layer filter; worth surfacing only if at least two apply / 召回結果再過第二層過濾；至少符合其中兩項才值得提：
 - Has a clear title / 有清楚標題
@@ -180,9 +208,9 @@ python3 scripts/recall_for_conversation.py "query" --no-semantic
 Choose one provider / 選擇一個 provider：
 
 ```bash
-# Option A: Gemini（recommended — nearly free / 推薦，幾乎免費）
+# Option A: Gemini（recommended / 推薦）
 export EMBEDDING_PROVIDER=gemini
-export EMBEDDING_MODEL=text-embedding-004
+export EMBEDDING_MODEL=gemini-embedding-2-preview
 export GEMINI_API_KEY=your_key_here
 
 # Option B: OpenAI

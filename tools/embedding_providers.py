@@ -58,12 +58,12 @@ class GeminiProvider(EmbeddingProvider):
     """
     Uses Google Gemini Embedding API.
     Requires: GEMINI_API_KEY
-    Default model: text-embedding-004
+    Default model: gemini-embedding-2-preview
     """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, api_key: str, model: str = "text-embedding-004"):
+    def __init__(self, api_key: str, model: str = "gemini-embedding-2-preview"):
         self.api_key = api_key
         self.model = model
 
@@ -155,7 +155,7 @@ def get_provider() -> EmbeddingProvider:
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             raise EnvironmentError("GEMINI_API_KEY is required for EMBEDDING_PROVIDER=gemini")
-        return GeminiProvider(api_key=api_key, model=model or "text-embedding-004")
+        return GeminiProvider(api_key=api_key, model=model or "gemini-embedding-2-preview")
 
     elif provider_name == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "")
@@ -172,7 +172,7 @@ def get_provider() -> EmbeddingProvider:
         if os.getenv("GEMINI_API_KEY"):
             return GeminiProvider(
                 api_key=os.getenv("GEMINI_API_KEY"),
-                model=model or "text-embedding-004"
+                model=model or "gemini-embedding-2-preview"
             )
         elif os.getenv("OPENAI_API_KEY"):
             return OpenAIProvider(
