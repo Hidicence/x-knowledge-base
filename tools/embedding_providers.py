@@ -172,7 +172,7 @@ def get_provider() -> EmbeddingProvider:
         if os.getenv("GEMINI_API_KEY"):
             return GeminiProvider(
                 api_key=os.getenv("GEMINI_API_KEY"),
-                model=model or "gemini-embedding-2-preview"
+                model=model or "text-embedding-004"
             )
         elif os.getenv("OPENAI_API_KEY"):
             return OpenAIProvider(

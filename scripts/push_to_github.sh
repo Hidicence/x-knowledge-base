@@ -12,6 +12,7 @@ SKILL_DIR="${SKILL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 COMMIT_MSG="${1:-chore: sync x-knowledge-base skill}"
 
 GITHUB_REPO="https://github.com/Hidicence/x-knowledge-base.git"
+TEMP_GIT=0
 
 # ── 確認 gh CLI 已登入 ────────────────────────────────────────────────────────
 if ! gh auth status &>/dev/null; then
@@ -20,9 +21,9 @@ if ! gh auth status &>/dev/null; then
     exit 1
 fi
 
-# ── trap：無論成功或失敗都清掉暫存 .git ─────────────────────────────────────
+# ── trap：只清除本腳本建立的暫存 .git，避免誤刪真正 repo ───────────────────
 cleanup() {
-    if [[ -d "$SKILL_DIR/.git" ]]; then
+    if [[ "$TEMP_GIT" == "1" && -d "$SKILL_DIR/.git" ]]; then
         rm -rf "$SKILL_DIR/.git"
         echo "🧹 已清理暫存 .git"
     fi
@@ -34,8 +35,15 @@ echo "   Commit : $COMMIT_MSG"
 echo "   Skill  : $SKILL_DIR"
 echo ""
 
+if [[ -d "$SKILL_DIR/.git" ]]; then
+    echo "❌ 偵測到 $SKILL_DIR 已經是一個 git repo；為避免誤覆蓋或誤刪 metadata，腳本停止。" >&2
+    echo "   請改在乾淨的 skill 複本上執行，或先移除/搬走既有 .git 後再重試。" >&2
+    exit 1
+fi
+
 # ── 暫時 init、對齊遠端 main ─────────────────────────────────────────────────
 git -C "$SKILL_DIR" init -b main
+TEMP_GIT=1
 git -C "$SKILL_DIR" remote add origin "$GITHUB_REPO"
 
 if ! git -C "$SKILL_DIR" fetch origin main --depth=1 2>&1; then

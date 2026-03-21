@@ -22,10 +22,16 @@ from datetime import datetime
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-SKILL_DIR    = Path(__file__).resolve().parent.parent
-BOOKMARKS_DIR = SKILL_DIR.parent.parent / "memory" / "bookmarks"
-INDEX_FILE   = BOOKMARKS_DIR / "search_index.json"
-YOUTUBE_DIR  = BOOKMARKS_DIR / "youtube"
+SKILL_DIR = Path(__file__).resolve().parent.parent
+WORKSPACE_DIR = Path(
+    os.getenv(
+        "OPENCLAW_WORKSPACE",
+        os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))
+    )
+)
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
+INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
+YOUTUBE_DIR = BOOKMARKS_DIR / "youtube"
 COOKIES_FILE = Path.home() / ".config" / "yt-dlp" / "cookies.txt"
 
 # ── LLM (MiniMax, Anthropic-compatible API) ───────────────────────────────────

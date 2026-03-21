@@ -88,11 +88,11 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 - When content is insufficient, keep a simplified card rather than fabricating missing info / 內容不足時維持簡化卡，不硬補不存在的資訊
 - Always fallback on failure; never interrupt an entire batch import / 失敗時要 fallback，不中斷整批入庫
 
-## Proactive Conversation Recall (v1) / 對話主動召回（v1）
+## Proactive Conversation Recall / 對話主動召回
 
-> **v1 Technical Note**: Currently uses **keyword token matching** (not semantic vector search). Query terms are scored against bookmark title / tags / summary by string hit. Pros: zero dependencies, fast. Cons: lower recall rate when synonyms or mixed Chinese/English are used. Vector search is planned for v3.
+> **Current Technical Note**: Recall now supports **two modes**. Default behavior is **semantic recall when `vector_index.json` exists**, otherwise it automatically falls back to **keyword token matching**. Keyword mode is zero-dependency and fast; semantic mode improves recall for synonyms and mixed Chinese/English phrasing.
 >
-> **v1 技術說明**：目前使用 **關鍵字 token 比對**（非語意向量搜尋）。查詢詞與書籤的 title / tags / summary 做字串命中計分。優點是零依賴、速度快；缺點是同義詞、中英混用時召回率較低。向量搜尋規劃於 v3 實作。
+> **目前技術說明**：召回目前支援 **兩種模式**。預設行為是：**若 `vector_index.json` 存在就走語意召回**，否則自動降級為 **關鍵字 token 比對**。關鍵字模式零依賴、速度快；語意模式則更適合同義詞與中英混用場景。
 
 Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved bookmarks first, then decide whether to surface them to the user.
 把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給使用者。

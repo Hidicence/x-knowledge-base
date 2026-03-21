@@ -143,6 +143,17 @@ def _cosine_similarity(a: list, b: list) -> float:
     return dot / denom if denom > 1e-9 else 0.0
 
 
+def _normalize_vector(vec: Any) -> list[float] | None:
+    if not isinstance(vec, list) or not vec:
+        return None
+    normalized = []
+    for value in vec:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        normalized.append(float(value))
+    return normalized
+
+
 def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
                     index_file: Path = INDEX_FILE) -> List[Dict[str, Any]]:
     """Semantic recall using vector similarity. Falls back to keyword if index missing."""
@@ -158,6 +169,28 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
     if not vectors:
         return []
 
+    normalized_vectors: dict[str, list[float]] = {}
+    expected_dim = None
+    for rel_path, raw_vec in vectors.items():
+        norm_vec = _normalize_vector(raw_vec)
+        if norm_vec is None:
+            print(f"⚠️  Invalid vector payload for: {rel_path}", file=sys.stderr)
+            continue
+        if expected_dim is None:
+            expected_dim = len(norm_vec)
+        elif len(norm_vec) != expected_dim:
+            print(
+                f"⚠️  Vector dimension mismatch for: {rel_path} "
+                f"(expected {expected_dim}, got {len(norm_vec)})",
+                file=sys.stderr,
+            )
+            continue
+        normalized_vectors[rel_path] = norm_vec
+
+    if not normalized_vectors:
+        print("⚠️  No valid vectors found in vector index. Falling back to keyword search.", file=sys.stderr)
+        return []
+
     # Embed the query
     try:
         import sys as _sys, os as _os
@@ -167,6 +200,17 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         from tools.embedding_providers import get_provider
         provider = get_provider()
         query_vec = provider.embed(query)
+        query_vec = _normalize_vector(query_vec)
+        if query_vec is None:
+            print("⚠️  Query embedding payload is invalid. Falling back to keyword search.", file=sys.stderr)
+            return []
+        if expected_dim is not None and len(query_vec) != expected_dim:
+            print(
+                f"⚠️  Query embedding dimension mismatch (expected {expected_dim}, got {len(query_vec)}). "
+                "Falling back to keyword search.",
+                file=sys.stderr,
+            )
+            return []
     except EnvironmentError as e:
         print(f"⚠️  {e}", file=sys.stderr)
         print("   Falling back to keyword search.", file=sys.stderr)
@@ -177,7 +221,7 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
 
     # Compute cosine similarity for all cards
     scored = []
-    for rel_path, vec in vectors.items():
+    for rel_path, vec in normalized_vectors.items():
         sim = _cosine_similarity(query_vec, vec)
         scored.append((rel_path, sim))
     scored.sort(key=lambda x: x[1], reverse=True)
