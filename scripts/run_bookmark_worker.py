@@ -215,32 +215,41 @@ def main() -> None:
     if args.dry_run:
         print("   (dry-run mode — no API calls)")
 
-    id_to_idx = {it["id"]: idx for idx, it in enumerate(items)}
+    # Build id → [all indices] to handle duplicate IDs across categories
+    from collections import defaultdict
+    id_to_indices: dict[str, list[int]] = defaultdict(list)
+    for idx, it in enumerate(items):
+        id_to_indices[it["id"]].append(idx)
+
     results = {"done": 0, "skipped": 0, "failed": 0}
 
     for item in todo:
         print(f"  → {item['id']}  [{item.get('category', '')}]", end="  ", flush=True)
 
-        idx = id_to_idx[item["id"]]
-        data["items"][idx].update({"status": "processing", "worker": args.worker, "started_at": _now_iso()})
+        indices = id_to_indices[item["id"]]
+        for idx in indices:
+            data["items"][idx].update({"status": "processing", "worker": args.worker, "started_at": _now_iso()})
         _save_queue(data)
 
         try:
             status, error = _process_item(item, api_key, args.dry_run)
 
-            data["items"][idx].update({"status": status, "finished_at": _now_iso(), "error": error})
-
+            title_update = {}
             if status == "done" and not args.dry_run:
                 card_path = CARDS_DIR / f"{item['id']}.md"
                 if card_path.exists():
                     m = re.search(r"^# (.+)$", card_path.read_text(encoding="utf-8"), re.MULTILINE)
                     if m:
-                        data["items"][idx]["title"] = m.group(1).strip()
+                        title_update = {"title": m.group(1).strip()}
+
+            for idx in indices:
+                data["items"][idx].update({"status": status, "finished_at": _now_iso(), "error": error, **title_update})
 
             results[status] += 1
             print(f"✓ {status}")
         except Exception as exc:
-            data["items"][idx].update({"status": "failed", "error": str(exc)[:200], "finished_at": _now_iso()})
+            for idx in indices:
+                data["items"][idx].update({"status": "failed", "error": str(exc)[:200], "finished_at": _now_iso()})
             results["failed"] += 1
             print(f"✗ failed: {exc}")
 
