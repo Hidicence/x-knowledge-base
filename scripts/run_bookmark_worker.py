@@ -23,7 +23,7 @@ from pathlib import Path
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
-CARDS_DIR = WORKSPACE / "memory" / "notebooklm_exports" / "cards"
+CARDS_DIR = WORKSPACE / "memory" / "cards"
 
 MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
 MINIMAX_MODEL = "MiniMax-M2.5"
