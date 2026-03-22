@@ -200,6 +200,7 @@
 ```bash
 python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --format chat
+python3 scripts/recall_gate.py "最近 AI SEO 值不值得做" --json
 ```
 
 ### 目前版本特性（v1）

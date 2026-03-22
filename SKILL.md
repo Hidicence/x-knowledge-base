@@ -61,6 +61,13 @@ python3 scripts/recall_for_conversation.py "AI SEO 案例" --json
 python3 scripts/recall_for_conversation.py "OpenClaw workflow" --format chat
 ```
 
+Recall trigger gate (decides whether the current conversation is worth checking before recall) / 召回觸發閘門（先判斷當前對話值不值得查）：
+
+```bash
+python3 scripts/recall_gate.py "我想優化 OpenClaw workflow，有沒有值得抄的做法？"
+python3 scripts/recall_gate.py "最近 AI SEO 值不值得做" --json
+```
+
 Export to NotebookLM / 匯出 NotebookLM：
 
 ```bash
@@ -261,11 +268,13 @@ python3 scripts/recall_for_conversation.py "省錢跑 AI" --semantic --format ch
 
 - To deeply understand the design principles, trigger rules, response format, and public-facing educational positioning of proactive recall, read `references/conversation-recall.md` / 想深入理解主動召回的設計原則、觸發規則、回覆格式與公開教學定位時，讀 `references/conversation-recall.md`
 - When adjusting NotebookLM card format or export fields, read `references/notebooklm-schema.md` / 調整 NotebookLM 卡片格式或匯出欄位時，讀 `references/notebooklm-schema.md`
-- When using the Tiege single-item slow-clearing workflow, read / 使用鐵哥單筆慢清舊庫時，讀：
-  - `references/tiege-single-item-workflow.md`
-  - `references/tiege-prompt.md`
-  - `config/tiege-queue.example.json`
-- The active queue state file should not be placed inside the skill directory; store it in the workspace data path instead, e.g.: `memory/x-knowledge-base/tiege-queue.json` / 實際執行中的 queue 狀態檔不要放在 skill 內；改放工作區資料路徑，例如：`memory/x-knowledge-base/tiege-queue.json`
+- When using the single-item bookmark enrichment workflow (can be dispatched to any sub-agent) / 使用單筆書籤強化流程時（可分配給任何子 Agent 執行）：
+  - `references/tiege-single-item-workflow.md` — processing rules & state machine
+  - `references/tiege-prompt.md` — system prompt template for the worker agent
+  - `config/tiege-queue.example.json` — queue format reference
+  - To run automatically: `python3 scripts/run_bookmark_worker.py --limit 5 --worker <agent-name>`
+  - The queue is not tied to any specific agent — any worker/model can claim and process items
+- The active queue state file must not be placed inside the skill directory; store it in the workspace data path: `memory/x-knowledge-base/tiege-queue.json` / 實際執行中的 queue 狀態檔不放在 skill 內，存工作區資料路徑：`memory/x-knowledge-base/tiege-queue.json`
 
 ## Environment Requirements / 環境需求
 
