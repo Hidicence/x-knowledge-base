@@ -92,7 +92,9 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 4. Filter out login pages, 404s, homepage noise, and low-value content / 過濾登入頁、404、首頁噪音與低價值內容
 5. Call `tools/bookmark_enhancer.py` to generate summaries and categories / 呼叫 `tools/bookmark_enhancer.py` 生成摘要與分類
 6. Update `search_index.json` / 更新 `search_index.json`
-7. (Optional) Run `recommend_from_profile.sh` to estimate interest weights from accumulated bookmarks and auto-generate recommendations from following/for-you / （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
+7. **Run bookmark enrichment worker** — syncs queue, calls LLM to generate structured knowledge cards, saves to `memory/cards/`, updates index / 執行書籤強化 worker：同步 queue → LLM 生成結構化知識卡 → 存入 `memory/cards/` → 更新索引
+8. Rebuild semantic vector index incrementally / 增量重建語意向量索引
+9. (Optional) Run `recommend_from_profile.sh` to estimate interest weights from accumulated bookmarks and auto-generate recommendations from following/for-you / （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
 
 ## Enrichment & Quality Rules / 補完與品質規則
 
@@ -297,13 +299,15 @@ Do not place `.env` or other secrets inside the skill directory. Use workspace e
 
 ## Key Files / 重要檔案
 
-- `scripts/fetch_and_summarize.sh` — Main pipeline entry / 主流程入口
+- `scripts/fetch_and_summarize.sh` — Main pipeline entry (steps 1–8) / 主流程入口（步驟 1–8）
 - `scripts/fetch_bookmarks.sh` — Fetch new bookmarks / 抓新書籤
 - `scripts/auto_categorize.sh` — Categorize inbox bookmarks by `config/category-rules.json` / 依 `config/category-rules.json` 將 inbox 書籤歸類
 - `scripts/build_search_index.sh` — Build search index / 建索引
 - `scripts/search_bookmarks.sh` — Search / 搜尋
 - `scripts/recommend_from_profile.sh` — Estimate interests from accumulated bookmarks, generate recommendations from feed / 由累積書籤推估興趣，從 feed 產生推薦
-- `scripts/export_notebooklm.py` — Export to NotebookLM / 匯出 NotebookLM
+- `scripts/run_bookmark_worker.py` — Enrichment worker: generates structured knowledge cards from raw bookmarks / 強化 worker：從原始書籤生成結構化知識卡
+- `scripts/sync_tiege_queue.py` — Sync bookmark files into enrichment queue / 同步書籤檔案到強化 queue
+- `scripts/sync_enriched_index.py` — Update search_index to point to enriched cards in `memory/cards/` / 更新 search_index 指向 `memory/cards/` 的強化卡
 - `scripts/sync_to_drive.sh` — Sync local md to Google Drive via `rclone` / 透過 `rclone` 同步本地 md 到 Google Drive
 - `config/category-rules.json` — Category rule configuration / 分類規則設定
 - `config/recommendation-topics.json` — Recommendation topics and keyword configuration / 推薦主題與關鍵字設定

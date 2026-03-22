@@ -221,3 +221,33 @@ bash "$SKILL_DIR/scripts/build_search_index.sh" --incremental || true
 
 echo ""
 echo "✅ 批次處理完成！共處理約 $TOTAL_PROCESSED 個書籤"
+
+echo ""
+echo "📦 步驟4：強化新書籤（Bookmark Enrichment Worker）..."
+python3 "$SKILL_DIR/scripts/sync_tiege_queue.py" || true
+
+NEW_TODO=$(python3 -c "
+import json, os
+q = os.path.join('$WORKSPACE_DIR', 'memory/x-knowledge-base/tiege-queue.json')
+d = json.load(open(q))
+print(len([i for i in d['items'] if i['status']=='todo']))
+" 2>/dev/null || echo "0")
+
+if [[ "$NEW_TODO" -gt 0 ]]; then
+    echo "  📋 $NEW_TODO 個書籤待強化，開始處理（最多 15 條）..."
+    python3 "$SKILL_DIR/scripts/run_bookmark_worker.py" --limit 15 --worker "pipeline" || true
+    echo "  🔄 同步強化索引..."
+    python3 "$SKILL_DIR/scripts/sync_enriched_index.py" || true
+else
+    echo "  ✅ 無待強化書籤"
+fi
+
+echo ""
+echo "🧠 步驟5：更新語意向量索引..."
+OPENCLAW_JSON="$(dirname "$WORKSPACE_DIR")/openclaw.json"
+GEMINI_KEY=$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON','$WORKSPACE_DIR/../openclaw.json'); c=json.load(open(f)); print(c.get('env',{}).get('GEMINI_API_KEY',''))" 2>/dev/null || echo "")
+if [[ -n "$GEMINI_KEY" && -f "$WORKSPACE_DIR/memory/bookmarks/vector_index.json" ]]; then
+    GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --incremental || true
+else
+    echo "  ⏭️ 略過（GEMINI_API_KEY 未設定或向量索引不存在）"
+fi
