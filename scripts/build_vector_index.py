@@ -18,6 +18,7 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -153,16 +154,22 @@ def main() -> int:
     existing_vectors: dict = existing.get("vectors", {})
 
     # Determine which cards to embed
+    existing_hashes: dict = existing.get("text_hashes", {})
+
     to_embed = []
     for item in items:
         key = item.get("relative_path") or item.get("path") or ""
-        if args.incremental and key in existing_vectors:
-            continue
-        text = extract_card_text(item)
-        if text.strip():
-            to_embed.append((key, text))
-        else:
+        card_text = extract_card_text(item)
+        if not card_text.strip():
             print(f"  ⚠️  No text for: {key}")
+            continue
+        text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
+        if args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash:
+            continue
+        to_embed.append((key, card_text, text_hash))
+
+    # Alias for downstream use
+    texts = [t for _, t, _ in to_embed]
 
     skipped = len(items) - len(to_embed)
     print(f"🔢 To embed: {len(to_embed)}  |  Skipped (incremental): {skipped}")
@@ -187,8 +194,8 @@ def main() -> int:
         return 1
 
     # Embed in batches
-    keys = [k for k, _ in to_embed]
-    texts = [t for _, t in to_embed]
+    keys = [k for k, _, _ in to_embed]
+    hashes = [h for _, _, h in to_embed]
     vectors_list = []
 
     batch_size = args.batch_size
@@ -205,10 +212,12 @@ def main() -> int:
             print(f"\n❌ Failed at batch {i//batch_size + 1}: {e}", file=sys.stderr)
             return 1
 
-    # Merge with existing vectors
+    # Merge with existing vectors and hashes
     new_vectors = dict(existing_vectors)
-    for key, vec in vectors_list:
+    new_hashes = dict(existing_hashes)
+    for (key, vec), h in zip(vectors_list, hashes):
         new_vectors[key] = vec
+        new_hashes[key] = h
 
     # Save
     output = {
@@ -220,6 +229,7 @@ def main() -> int:
             "built_at": datetime.now(timezone.utc).isoformat(),
         },
         "vectors": new_vectors,
+        "text_hashes": new_hashes,
     }
     save_vector_index(output, vector_path)
 

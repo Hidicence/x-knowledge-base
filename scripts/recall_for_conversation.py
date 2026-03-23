@@ -260,6 +260,20 @@ def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) ->
     }
 
 
+
+def _display_title(item: dict) -> str:
+    """Return a human-readable title. If title is just a tweet ID, use summary snippet."""
+    import re as _re
+    title = (item.get("title") or "").strip()
+    if title and not _re.match(r"^\d{10,}$", title):
+        return title
+    summary = (item.get("summary") or "").strip()
+    if summary and summary not in ("待整理", "待補充") and not summary.startswith("###"):
+        first = summary.split("。")[0].split(".")[0][:60].strip()
+        if first:
+            return first + "…"
+    return title or "(untitled)"
+
 def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
                     index_file: Path = INDEX_FILE,
                     topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
@@ -372,7 +386,7 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         if adjustments["category_penalty"] != 0:
             reason.append(f"泛分類調整 {adjustments['category_penalty']:+.2f}")
         results.append({
-            "title": item.get("title") or "(untitled)",
+            "title": _display_title(item),
             "summary": clean_summary(item.get("summary") or ""),
             "category": item.get("category") or "general",
             "tags": item.get("tags") or [],
@@ -419,7 +433,7 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
             md_path = BOOKMARKS_DIR / rel_path if rel_path and not rel_path.startswith("/") else Path(rel_path)
             source_url = extract_source_url(md_path)
         results.append({
-            "title": item.get("title") or "(untitled)",
+            "title": _display_title(item),
             "summary": clean_summary(item.get("summary") or ""),
             "category": item.get("category") or "general",
             "tags": item.get("tags") or [],
