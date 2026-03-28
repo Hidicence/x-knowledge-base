@@ -221,7 +221,7 @@ def main():
         return 1
 
     # Load API key
-    config_path = Path("/root/.openclaw/openclaw.json")
+    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
     api_key = ""
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))

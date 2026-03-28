@@ -23,7 +23,7 @@ from pathlib import Path
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
-CARDS_DIR = WORKSPACE / "memory" / "cards"
+CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
 MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
 MINIMAX_MODEL = "MiniMax-M2.5"
@@ -85,7 +85,7 @@ def _get_api_key() -> str:
     key = os.environ.get("MINIMAX_API_KEY", "")
     if key:
         return key
-    config_path = Path("/root/.openclaw/openclaw.json")
+    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))
         key = config.get("env", {}).get("MINIMAX_API_KEY", "")

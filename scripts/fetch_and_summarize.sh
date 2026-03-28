@@ -6,10 +6,18 @@ set -euo pipefail
 WORKSPACE_DIR="${WORKSPACE_DIR:-${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}}"
 SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
 BOOKMARKS_DIR="${BOOKMARKS_DIR:-$WORKSPACE_DIR/memory/bookmarks}"
+CARDS_DIR="${CARDS_DIR:-$WORKSPACE_DIR/memory/cards}"
+RUNTIME_DIR="${RUNTIME_DIR:-$WORKSPACE_DIR/memory/x-knowledge-base}"
+DEFAULT_INDEX_FILE="$BOOKMARKS_DIR/search_index.json"
+DEFAULT_VECTOR_INDEX_PATH="$BOOKMARKS_DIR/vector_index.json"
+DEFAULT_QUEUE_PATH="$RUNTIME_DIR/tiege-queue.json"
+INDEX_FILE="${INDEX_FILE:-$DEFAULT_INDEX_FILE}"
+VECTOR_INDEX_PATH="${VECTOR_INDEX_PATH:-$DEFAULT_VECTOR_INDEX_PATH}"
+QUEUE_PATH="${XKB_QUEUE_PATH:-$DEFAULT_QUEUE_PATH}"
 INBOX_DIR="$BOOKMARKS_DIR/inbox"
 MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
 PREPARE_ONLY="${PREPARE_ONLY:-0}"
-export BOOKMARKS_DIR
+export BOOKMARKS_DIR CARDS_DIR RUNTIME_DIR INDEX_FILE VECTOR_INDEX_PATH XKB_QUEUE_PATH="$QUEUE_PATH"
 
 # Twitter 認證（從環境變數讀取；若工作區有 secrets 檔則一併載入）
 SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
@@ -25,7 +33,11 @@ mkdir -p "$INBOX_DIR"
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 echo "📥 步驟1：抓取書籤..."
-bash "$SKILL_DIR/scripts/fetch_bookmarks.sh"
+if [[ "${FETCH_SKIP_BOOKMARKS:-0}" == "1" ]]; then
+    echo "  ⏭️ 略過 bird bookmark list fetch（使用外部提供的 tweet id 清單）"
+else
+    bash "$SKILL_DIR/scripts/fetch_bookmarks.sh"
+fi
 
 echo ""
 echo "📖 步驟2：讀取全文 + Agent Reach 補完..."
@@ -35,8 +47,9 @@ if [[ -n "$BIRD_AUTH_TOKEN" && -n "$BIRD_CT0" ]]; then
     bird --auth-token "$BIRD_AUTH_TOKEN" --ct0 "$BIRD_CT0" bookmarks --all --max-pages 5 --json 2>/dev/null > "$BOOKMARKS_TEXT_CACHE" || true
 fi
 
+NEW_BOOKMARKS_FILE="${BOOKMARKS_TMP_FILE:-/tmp/new_bookmarks.txt}"
 NEW_COUNT=0
-if [[ -f /tmp/new_bookmarks.txt ]]; then
+if [[ -f "$NEW_BOOKMARKS_FILE" ]]; then
     while read -r tweet_id; do
         [[ -z "$tweet_id" ]] && continue
         filename="${tweet_id}.md"
@@ -173,7 +186,7 @@ PY
         fi
 
         ((NEW_COUNT++)) || true
-    done < /tmp/new_bookmarks.txt
+    done < "$NEW_BOOKMARKS_FILE"
 fi
 
 if [[ "$PREPARE_ONLY" == "1" ]]; then
@@ -217,7 +230,7 @@ done
 
 echo ""
 echo "🔎 更新搜尋索引..."
-bash "$SKILL_DIR/scripts/build_search_index.sh" --incremental || true
+INDEX_FILE="$INDEX_FILE" BOOKMARKS_DIR="$BOOKMARKS_DIR" bash "$SKILL_DIR/scripts/build_search_index.sh" --incremental || true
 
 echo ""
 echo "✅ 批次處理完成！共處理約 $TOTAL_PROCESSED 個書籤"
@@ -228,7 +241,7 @@ python3 "$SKILL_DIR/scripts/sync_tiege_queue.py" || true
 
 NEW_TODO=$(python3 -c "
 import json, os
-q = os.path.join('$WORKSPACE_DIR', 'memory/x-knowledge-base/tiege-queue.json')
+q = os.environ.get('XKB_QUEUE_PATH', '$QUEUE_PATH')
 d = json.load(open(q))
 print(len([i for i in d['items'] if i['status']=='todo']))
 " 2>/dev/null || echo "0")
@@ -243,11 +256,25 @@ else
 fi
 
 echo ""
-echo "🧠 步驟5：更新語意向量索引..."
-OPENCLAW_JSON="$(dirname "$WORKSPACE_DIR")/openclaw.json"
-GEMINI_KEY=$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON','$WORKSPACE_DIR/../openclaw.json'); c=json.load(open(f)); print(c.get('env',{}).get('GEMINI_API_KEY',''))" 2>/dev/null || echo "")
-if [[ -n "$GEMINI_KEY" && -f "$WORKSPACE_DIR/memory/bookmarks/vector_index.json" ]]; then
-    GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --incremental || true
+echo "🧹 步驟5：治理搜尋索引品質..."
+python3 "$SKILL_DIR/scripts/normalize_index_quality.py" || true
+python3 "$SKILL_DIR/scripts/canonicalize_duplicates.py" || true
+python3 "$SKILL_DIR/scripts/cleanup_titles_in_index.py" || true
+
+echo ""
+echo "🧠 步驟6：更新語意向量索引..."
+OPENCLAW_JSON="${OPENCLAW_JSON:-$(dirname "$WORKSPACE_DIR")/openclaw.json}"
+GEMINI_KEY=$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON', '$OPENCLAW_JSON'); c=json.load(open(f)); print(c.get('env',{}).get('GEMINI_API_KEY',''))" 2>/dev/null || echo "")
+VECTOR_INDEX_PATH="$WORKSPACE_DIR/memory/bookmarks/vector_index.json"
+
+if [[ -n "$GEMINI_KEY" ]]; then
+    if [[ -f "$VECTOR_INDEX_PATH" ]]; then
+        echo "  ♻️ 偵測到既有向量索引，執行 incremental rebuild"
+        GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --incremental --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" || true
+    else
+        echo "  🆕 尚未找到向量索引，執行首次 full build"
+        GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" || true
+    fi
 else
-    echo "  ⏭️ 略過（GEMINI_API_KEY 未設定或向量索引不存在）"
+    echo "  ⏭️ 略過（GEMINI_API_KEY 未設定）"
 fi

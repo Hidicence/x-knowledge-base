@@ -2,9 +2,9 @@
 # YouTube 播放清單自動同步腳本
 # 每日執行：抓新影片 → 生成知識卡 → 更新語意索引
 
-export PATH=$PATH:/root/.local/bin
+export PATH=$PATH:$HOME/.local/bin
 
-SKILL_DIR="/root/.openclaw/workspace/skills/x-knowledge-base"
+SKILL_DIR="${SKILL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG_FILE="/tmp/xkb-youtube-sync.log"
 
 # 讀取 secrets
@@ -14,8 +14,9 @@ if [[ -f "$SECRETS_FILE" ]]; then
 fi
 
 # 讀取 openclaw.json 的 MINIMAX_API_KEY
-export MINIMAX_API_KEY=$(python3 -c "import json; print(json.load(open('/root/.openclaw/openclaw.json'))['env'].get('MINIMAX_API_KEY',''))" 2>/dev/null)
-export GEMINI_API_KEY=$(python3 -c "import json; print(json.load(open('/root/.openclaw/openclaw.json'))['env'].get('GEMINI_API_KEY',''))" 2>/dev/null)
+OPENCLAW_JSON="${OPENCLAW_JSON:-$HOME/.openclaw/openclaw.json}"
+export MINIMAX_API_KEY="${MINIMAX_API_KEY:-$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON','$HOME/.openclaw/openclaw.json'); c=json.load(open(f)); print(c.get('env',{}).get('MINIMAX_API_KEY',''))" 2>/dev/null)}"
+export GEMINI_API_KEY="${GEMINI_API_KEY:-$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON','$HOME/.openclaw/openclaw.json'); c=json.load(open(f)); print(c.get('env',{}).get('GEMINI_API_KEY',''))" 2>/dev/null)}"
 
 echo "[$(date '+%Y-%m-%d %H:%M')] YouTube sync start" >> "$LOG_FILE"
 

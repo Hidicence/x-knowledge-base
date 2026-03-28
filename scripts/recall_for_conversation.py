@@ -14,13 +14,16 @@ from typing import List, Dict, Any
 
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
-VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
+_index_default = BOOKMARKS_DIR / "search_index.json"
+_vector_default = BOOKMARKS_DIR / "vector_index.json"
+INDEX_FILE = Path(os.getenv("INDEX_FILE", str(_index_default)))
+VECTOR_FILE = Path(os.getenv("VECTOR_INDEX_PATH", os.getenv("VECTOR_FILE", str(_vector_default))))
 TOPIC_PROFILE_FILE = Path(
     os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
 )
 GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
 LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
+LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}
 LOW_SIGNAL_SOURCES = {"x", "twitter"}
 
 STOPWORDS = {
@@ -78,6 +81,24 @@ def get_topic_profile_matches(query_tokens: List[str], topic_profile: Dict[str, 
     }
 
 
+def _is_valid_source_url(url: str) -> bool:
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return False
+    x_status = re.search(r"https?://(?:x|twitter)\.com/[^\s/]+/status/(\d{15,20})(?:\b|/|\?)", url)
+    x_i_status = re.search(r"https?://x\.com/i/status/(\d{15,20})(?:\b|/|\?)", url)
+    if ("x.com" in url or "twitter.com" in url) and not (x_status or x_i_status):
+        return False
+    return True
+
+
+def _normalize_source_url(url: str) -> str:
+    url = (url or "").strip().strip('"')
+    if not _is_valid_source_url(url):
+        return ""
+    return url
+
+
 def extract_source_url(md_path: Path) -> str:
     if not md_path.exists():
         return ""
@@ -93,7 +114,9 @@ def extract_source_url(md_path: Path) -> str:
         m = re.search(pattern, text, re.MULTILINE)
         if m:
             url = m.group(1).strip() if m.groups() else m.group(0).strip()
-            return url.strip('"')
+            normalized = _normalize_source_url(url)
+            if normalized:
+                return normalized
     return ""
 
 
@@ -227,9 +250,45 @@ def _summary_quality(summary: str) -> float:
     return 0.02
 
 
+def _title_quality(title: str) -> float:
+    title = (title or "").strip()
+    lowered = title.lower()
+    if not title:
+        return -0.12
+    if lowered in LOW_SIGNAL_TITLES:
+        return -0.15
+    if re.fullmatch(r"tweet\s+\d{15,20}", lowered):
+        return -0.14
+    if re.fullmatch(r"\d{15,20}", title):
+        return -0.16
+    if re.match(r"^\d{4}-\d{2}-\d{2}-", title) and len(title) < 42:
+        return -0.08
+    if len(title) < 8:
+        return -0.05
+    return 0.03
+
+
 def _category_penalty(item: Dict[str, Any]) -> float:
     category = (item.get("category") or "").strip().lower()
     return -0.08 if category in GENERIC_CATEGORIES else 0.0
+
+
+def _should_filter_result(item: Dict[str, Any], source_url: str) -> bool:
+    title = (item.get("title") or "").strip()
+    summary = clean_summary(item.get("summary") or "")
+    category = (item.get("category") or "").strip().lower()
+
+    if item.get("excluded"):
+        return True
+    if summary in LOW_SIGNAL_SUMMARIES and not source_url:
+        return True
+    if re.fullmatch(r"\d{15,20}", title):
+        return True
+    if re.fullmatch(r"tweet\s+\d{15,20}", title.lower()) and summary in LOW_SIGNAL_SUMMARIES:
+        return True
+    if category in GENERIC_CATEGORIES and summary in LOW_SIGNAL_SUMMARIES:
+        return True
+    return False
 
 
 def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) -> Dict[str, float]:
@@ -248,15 +307,17 @@ def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) ->
             topic_bonus += round(topic_boost * 0.08, 4)
 
     summary_bonus = _summary_quality(item.get("summary") or "")
+    title_bonus = _title_quality(item.get("title") or "")
     source_bonus = _source_quality(item)
     category_penalty = _category_penalty(item)
 
     return {
         "topic_bonus": topic_bonus,
         "summary_bonus": summary_bonus,
+        "title_bonus": title_bonus,
         "source_bonus": source_bonus,
         "category_penalty": category_penalty,
-        "total_adjustment": round(topic_bonus + summary_bonus + source_bonus + category_penalty, 4),
+        "total_adjustment": round(topic_bonus + summary_bonus + title_bonus + source_bonus + category_penalty, 4),
     }
 
 
@@ -367,7 +428,7 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         if not item:
             continue
 
-        source_url = item.get("source_url") or ""
+        source_url = _normalize_source_url(item.get("source_url") or "")
         if not source_url:
             md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
             source_url = extract_source_url(md_path)
@@ -376,11 +437,15 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         hybrid = 0.65 * sim + 0.35 * kw
         adjustments = _ranking_adjustments(item, topic_matches)
         final_score = round(hybrid + adjustments["total_adjustment"], 4)
+        if _should_filter_result(item, source_url):
+            continue
         reason = [f"語意 {sim:.0%}", f"關鍵字 {kw:.0%}"]
         if adjustments["topic_bonus"] > 0:
             reason.append(f"主題加權 +{adjustments['topic_bonus']:.2f}")
         if adjustments["summary_bonus"] != 0:
             reason.append(f"摘要調整 {adjustments['summary_bonus']:+.2f}")
+        if adjustments["title_bonus"] != 0:
+            reason.append(f"標題調整 {adjustments['title_bonus']:+.2f}")
         if adjustments["source_bonus"] != 0:
             reason.append(f"來源調整 {adjustments['source_bonus']:+.2f}")
         if adjustments["category_penalty"] != 0:
@@ -428,10 +493,12 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
 
         rel_path = item.get("relative_path") or item.get("path") or ""
         # Use pre-indexed source_url first; fall back to file scan only if missing
-        source_url = item.get("source_url") or ""
+        source_url = _normalize_source_url(item.get("source_url") or "")
         if not source_url:
             md_path = BOOKMARKS_DIR / rel_path if rel_path and not rel_path.startswith("/") else Path(rel_path)
             source_url = extract_source_url(md_path)
+        if _should_filter_result(item, source_url):
+            continue
         results.append({
             "title": _display_title(item),
             "summary": clean_summary(item.get("summary") or ""),

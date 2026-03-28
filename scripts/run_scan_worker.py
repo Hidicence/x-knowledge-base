@@ -24,12 +24,11 @@ import os
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-BOOKMARKS_DIR = WORKSPACE / "memory" / "bookmarks"
-CARDS_DIR = WORKSPACE / "memory" / "cards"
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
+CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
 MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
 MINIMAX_MODEL = "MiniMax-M2.5"
@@ -91,39 +90,50 @@ def _get_api_key() -> str:
     key = os.environ.get("MINIMAX_API_KEY", "")
     if key:
         return key
-    config_path = Path("/root/.openclaw/openclaw.json")
+    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))
         key = config.get("env", {}).get("MINIMAX_API_KEY", "")
     return key
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def _extract_frontmatter_value(text: str, key: str) -> str:
-    m = re.search(rf'^{key}:\s*"?([^"\n]+)"?\s*$', text, re.MULTILINE)
+    m = re.search(rf'^{re.escape(key)}:\s*"?([^"\n]+)"?\s*$', text, re.MULTILINE)
     return m.group(1).strip() if m else ""
 
 
+def _extract_status_id(value: str) -> str:
+    if not value:
+        return ""
+    m = re.search(r"/status/(\d{15,20})", value)
+    return m.group(1) if m else ""
+
+
+def _build_legacy_card_id(filepath: Path) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", filepath.stem).strip("-").lower() or "untitled"
+    return f"legacy-{slug}"
+
+
 def _get_card_id(filepath: Path, content: str) -> str:
-    """Determine the card ID for this bookmark file."""
-    # Try tweet_id from frontmatter
+    """Determine a stable card ID for this bookmark file."""
     tweet_id = _extract_frontmatter_value(content, "tweet_id")
-    if tweet_id and re.match(r"^\d{15,20}$", tweet_id):
+    if tweet_id and re.fullmatch(r"\d{15,20}", tweet_id):
         return tweet_id
-    # Try extracting from source_url or source field URLs
+
     for field in ("source_url", "source"):
         url = _extract_frontmatter_value(content, field)
-        m = re.search(r"/status/(\d{15,20})", url)
-        if m:
-            return m.group(1)
-    # Try numeric stem
-    if re.match(r"^\d{15,20}$", filepath.stem):
+        status_id = _extract_status_id(url)
+        if status_id:
+            return status_id
+
+    if re.fullmatch(r"\d{15,20}", filepath.stem):
         return filepath.stem
-    # Fallback: filename stem as slug
-    return filepath.stem
+
+    m = re.match(r"^(\d{15,20})", filepath.stem)
+    if m:
+        return m.group(1)
+
+    return _build_legacy_card_id(filepath)
 
 
 def _get_source_url(content: str, card_id: str) -> str:
@@ -131,12 +141,9 @@ def _get_source_url(content: str, card_id: str) -> str:
         url = _extract_frontmatter_value(content, field)
         if url and url.startswith("http"):
             return url
-    if re.match(r"^\d{15,20}$", card_id):
+    if re.fullmatch(r"\d{15,20}", card_id):
         return f"https://x.com/i/status/{card_id}"
     return ""
-
-
-
 
 
 def _get_category(filepath: Path) -> str:
@@ -234,7 +241,7 @@ def main() -> None:
         sys.exit(1)
 
     missing = scan_missing(args.limit, args.category)
-    total_missing = len(scan_missing(9999))  # count total without limit
+    total_missing = len(scan_missing(9999, args.category))
 
     if not missing:
         print("✅ All bookmarks already enriched")
@@ -274,7 +281,7 @@ def main() -> None:
             results["failed"] += 1
             print(f"✗ {exc}")
 
-    remaining = len(scan_missing(9999))
+    remaining = len(scan_missing(9999, args.category))
     print(f"\n📊 done={results['done']}  skipped={results['skipped']}  failed={results['failed']}  remaining={remaining}")
 
 

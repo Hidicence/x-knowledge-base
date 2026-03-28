@@ -19,6 +19,9 @@ Full pipeline / 完整流程：
 
 ```bash
 bash scripts/fetch_and_summarize.sh
+
+# For full rebuild / 用於全量重建
+python3 scripts/full_sync_v2.py
 ```
 
 Personalized recommendations based on accumulated bookmark preferences (picks content from feed/bookmarks you may be interested in) / 依「累積書籤偏好」做個人化推薦（從 feed / bookmarks 挑你可能有興趣的內容）：
@@ -27,10 +30,14 @@ Personalized recommendations based on accumulated bookmark preferences (picks co
 bash scripts/recommend_from_profile.sh
 ```
 
-Fetch new bookmarks only / 只抓新書籤：
+Fetch bookmarks / 抓書籤：
 
 ```bash
+# Default: incremental sync (recent bookmarks only) / 預設：增量同步（只抓近期）
 bash scripts/fetch_bookmarks.sh
+
+# Full import for first-time bootstrap or rebuild / 首次建庫或重建時的全量匯入
+FETCH_MODE=full MAX_PAGES=100 bash scripts/fetch_bookmarks.sh
 ```
 
 Build or incrementally update the search index / 建立或增量更新搜尋索引：
@@ -93,8 +100,9 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 5. Call `tools/bookmark_enhancer.py` to generate summaries and categories / 呼叫 `tools/bookmark_enhancer.py` 生成摘要與分類
 6. Update `search_index.json` / 更新 `search_index.json`
 7. **Run bookmark enrichment worker** — syncs queue, calls LLM to generate structured knowledge cards, saves to `memory/cards/`, updates index / 執行書籤強化 worker：同步 queue → LLM 生成結構化知識卡 → 存入 `memory/cards/` → 更新索引
-8. Rebuild semantic vector index incrementally / 增量重建語意向量索引
-9. (Optional) Run `recommend_from_profile.sh` to estimate interest weights from accumulated bookmarks and auto-generate recommendations from following/for-you / （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
+8. **Run index quality governance** — normalize low-quality entries, canonicalize duplicate source URLs, and clean obviously bad titles in `search_index.json` / 執行索引治理：標記低品質項目、合併重複 source URL 的 canonical entry、清理明顯不佳的 title
+9. Rebuild semantic vector index incrementally / 增量重建語意向量索引
+10. (Optional) Run `recommend_from_profile.sh` to estimate interest weights from accumulated bookmarks and auto-generate recommendations from following/for-you / （可選）執行 `recommend_from_profile.sh`，用累積書籤推估興趣權重，從 following/for-you 自動產生推薦
 
 ## Enrichment & Quality Rules / 補完與品質規則
 
@@ -264,11 +272,13 @@ python3 scripts/recall_for_conversation.py "省錢跑 AI" --semantic --format ch
 
 - If `vector_index.json` is missing, `--semantic` automatically falls back to keyword search / 若向量索引不存在，`--semantic` 自動降級為關鍵字搜尋
 - `vector_index.json` is personal data — it is **not** committed to the repo / 向量索引是個人資料，**不會**進 GitHub repo
+- The pipeline now supports first-time vector index creation automatically: if no `vector_index.json` exists yet, `fetch_and_summarize.sh` will do a full build; otherwise it performs incremental rebuild / 現在主流程已支援第一次自動建立向量索引：若還沒有 `vector_index.json`，`fetch_and_summarize.sh` 會先做 full build；若已存在則做 incremental rebuild
 - Re-run `build_vector_index.py --incremental` after adding new bookmarks / 新增書籤後記得跑增量更新
 
 ## When to Read Additional Reference Files / 何時讀額外參考檔
 
 - To deeply understand the design principles, trigger rules, response format, and public-facing educational positioning of proactive recall, read `references/conversation-recall.md` / 想深入理解主動召回的設計原則、觸發規則、回覆格式與公開教學定位時，讀 `references/conversation-recall.md`
+- When planning or executing a full clean rebuild of the bookmark dataset, read `references/rebuild-v2-plan.md` / 規劃或執行書籤資料集全量重建時，讀 `references/rebuild-v2-plan.md`
 - When adjusting NotebookLM card format or export fields, read `references/notebooklm-schema.md` / 調整 NotebookLM 卡片格式或匯出欄位時，讀 `references/notebooklm-schema.md`
 - When using the single-item bookmark enrichment workflow (can be dispatched to any sub-agent) / 使用單筆書籤強化流程時（可分配給任何子 Agent 執行）：
   - `references/tiege-single-item-workflow.md` — processing rules & state machine
@@ -306,8 +316,14 @@ Do not place `.env` or other secrets inside the skill directory. Use workspace e
 - `scripts/search_bookmarks.sh` — Search / 搜尋
 - `scripts/recommend_from_profile.sh` — Estimate interests from accumulated bookmarks, generate recommendations from feed / 由累積書籤推估興趣，從 feed 產生推薦
 - `scripts/run_bookmark_worker.py` — Enrichment worker: generates structured knowledge cards from raw bookmarks / 強化 worker：從原始書籤生成結構化知識卡
+- `scripts/run_scan_worker.py` — Scan-mode enrichment worker for legacy/unqueued bookmarks; when no stable source ID exists, it uses explicit `legacy-*` IDs instead of pretending they are tweet IDs / 掃描式強化 worker，處理舊資料或未進 queue 的書籤；若沒有穩定來源 ID，會用明確的 `legacy-*` ID，而不是假裝它是 tweet ID
 - `scripts/sync_tiege_queue.py` — Sync bookmark files into enrichment queue / 同步書籤檔案到強化 queue
-- `scripts/sync_enriched_index.py` — Update search_index to point to enriched cards in `memory/cards/` / 更新 search_index 指向 `memory/cards/` 的強化卡
+- `scripts/sync_enriched_index.py` — Update search_index to point to enriched cards in `memory/cards/`; keeps `relative_path` truly relative and only auto-adds orphan cards when metadata is valid / 更新 search_index 指向 `memory/cards/` 的強化卡；會維持 `relative_path` 真正為相對路徑，且只有在 metadata 合格時才自動加入 orphan cards
+- `scripts/normalize_index_quality.py` — Phase 1 index governance: mark clearly low-quality entries as excluded without deleting source data / Phase 1 索引治理：標記明顯低品質項目為 excluded，不刪原始資料
+- `scripts/canonicalize_duplicates.py` — Phase 2 index governance: choose canonical entries for duplicate source URLs and exclude duplicates / Phase 2 索引治理：為重複 source URL 選 canonical entry，並排除重複項
+- `scripts/cleanup_titles_in_index.py` — Phase 3 lightweight title normalization for numeric / tweet-like titles using existing summaries / Phase 3 輕量 title 正規化：用既有 summary 改善 numeric / tweet 類 title
+- `scripts/audit_index_quality.py` — Audit current index quality: low-signal titles, weak summaries, invalid source URLs, duplicates / 稽核目前索引品質：低品質 title、弱摘要、壞 source URL、重複項
+- `scripts/init_rebuild_v2.py` — Initialize rebuild scaffold (directories and placeholder runtime files) / 初始化重建目錄與 runtime 檔案骨架
 - `scripts/sync_to_drive.sh` — Sync local md to Google Drive via `rclone` / 透過 `rclone` 同步本地 md 到 Google Drive
 - `config/category-rules.json` — Category rule configuration / 分類規則設定
 - `config/recommendation-topics.json` — Recommendation topics and keyword configuration / 推薦主題與關鍵字設定
