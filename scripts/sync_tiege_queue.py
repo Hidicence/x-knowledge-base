@@ -7,6 +7,7 @@ from pathlib import Path
 
 WORKSPACE = Path(os.getenv('OPENCLAW_WORKSPACE', os.getenv('WORKSPACE_DIR', str(Path.home() / '.openclaw' / 'workspace'))))
 BOOKMARKS_DIR = Path(os.getenv('BOOKMARKS_DIR', str(WORKSPACE / 'memory' / 'bookmarks')))
+CARDS_DIR = Path(os.getenv('CARDS_DIR', str(WORKSPACE / 'memory' / 'cards')))
 QUEUE_PATH = Path(os.getenv('XKB_QUEUE_PATH', str(WORKSPACE / 'memory' / 'x-knowledge-base' / 'tiege-queue.json')))
 
 
@@ -57,11 +58,14 @@ for f in BOOKMARKS_DIR.rglob('*.md'):
 
 files.sort(key=lambda x: x[0])
 
+existing_card_ids = {p.stem for p in CARDS_DIR.rglob('*.md') if p.is_file()}
+now_iso = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
 payload = {
     'version': 4,
-    'updated_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    'updated_at': now_iso,
     'mode': 'single-item',
-    'notes': 'Canonical single-item queue synced from memory/bookmarks for tiege processing.',
+    'notes': 'Canonical single-item queue synced from memory/bookmarks for tiege processing and reconciled against memory/cards.',
     'items': []
 }
 
@@ -84,6 +88,16 @@ for tweet_id, path, text in files:
     error = old.get('error', '')
     if status not in {'todo', 'processing', 'done', 'failed', 'skipped'}:
         status = 'todo'
+
+    has_card = tweet_id in existing_card_ids
+    if has_card and status != 'processing':
+        status = 'done'
+        if not finished_at:
+            finished_at = now_iso
+        if not worker:
+            worker = old.get('worker') or 'reconcile'
+        error = ''
+
     payload['items'].append({
         'id': tweet_id,
         'title': old.get('title') or parse_title(text, path.stem),

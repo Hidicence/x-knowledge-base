@@ -94,8 +94,8 @@ DRY_RUN=1 bash scripts/sync_to_drive.sh
 When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `fetch_and_summarize.sh` 時，依序做這些事：
 
 1. Fetch new bookmarks from the past 28 days, deduplicated by tweet ID / 抓近 28 天新書籤並以 tweet id 去重
-2. Retrieve tweet content (bird / Jina / fallback) / 取得 tweet 內容（bird / Jina / fallback）
-3. Enrich with thread, author supplements, external articles, GitHub content / 補抓 thread、作者補充、外部文章、GitHub 內容
+2. Retrieve tweet content (bird / Jina / fallback); if the tweet is mostly a t.co link to an X Article, promote the article body to the main source / 取得 tweet 內容（bird / Jina / fallback）；若主文幾乎只有 t.co 且導向 X Article，直接把文章正文提升為主內容源
+3. Enrich with thread, author supplements, X Articles, external articles, GitHub content / 補抓 thread、作者補充、X Article 長文、外部文章、GitHub 內容
 4. Filter out login pages, 404s, homepage noise, and low-value content / 過濾登入頁、404、首頁噪音與低價值內容
 5. Call `tools/bookmark_enhancer.py` to generate summaries and categories / 呼叫 `tools/bookmark_enhancer.py` 生成摘要與分類
 6. Update `search_index.json` / 更新 `search_index.json`
@@ -108,6 +108,7 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 
 - Prioritize fetching full threads; fall back to tweet-only on failure / 優先抓完整 thread；失敗時回退 tweet-only
 - GitHub links go through `gh` first / GitHub 連結優先走 `gh`
+- X Article 長文優先走 fxtwitter API 抽 `tweet.article.content.blocks`；不要直接讀 x.com HTML / X Article 長文優先走 fxtwitter API 抽 `tweet.article.content.blocks`；不要直接讀 x.com HTML
 - External articles extract body text first; avoid login pages or noise pages / 外部文章優先抽正文，不保留登入頁或雜訊頁
 - When content is insufficient, keep a simplified card rather than fabricating missing info / 內容不足時維持簡化卡，不硬補不存在的資訊
 - Always fallback on failure; never interrupt an entire batch import / 失敗時要 fallback，不中斷整批入庫

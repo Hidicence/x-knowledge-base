@@ -176,7 +176,7 @@ def main() -> int:
 
     if args.dry_run:
         print("\n[dry-run] First 3 cards that would be embedded:")
-        for key, text in to_embed[:3]:
+        for key, text, _text_hash in to_embed[:3]:
             print(f"  {key}")
             print(f"    → \"{text[:80]}...\"")
         return 0

@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+import requests
+
 
 BAD_PATTERNS = [
     "Don’t miss what’s happening",
@@ -88,6 +90,55 @@ def fetch_web(url):
         if not is_low_value_text(out):
             return out
     return ""
+
+
+def fetch_x_article(url):
+    """Fetch X Article content via fxtwitter API.
+
+    Supports both direct X status URLs and already-resolved t.co targets.
+    Returns rendered plain text blocks or empty string on failure.
+    """
+    try:
+        resolved = resolve_url(url)
+        m = re.search(r'https?://(?:www\.)?(?:x|twitter)\.com/([^/]+)/status/(\d+)', resolved)
+        if not m:
+            return ""
+        username, tweet_id = m.group(1), m.group(2)
+        api_url = f"https://api.fxtwitter.com/{username}/status/{tweet_id}"
+        resp = requests.get(api_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return ""
+        data = resp.json()
+        tweet = data.get("tweet") or {}
+        article = tweet.get("article") or {}
+        content = article.get("content") or {}
+        blocks = content.get("blocks") or []
+        if not blocks:
+            return ""
+        parts = []
+        title = (article.get("title") or "").strip()
+        preview = (article.get("preview_text") or "").strip()
+        if title:
+            parts.append(f"# {title}")
+        if preview:
+            parts.append(preview)
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            text = clean_text((block.get("text") or "").strip())
+            if not text:
+                continue
+            btype = block.get("type")
+            if btype == "header-two":
+                parts.append(f"## {text}")
+            elif btype == "blockquote":
+                parts.append(f"> {text}")
+            else:
+                parts.append(text)
+        rendered = "\n\n".join(x for x in parts if x).strip()
+        return rendered[:30000]
+    except Exception:
+        return ""
 
 
 def fetch_github(url):
@@ -199,11 +250,15 @@ def enrich(tweet_id, base_content):
             # GitHub 連結若 gh 抓不到有效內容，就直接略過，避免吃到 GitHub 首頁/登入頁雜訊
             if not text:
                 continue
+        elif host.endswith("x.com") or host.endswith("twitter.com"):
+            text = fetch_x_article(url)
+            if not text:
+                text = fetch_web(url)
         else:
             text = fetch_web(url)
         text = clean_text(text)
         if text and not is_low_value_text(text):
-            link_summaries.append({"url": url, "content": text[:4000]})
+            link_summaries.append({"url": url, "content": text[:12000]})
     return {
         "thread_text": parsed["thread_text"],
         "author_additions": parsed["author_additions"],

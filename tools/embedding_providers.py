@@ -17,6 +17,7 @@ import os
 import time
 from typing import List
 
+from pathlib import Path
 import requests
 
 
@@ -136,6 +137,20 @@ class OllamaProvider(EmbeddingProvider):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+
+def _openclaw_key(key_name: str) -> str:
+    """Fallback: read API key from /root/.openclaw/openclaw.json."""
+    try:
+        config_path = Path("/root/.openclaw/openclaw.json")
+        if config_path.exists():
+            import json as _json
+            cfg = _json.loads(config_path.read_text(encoding="utf-8"))
+            return cfg.get("env", {}).get(key_name, "")
+    except Exception:
+        pass
+    return ""
+
+
 def get_provider() -> EmbeddingProvider:
     """
     Create an EmbeddingProvider based on environment variables.
@@ -168,17 +183,13 @@ def get_provider() -> EmbeddingProvider:
         return OllamaProvider(base_url=base_url, model=model or "nomic-embed-text")
 
     elif provider_name == "":
-        # Auto-detect from available API keys
-        if os.getenv("GEMINI_API_KEY"):
-            return GeminiProvider(
-                api_key=os.getenv("GEMINI_API_KEY"),
-                model=model or "gemini-embedding-2-preview"
-            )
-        elif os.getenv("OPENAI_API_KEY"):
-            return OpenAIProvider(
-                api_key=os.getenv("OPENAI_API_KEY"),
-                model=model or "text-embedding-3-small"
-            )
+        # Auto-detect from available API keys (env var first, then openclaw.json)
+        gemini_key = os.getenv("GEMINI_API_KEY") or _openclaw_key("GEMINI_API_KEY")
+        openai_key = os.getenv("OPENAI_API_KEY") or _openclaw_key("OPENAI_API_KEY")
+        if gemini_key:
+            return GeminiProvider(api_key=gemini_key, model=model or "gemini-embedding-2-preview")
+        elif openai_key:
+            return OpenAIProvider(api_key=openai_key, model=model or "text-embedding-3-small")
         else:
             raise EnvironmentError(
                 "No embedding provider configured. "

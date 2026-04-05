@@ -42,6 +42,58 @@ fi
 echo ""
 echo "📖 步驟2：讀取全文 + Agent Reach 補完..."
 
+fetch_x_article_content() {
+    local tweet_url="$1"
+    python3 - "$tweet_url" <<'PY'
+import re
+import sys
+import requests
+
+url = sys.argv[1]
+try:
+    m = re.search(r'https?://(?:www\.)?(?:x|twitter)\.com/([^/]+)/status/(\d+)', url)
+    if not m:
+        sys.exit(0)
+    username, tweet_id = m.group(1), m.group(2)
+    api_url = f"https://api.fxtwitter.com/{username}/status/{tweet_id}"
+    resp = requests.get(api_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    if resp.status_code != 200:
+        sys.exit(0)
+    data = resp.json()
+    tweet = data.get("tweet") or {}
+    article = tweet.get("article") or {}
+    content = article.get("content") or {}
+    blocks = content.get("blocks") or []
+    if not blocks:
+        sys.exit(0)
+    parts = []
+    title = (article.get("title") or "").strip()
+    preview = (article.get("preview_text") or "").strip()
+    if title:
+        parts.append(f"# {title}")
+    if preview:
+        parts.append(preview)
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        text = (block.get("text") or "").strip()
+        if not text:
+            continue
+        btype = block.get("type")
+        if btype == "header-two":
+            parts.append(f"## {text}")
+        elif btype == "blockquote":
+            parts.append(f"> {text}")
+        else:
+            parts.append(text)
+    rendered = "\n\n".join(x for x in parts if x).strip()
+    if rendered:
+        print(rendered[:30000])
+except Exception:
+    pass
+PY
+}
+
 BOOKMARKS_TEXT_CACHE="/tmp/bookmarks_text_cache.json"
 if [[ -n "$BIRD_AUTH_TOKEN" && -n "$BIRD_CT0" ]]; then
     bird --auth-token "$BIRD_AUTH_TOKEN" --ct0 "$BIRD_CT0" bookmarks --all --max-pages 5 --json 2>/dev/null > "$BOOKMARKS_TEXT_CACHE" || true
@@ -80,12 +132,24 @@ if [[ -f "$NEW_BOOKMARKS_FILE" ]]; then
             if [[ -n "$content" ]]; then
                 link=$(echo "$content" | grep -oE 'https?://[^ ]+' | head -1 || true)
                 if [[ -n "$link" ]]; then
-                    echo "    🔗 Layer 2: 嘗試 curl 抓取連結..."
-                    link_content=$(curl -sL --max-time 10 "$link" 2>/dev/null | head -500 || echo "")
-                    if [[ -n "$link_content" && ${#link_content} -gt 100 ]]; then
-                        content="$link_content"
-                        source_method="curl"
-                        echo "    ✅ Layer 2: curl 成功"
+                    resolved_link=$(curl -sLI -o /dev/null -w '%{url_effective}' --max-time 15 "$link" 2>/dev/null || echo "$link")
+                    if [[ "$resolved_link" =~ ^https?://(x|twitter)\.com/.+/status/[0-9]+ ]]; then
+                        echo "    📰 Layer 2: 偵測到 X Article，嘗試 fxtwitter..."
+                        article_content=$(fetch_x_article_content "$resolved_link")
+                        if [[ -n "$article_content" && ${#article_content} -gt 200 ]]; then
+                            content="$article_content"
+                            source_method="fxtwitter_article"
+                            echo "    ✅ Layer 2: X Article 抓取成功"
+                        fi
+                    fi
+                    if [[ -z "$content" || ${#content} -lt 100 ]]; then
+                        echo "    🔗 Layer 2: 嘗試 curl 抓取連結..."
+                        link_content=$(curl -sL --max-time 10 "$resolved_link" 2>/dev/null | head -500 || echo "")
+                        if [[ -n "$link_content" && ${#link_content} -gt 100 ]]; then
+                            content="$link_content"
+                            source_method="curl"
+                            echo "    ✅ Layer 2: curl 成功"
+                        fi
                     fi
                 fi
             fi
@@ -247,12 +311,12 @@ print(len([i for i in d['items'] if i['status']=='todo']))
 " 2>/dev/null || echo "0")
 
 if [[ "$NEW_TODO" -gt 0 ]]; then
-    echo "  📋 $NEW_TODO 個書籤待強化，開始處理（最多 15 條）..."
+    echo "  📋 enrichment queue todo=$NEW_TODO（工單狀態，不等於缺少知識卡），開始處理（最多 15 條）..."
     python3 "$SKILL_DIR/scripts/run_bookmark_worker.py" --limit 15 --worker "pipeline" || true
     echo "  🔄 同步強化索引..."
     python3 "$SKILL_DIR/scripts/sync_enriched_index.py" || true
 else
-    echo "  ✅ 無待強化書籤"
+    echo "  ✅ 無待強化工單"
 fi
 
 echo ""
