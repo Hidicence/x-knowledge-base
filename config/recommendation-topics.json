@@ -1,0 +1,27 @@
+{
+  "topics": [
+    {
+      "key": "vibe-coding",
+      "label": "Vibe Coding",
+      "keywords": ["vibe coding", "vibe-coding", "cursor", "claude code", "agent", "ai coding", "copilot"]
+    },
+    {
+      "key": "ai-agents",
+      "label": "AI Agents",
+      "keywords": ["ai agent", "agents", "multi-agent", "automation", "workflow", "mcp", "openclaw"]
+    },
+    {
+      "key": "esg-carbon",
+      "label": "ESG / Carbon",
+      "keywords": ["esg", "carbon", "carbon footprint", "sustainability", "climate", "decarbonization"]
+    },
+    {
+      "key": "ai-growth",
+      "label": "AI Marketing / Growth",
+      "keywords": ["seo", "geo", "llmo", "growth", "distribution", "content strategy", "tiktok", "xhs", "marketing"]
+    }
+  ],
+  "feeds": ["following", "for-you"],
+  "maxPerFeed": 40,
+  "topK": 12
+}

@@ -1,0 +1,123 @@
+{
+  "default_category": "99-general",
+  "rules": [
+    {
+      "category": "01-openclaw-workflows",
+      "keywords": [
+        "openclaw",
+        "claw",
+        "agent swarm",
+        "subagent",
+        "mission control",
+        "memory",
+        "mcp",
+        "obsidian",
+        "notebooklm",
+        "workflow",
+        "automation workflow",
+        "agent workflow",
+        "claude code",
+        "codex"
+      ]
+    },
+    {
+      "category": "02-seo-geo",
+      "keywords": [
+        "seo",
+        "geo",
+        "aeo",
+        "ai seo",
+        "search optimization",
+        "google",
+        "discover",
+        "ranking",
+        "traffic",
+        "keyword",
+        "serp",
+        "chatgpt seo",
+        "search console",
+        "backlink",
+        "行銷",
+        "排名",
+        "流量",
+        "關鍵字"
+      ]
+    },
+    {
+      "category": "03-video-prompts",
+      "keywords": [
+        "video",
+        "ai video",
+        "seedance",
+        "higgsfield",
+        "cinema",
+        "storyboard",
+        "shot",
+        "prompt",
+        "prompts",
+        "json prompt",
+        "visual",
+        "image to video",
+        "影片",
+        "視頻",
+        "短劇",
+        "分鏡",
+        "提示詞",
+        "生成"
+      ]
+    },
+    {
+      "category": "04-ai-tools-agents",
+      "keywords": [
+        "agent",
+        "ai agent",
+        "tool",
+        "tools",
+        "skill",
+        "skills",
+        "cursor",
+        "kimi",
+        "claude",
+        "opus",
+        "gemini",
+        "banana",
+        "xhunt",
+        "reader",
+        "dashboard",
+        "automation",
+        "frontend",
+        "ui",
+        "coding",
+        "vibe coding",
+        "ai工具",
+        "工具",
+        "代理",
+        "技能"
+      ]
+    },
+    {
+      "category": "05-startup-business",
+      "keywords": [
+        "startup",
+        "business",
+        "saas",
+        "revenue",
+        "founder",
+        "marketing",
+        "growth",
+        "sales",
+        "lead gen",
+        "lead generation",
+        "pricing",
+        "monetize",
+        "profit",
+        "創業",
+        "商業",
+        "營收",
+        "定價",
+        "成長",
+        "銷售"
+      ]
+    }
+  ]
+}
