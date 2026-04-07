@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Sync x-knowledge-base cards into wiki topic pages.
 
@@ -34,8 +34,8 @@ TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"
 REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
 SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 
-MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
-MINIMAX_MODEL = "MiniMax-M2.5"
+LLM_API_URL = "https://api.openai.com/v1/chat/completions"
+LLM_MODEL = "gpt-4o-mini"
 
 _llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
 
@@ -61,7 +61,7 @@ SOURCES_SECTION_RE = re.compile(r"\n## 來源\n(.*)$", re.DOTALL)
 
 def _call_minimax(api_key: str, system: str, user: str) -> str:
     payload = {
-        "model": MINIMAX_MODEL,
+        "model": LLM_MODEL,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -70,7 +70,7 @@ def _call_minimax(api_key: str, system: str, user: str) -> str:
         "temperature": 0.1,
     }
     req = urllib.request.Request(
-        MINIMAX_API_URL,
+        LLM_API_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -459,10 +459,10 @@ def main() -> int:
     parser.add_argument("--no-llm", action="store_true", help="skip LLM, list all candidates")
     args = parser.parse_args()
 
-    api_key = os.environ.get("MINIMAX_API_KEY", "")
+    api_key = os.environ.get("LLM_API_KEY", "")
     use_llm = bool(api_key) and not args.no_llm
     if not api_key and not args.no_llm:
-        print("WARNING: MINIMAX_API_KEY not set. Use --no-llm to list candidates without LLM.")
+        print("WARNING: LLM_API_KEY not set. Use --no-llm to list candidates without LLM.")
 
     topic_map = load_topic_map()
     review_decisions = load_review_decisions()
