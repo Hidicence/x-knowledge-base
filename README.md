@@ -24,10 +24,11 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 XKB handles two things: **capturing external knowledge** and **sedimentation into wiki**.
 
 ```
-X Bookmarks (external content)
+External content sources
+├── X/Twitter bookmarks  →  fetch_and_summarize.sh
+└── YouTube playlists    →  fetch_youtube_playlist.py
         │
         ▼
-fetch_and_summarize.sh
 (fetch → enrich → summarize → categorize)
         │
         ▼
@@ -65,7 +66,9 @@ For the full architecture reference: [`docs/xkb-wiki-architecture.md`](docs/xkb-
 
 | Script | What it does |
 |--------|-------------|
-| `fetch_and_summarize.sh` | Full XKB pipeline: fetch bookmarks → enrich → summarize → categorize → wiki sync |
+| `fetch_and_summarize.sh` | Full XKB pipeline: fetch X/Twitter bookmarks → enrich → summarize → categorize → wiki sync |
+| `fetch_youtube_playlist.py` | Fetch YouTube playlist subtitles → summarize → add to knowledge cards + search index |
+| `run_youtube_sync.sh` | Daily YouTube playlist sync (wraps fetch_youtube_playlist.py) |
 | `sync_cards_to_wiki.py` | XKB cards → wiki topic pages (LLM absorb gate, decision log) |
 | `distill_memory_to_wiki.py` | Conversation memory → staging candidates → wiki (with `--input` for ad-hoc distillation) |
 | `lint_wiki.py` | Wiki health check: orphan pages, stale pages, gap topics |
@@ -86,10 +89,15 @@ wiki/
 
 ## Quick Start
 
-### 1. Capture bookmarks and build knowledge cards
+### 1. Capture external content and build knowledge cards
 ```bash
+# Capture X/Twitter bookmarks
 bash scripts/fetch_and_summarize.sh
 # This runs the full pipeline: fetch → enrich → summarize → categorize → wiki sync
+
+# Capture YouTube playlists (subtitles → knowledge cards)
+python3 scripts/fetch_youtube_playlist.py --playlist "YOUR_PLAYLIST_URL"
+bash scripts/run_youtube_sync.sh   # daily sync
 ```
 
 ### 2. Search your knowledge base
