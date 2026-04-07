@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Distill conversation memory into wiki topic pages.
 
@@ -30,22 +30,22 @@ INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
 MEMORY_DIR = WORKSPACE / "memory"
 
-MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
-MINIMAX_MODEL = "MiniMax-M2.5"
+LLM_API_URL = "https://api.openai.com/v1/chat/completions"
+LLM_MODEL = "gpt-4o-mini"
 
 
 def load_env_key() -> str:
     cfg_path = Path(os.getenv("OPENCLAW_JSON", "/root/.openclaw/openclaw.json"))
     try:
         cfg = json.loads(cfg_path.read_text())
-        return cfg.get("env", {}).get("MINIMAX_API_KEY", "") or os.getenv("MINIMAX_API_KEY", "")
+        return cfg.get("env", {}).get("LLM_API_KEY", "") or os.getenv("LLM_API_KEY", "")
     except Exception:
-        return os.getenv("MINIMAX_API_KEY", "")
+        return os.getenv("LLM_API_KEY", "")
 
 
 def llm_call(system: str, user: str, api_key: str) -> str:
     payload = json.dumps({
-        "model": MINIMAX_MODEL,
+        "model": LLM_MODEL,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -54,14 +54,14 @@ def llm_call(system: str, user: str, api_key: str) -> str:
         "max_tokens": 2000,
     }).encode()
     req = urllib.request.Request(
-        MINIMAX_API_URL,
+        LLM_API_URL,
         data=payload,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read())
     raw = data["choices"][0]["message"]["content"].strip()
-    # Strip <think>...</think> reasoning tokens (MiniMax-M2.5 / reasoning models)
+    # Strip <think>...</think> reasoning tokens (gpt-4o-mini / reasoning models)
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     return raw
 
@@ -370,7 +370,7 @@ def main() -> None:
 
     api_key = load_env_key()
     if not api_key:
-        print("[ERROR] MINIMAX_API_KEY not found")
+        print("[ERROR] LLM_API_KEY not found")
         return
 
     # Load today's already-staged content for dedup (only for memory-based runs, not --input)

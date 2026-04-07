@@ -145,16 +145,16 @@ Set up: read `SKILL.md`, create the workspace directory structure, schedule the 
 - Python 3.10+
 - `OPENCLAW_WORKSPACE` — path to your workspace directory (e.g. `~/.openclaw/workspace`)
 
-### LLM API key (pick any)
-The scripts use MiniMax by default (low cost), but you can swap in any OpenAI-compatible LLM by editing the `MINIMAX_API_URL` and `MINIMAX_MODEL` constants at the top of each script.
+### LLM API key (required)
+The scripts call any OpenAI-compatible LLM for summarization, absorb gate judgments, and memory distillation. Configure your provider at the top of each script:
 
 ```python
 # In sync_cards_to_wiki.py / distill_memory_to_wiki.py
-MINIMAX_API_URL = "https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
-MINIMAX_MODEL   = "gpt-4o-mini"                                  # or claude-3-haiku, gemini-flash, etc.
+LLM_API_URL = "https://..."        # your provider's chat completions endpoint
+LLM_MODEL   = "your-model-name"    # e.g. gpt-4o-mini, claude-3-haiku, gemini-flash
 ```
 
-Set your key as `MINIMAX_API_KEY` (the variable name; the value is whatever key your provider gives you).
+Set your API key as the `LLM_API_KEY` environment variable.
 
 ### Optional
 - `GEMINI_API_KEY` — semantic vector index (falls back to keyword search without it)
