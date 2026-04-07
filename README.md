@@ -2,6 +2,7 @@
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
 > A personal knowledge lifecycle system for AI agents — from raw bookmarks to structured, reusable wiki.
+> Works with any AI agent (Claude Code, OpenClaw, or any agent that can read a system prompt).
 
 [![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
 *(Click to watch the concept presentation)*
@@ -135,11 +136,29 @@ bash scripts/smoke_test_pipeline.sh                 # End-to-end test
 
 ## Requirements
 
+### Agent compatibility
+XKB runs as a **skill on top of any AI agent** — Claude Code, OpenClaw, or any agent that can read a system prompt and run shell scripts. The scripts are plain Python/bash with no agent-specific dependencies.
+
+Set up: read `SKILL.md`, create the workspace directory structure, schedule the scripts.
+
+### Environment
 - Python 3.10+
-- `MINIMAX_API_KEY` — for LLM summarization, absorb gate, and memory distillation ([MiniMax](https://www.minimaxi.chat/))
-- `GEMINI_API_KEY` — for semantic vector index (optional)
-- `BIRD_AUTH_TOKEN` + `BIRD_CT0` — for X/Twitter bookmark fetching via [bird CLI](https://github.com/zedeus/nitter) (optional, with curl/Jina fallbacks)
-- `OPENCLAW_WORKSPACE` env var pointing to your workspace directory
+- `OPENCLAW_WORKSPACE` — path to your workspace directory (e.g. `~/.openclaw/workspace`)
+
+### LLM API key (pick any)
+The scripts use MiniMax by default (low cost), but you can swap in any OpenAI-compatible LLM by editing the `MINIMAX_API_URL` and `MINIMAX_MODEL` constants at the top of each script.
+
+```python
+# In sync_cards_to_wiki.py / distill_memory_to_wiki.py
+MINIMAX_API_URL = "https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
+MINIMAX_MODEL   = "gpt-4o-mini"                                  # or claude-3-haiku, gemini-flash, etc.
+```
+
+Set your key as `MINIMAX_API_KEY` (the variable name; the value is whatever key your provider gives you).
+
+### Optional
+- `GEMINI_API_KEY` — semantic vector index (falls back to keyword search without it)
+- `BIRD_AUTH_TOKEN` + `BIRD_CT0` — X/Twitter bookmark fetching via [bird CLI](https://github.com/zedeus/nitter); falls back to curl/Jina without it
 
 ---
 
