@@ -1,133 +1,170 @@
-# 🚀 X Knowledge Base
-> **Make Knowledge Reappear | A Proactive Personal Knowledge Recall System for AI Agents**
+# X Knowledge Base
+> **讓知識重新浮現 | Make Knowledge Reappear**
+>
+> A personal knowledge lifecycle system for AI agents — from raw bookmarks to structured, reusable wiki.
 
 [![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
-*(Click the image above to watch our 3-minute concept presentation)*
+*(Click to watch the concept presentation)*
 
-## 📖 The Story: Why This Exists
+---
 
-**"We spend our entire lives accumulating knowledge, but we never truly own it."**
+## The Problem
 
-Modern knowledge work creates a constant sense of information overload. We save thousands of bookmarks, threads, and insights because they feel valuable in the moment, only to draw a blank when we actually need them. Browsers and note-taking apps have essentially become a graveyard of links. 
+Every day we consume dozens of articles, threads, and insights. We bookmark them because they feel important. Six months later — we can't find them, can't recall them, and have no idea what we actually learned.
 
-This project started from a personal itch: *Why should we manually search for knowledge? Our knowledge should know when we need it.* **X Knowledge Base** is not just another bookmark saver. It is an infrastructure designed to help AI agents (like OpenClaw) proactively surface your previously saved knowledge right when you are brainstorming or making decisions in a real conversation.
+Existing tools (bookmark apps, note-taking apps, search) all assume you'll manually retrieve knowledge when you need it. **But knowledge should know when you need it.**
 
-## ✨ Core Breakthrough: Shattering the Context Window
+XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more — it's to make what you've already consumed *reappear at the right moment* and *gradually sediment into durable understanding*.
 
-We are in the era of AI Agents, but all agents face the same bottleneck: **limited context windows and expensive memory costs.** Stuffing your entire personal knowledge base into every LLM prompt is highly inefficient. X Knowledge Base acts as a bridge between your "Personal Library" and the "AI Agent". It allows agents to break free from context limitations by utilizing **Proactive Contextual Recall**. 
+---
 
-Instead of waiting for you to search, the skill quietly fetches relevant insights, summaries, and original links, handing them to you exactly when the conversation calls for them.
+## How It Works: Four Layers
 
-## 🛠️ What This Skill Does
+```
+┌─────────────────────────────────────────────────────┐
+│  Layer 4: Wiki (knowledge output layer)              │
+│  Topic pages that persist distilled understanding    │
+├─────────────────────────────────────────────────────┤
+│  Layer 3: X Knowledge Base (external capture)        │
+│  X bookmarks → cards → searchable index              │
+├─────────────────────────────────────────────────────┤
+│  Layer 2: Dreaming (background consolidation)        │
+│  Reduces noise, elevates signal over time            │
+├─────────────────────────────────────────────────────┤
+│  Layer 1: Working Memory (short-term context)        │
+│  Conversation logs, decisions, daily notes           │
+└─────────────────────────────────────────────────────┘
+```
 
-### 1. Robust Capture & Ingestion
-- Automatically fetch new X/Twitter bookmarks.
-- Deduplicate by tweet ID.
-- Enrich content with thread context, author additions, external links, and GitHub context via multi-layer fallbacks.
+Each layer solves a different problem. They cannot be collapsed into one.
 
-### 2. Turn Bookmarks into Knowledge Cards
-- Generate LLM-powered structured summaries.
-- Auto-categorize into topics and add cross-links between related cards.
-- Maintain a highly searchable, privacy-first local knowledge base in Markdown.
+**Two paths into the wiki:**
+- **External**: `bookmarks → cards → absorb gate → wiki topics`
+- **Internal**: `conversation memory → distill → staging → approve → wiki topics`
 
-### 3. Proactive Conversation Recall (Current Focus)
-- Search existing bookmark knowledge based on semantic intent.
-- Rank relevant cards for the current topic.
-- Provide chat-ready recall output to help an agent *proactively* bring back useful saved knowledge without interrupting your workflow.
+The **absorb gate** is the key quality mechanism: before any content enters the wiki, an LLM asks — *"What new dimension does this add to what's already here?"* If the answer is none, it doesn't enter.
 
-### 4. Wiki Knowledge Layer (v3+)
-XKB now ships with a full **wiki pipeline** — a cognitive output layer that distills your bookmarks and conversations into durable, readable topic pages.
+For the full architecture reference: [`docs/xkb-wiki-architecture.md`](docs/xkb-wiki-architecture.md)
 
-- **Two ingestion paths**: bookmarks (via `sync_cards_to_wiki.py`) + conversation memory (via `distill_memory_to_wiki.py`)
-- **LLM absorb gate**: every candidate is evaluated — *"What new dimension does this add?"* — before entering the wiki
-- **Staging & review**: proposed insights go to `wiki/_staging/` for human approval before being committed
-- **Health tools**: `lint_wiki.py` checks for orphan/stale pages; `status_knowledge_pipeline.py` shows the full pipeline in one view
+---
 
-### 5. Prepare for Future Cloud Workflows
-- Export seamlessly for Google NotebookLM.
-- Auto-sync to Google Drive.
+## What's in This Repo
 
-## 💻 Usage & Main Entry Points
+### Core Scripts
 
-### Full ingest + summarize + wiki sync
+| Script | What it does |
+|--------|-------------|
+| `fetch_and_summarize.sh` | Full XKB pipeline: fetch bookmarks → enrich → summarize → categorize → wiki sync |
+| `sync_cards_to_wiki.py` | XKB cards → wiki topic pages (LLM absorb gate, decision log) |
+| `distill_memory_to_wiki.py` | Conversation memory → staging candidates → wiki (with `--input` for ad-hoc distillation) |
+| `lint_wiki.py` | Wiki health check: orphan pages, stale pages, gap topics |
+| `status_knowledge_pipeline.py` | Full pipeline status in one view |
+| `smoke_test_pipeline.sh` | End-to-end pipeline verification (10 checks) |
+
+### Wiki Template
+
+```
+wiki/
+├── WIKI-SCHEMA.md      # Page format spec and absorb gate policy
+├── topic-map.json      # Category → topic mapping (configure this)
+├── index.md            # Topic registry (auto-maintained)
+└── topics/             # Your wiki pages (gitignored — personal content)
+```
+
+---
+
+## Quick Start
+
+### 1. Capture bookmarks and build knowledge cards
 ```bash
 bash scripts/fetch_and_summarize.sh
-# Step 7 (auto): syncs new cards into wiki topics
-Search existing bookmarks
-Bash
-bash scripts/search_bookmarks.sh "openclaw seo"
-Conversation recall (Agent Integration)
-Bash
-python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory"
-python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
-Export to NotebookLM
-Bash
-python3 scripts/export_notebooklm.py
-Sync to Google Drive
-Bash
-bash scripts/sync_to_drive.sh
-### Wiki pipeline (v3+)
-```bash
-# Sync bookmark cards into wiki topics
-python3 scripts/sync_cards_to_wiki.py --apply --limit 20
+# This runs the full pipeline: fetch → enrich → summarize → categorize → wiki sync
+```
 
-# Distill conversation memory into wiki candidates
+### 2. Search your knowledge base
+```bash
+bash scripts/search_bookmarks.sh "your query"
+
+# Semantic search (requires Gemini API key)
+python3 scripts/recall_for_conversation.py "query" --format chat
+```
+
+### 3. Set up your wiki topic map
+Edit `wiki/topic-map.json` to map your XKB categories to wiki topic slugs:
+```json
+{
+  "mapping": {
+    "your-xkb-category": {
+      "topics": ["your-wiki-topic-slug"],
+      "status": "active"
+    }
+  }
+}
+```
+
+### 4. Sync cards into wiki topics
+```bash
+# Preview what would be added (no LLM)
+python3 scripts/sync_cards_to_wiki.py --review --no-llm
+
+# Apply with LLM absorb gate
+python3 scripts/sync_cards_to_wiki.py --apply --limit 20
+```
+
+### 5. Distill conversation memory into wiki
+```bash
+# Distill recent memory files (e.g. morning run)
 python3 scripts/distill_memory_to_wiki.py --stage --days 2 --label morning
 
-# Distill inline text (ad-hoc, no waiting for daily memory)
-python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight from today..."
+# Distill a specific insight right now (no waiting)
+python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight: ..."
 
 # Apply approved staging candidates
-python3 scripts/distill_memory_to_wiki.py --apply --staging-file wiki/_staging/YYYY-MM-DD-candidates.md
-
-# Wiki health check
-python3 scripts/lint_wiki.py [--fix]
-
-# Full pipeline status
-python3 scripts/status_knowledge_pipeline.py [--json] [--days N]
-
-# End-to-end smoke test
-bash scripts/smoke_test_pipeline.sh
+python3 scripts/distill_memory_to_wiki.py --apply \
+  --staging-file wiki/_staging/YYYY-MM-DD-morning-candidates.md
 ```
 
-## 📂 Repository Structure
+### 6. Monitor pipeline health
+```bash
+python3 scripts/status_knowledge_pipeline.py        # Full status
+python3 scripts/lint_wiki.py [--fix]                # Wiki health check
+bash scripts/smoke_test_pipeline.sh                 # End-to-end test
 ```
-x-knowledge-base/
-├── SKILL.md                      # Core behavioral prompt for AI Agents
-├── assets/                       # Media and UI assets
-├── config/                       # System configurations
-├── docs/
-│   └── xkb-wiki-architecture.md # Full 4-layer architecture reference
-├── evals/                        # Evaluation metrics for recall accuracy
-├── references/                   # Documentation
-├── scripts/                      # Core executable flows
-│   ├── fetch_and_summarize.sh    # Main XKB pipeline (fetch → cards → wiki sync)
-│   ├── sync_cards_to_wiki.py     # XKB cards → wiki topics (LLM absorb gate)
-│   ├── distill_memory_to_wiki.py # Conversation memory → wiki staging
-│   ├── lint_wiki.py              # Wiki health check
-│   ├── status_knowledge_pipeline.py  # Full pipeline status view
-│   └── smoke_test_pipeline.sh    # End-to-end smoke test
-├── tools/                        # Helper utilities
-└── wiki/
-    ├── WIKI-SCHEMA.md            # Page format spec & absorb gate policy
-    ├── topic-map.json            # Category → topic mapping (edit to configure)
-    ├── index.md                  # Topic registry (auto-generated)
-    └── topics/                   # Your wiki topic pages (gitignored — personal content)
-```
-## 🗺️ Roadmap
 
-| Version | Status | Description |
-|---------|--------|-------------|
-| v1 (MVP) | ✅ Done | Bookmark ingestion, knowledge cards, keyword search index, v1 recall |
-| v2 (Quality) | ✅ Done | Robust content extraction (bird/curl/Jina/fxtwitter), enrichment worker, vector index |
-| v3 (Wiki Layer) | ✅ Done | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
-| v4 (Cloud Library) | 🔜 Planned | NotebookLM integration, Drive sync, opt-in collective knowledge network |
+---
 
-🤝 Notes & Contributing
-This repository is the public skill repo. If you want to understand the architectural design rather than just copying scripts, we highly recommend starting with:
+## Requirements
 
-SKILL.md
+- Python 3.10+
+- `MINIMAX_API_KEY` — for LLM summarization, absorb gate, and memory distillation ([MiniMax](https://www.minimaxi.chat/))
+- `GEMINI_API_KEY` — for semantic vector index (optional)
+- `BIRD_AUTH_TOKEN` + `BIRD_CT0` — for X/Twitter bookmark fetching via [bird CLI](https://github.com/zedeus/nitter) (optional, with curl/Jina fallbacks)
+- `OPENCLAW_WORKSPACE` env var pointing to your workspace directory
 
-references/conversation-recall.md
+---
 
-Your knowledge deserves to be remembered. Join us in building the next generation of Personal Knowledge Management (PKM) systems! PRs and issues are welcome.
+## Roadmap
+
+| Version | Status | What it delivered |
+|---------|--------|-------------------|
+| v1 | ✅ | Bookmark ingestion, knowledge cards, keyword search, v1 recall |
+| v2 | ✅ | Multi-layer content extraction, enrichment worker, vector index |
+| v3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
+| v4 | 🔜 | NotebookLM integration, Drive sync, collective knowledge network |
+
+---
+
+## Design Principles
+
+- **Layers, not one database.** Working memory, consolidation, external capture, and output are separate problems requiring separate solutions.
+- **Quality gates over quantity.** The absorb gate ensures the wiki stays a distilled output layer, not a second inbox.
+- **Human in the loop for internal knowledge.** Conversation memory goes through staging and human review before entering the wiki. External bookmarks can use LLM auto-filtering.
+- **Proactive over reactive.** Knowledge should surface when relevant, not when searched.
+
+---
+
+## Contributing
+
+Start with [`SKILL.md`](SKILL.md) to understand the behavioral design, and [`docs/xkb-wiki-architecture.md`](docs/xkb-wiki-architecture.md) for the full architecture.
+
+PRs and issues welcome. Your knowledge deserves to be remembered.
