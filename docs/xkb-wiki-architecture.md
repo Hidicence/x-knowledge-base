@@ -1,6 +1,6 @@
 # XKB + Wiki 知識系統架構文件
 
-> 版本：2026-04-07  
+> 版本：2026-04-08  
 > 維護者：Pan / CC（Claude Code）/ APAN2號
 
 ---
@@ -83,12 +83,18 @@
 
 **負責：** 把 X 書籤和外部文章轉化為結構化、可檢索的知識資產。
 
-**Pipeline：**
+**Pipeline（輸入來源）：**
 ```
-X 書籤
+X/Twitter 書籤
   → fetch_bookmarks.sh（抓取）
   → fetch_and_summarize.sh（bird/curl/Jina/fxtwitter 四層抓全文）
   → bookmark_enhancer.py（AI 摘要 + 分類）
+
+YouTube 播放清單
+  → fetch_youtube_playlist.py（字幕抓取 → AI 摘要）
+  → run_youtube_sync.sh（每日自動同步）
+
+兩者共同輸出 →
   → search_index.json（結構化索引）
   → vector_index.json（語意向量索引，Gemini embeddings）
   → memory/cards/*.md（知識卡片）
@@ -205,11 +211,11 @@ bash skills/x-knowledge-base/scripts/smoke_test_pipeline.sh
 
 ---
 
-## 六、目前 Wiki 主題（2026-04-07）
+## 六、目前 Wiki 主題（2026-04-08）
 
 | Slug | 狀態 | Sources | 主要內容 |
 |------|------|---------|---------|
-| openclaw-agent-workflows | active | 48 | Agent workflow、skill graph、自動化設計 |
+| openclaw-agent-workflows | active | 48+ | Agent workflow、skill graph、自動化設計 |
 | ai-seo-and-geo | seeded | 13 | GEO、AI 搜尋優化、傳統 SEO 演進 |
 | ai-agent-memory-systems | seeded | 9 | 四層架構、absorb gate、兩條沉澱路徑 |
 | ai-video-workflows | seeded | 23 | Seedance、角色一致性、4x4 故事板法 |
@@ -219,15 +225,34 @@ bash skills/x-knowledge-base/scripts/smoke_test_pipeline.sh
 
 ## 七、已知限制與待解問題
 
+### 待解
+
 1. **Dreaming 輸出不可觀測**：目前無法直接看到 Dreaming 整理了什麼，品質難以驗證
-2. **cron 隔離 session 的 setSystemPrompt 問題**：2026.4.5 breaking change，cron 跑的腳本在 isolated session 中呼叫 `session.agent.setSystemPrompt` 會報錯
-3. **topic-map.json 手動維護**：新的 XKB category 出現時，需要人工更新映射，尚無自動化
-4. **LLM absorb gate 過寬**：部分 skip ratio 偏低，需要持續觀察 approve 的內容品質
-5. **04-ai-tools-agents gap**：8 張卡尚無對應 wiki topic，topic-map 狀態為 `pending`
+2. **topic-map.json 手動維護**：新的 XKB category 出現時，需要人工更新映射，尚無自動化
+3. **LLM absorb gate 過寬**：部分 skip ratio 偏低，需要持續觀察 approve 的內容品質
+4. **04-ai-tools-agents gap**：8 張卡尚無對應 wiki topic，topic-map 狀態為 `pending`
+
+### 已解決
+
+- **cron 隔離 session 的 setSystemPrompt 問題**（2026-04-07 解決）：HEARTBEAT 改為直接呼叫 distill 腳本，不依賴 setSystemPrompt
+- **MiniMax 綁定**（2026-04-07 解決）：所有腳本改用 `LLM_API_KEY / LLM_API_URL / LLM_MODEL`，支援任意 OpenAI-compatible provider
+- **HEARTBEAT 早晚重複蒸餾**（2026-04-07 解決）：`--label morning/evening` 區分檔案 + LLM context dedup 防止重複
 
 ---
 
-## 八、相關文件
+## 八、v4 Roadmap
+
+| 功能 | 狀態 | 說明 |
+|------|------|------|
+| NotebookLM integration | 🔜 | 匯出 wiki topics 到 NotebookLM 做深度閱讀 |
+| Google Drive sync | 🔜 | 從 Drive 抓文件作為知識來源 |
+| 集體知識網路 | 🔜 | 多人共用 wiki，跨 agent 知識流通 |
+| topic-map 自動化 | 🔜 | 新 XKB category 出現時自動建議 topic 映射 |
+| absorb gate 校正 | 🔜 | 觀察 skip ratio，收緊 absorb 標準 |
+
+---
+
+## 九、相關文件
 
 - `wiki/WIKI-SCHEMA.md` — wiki 頁面規範與 absorb gate policy
 - `wiki/index.md` — 主題索引
