@@ -1,0 +1,5 @@
+# Personal knowledge content — do not commit
+topics/*.md
+_staging/
+log.md
+review-decisions.json
