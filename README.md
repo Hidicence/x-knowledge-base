@@ -35,15 +35,24 @@ Instead of waiting for you to search, the skill quietly fetches relevant insight
 - Rank relevant cards for the current topic.
 - Provide chat-ready recall output to help an agent *proactively* bring back useful saved knowledge without interrupting your workflow.
 
-### 4. Prepare for Future Cloud Workflows
+### 4. Wiki Knowledge Layer (v3+)
+XKB now ships with a full **wiki pipeline** — a cognitive output layer that distills your bookmarks and conversations into durable, readable topic pages.
+
+- **Two ingestion paths**: bookmarks (via `sync_cards_to_wiki.py`) + conversation memory (via `distill_memory_to_wiki.py`)
+- **LLM absorb gate**: every candidate is evaluated — *"What new dimension does this add?"* — before entering the wiki
+- **Staging & review**: proposed insights go to `wiki/_staging/` for human approval before being committed
+- **Health tools**: `lint_wiki.py` checks for orphan/stale pages; `status_knowledge_pipeline.py` shows the full pipeline in one view
+
+### 5. Prepare for Future Cloud Workflows
 - Export seamlessly for Google NotebookLM.
 - Auto-sync to Google Drive.
 
 ## 💻 Usage & Main Entry Points
 
-### Full ingest + summarize flow
+### Full ingest + summarize + wiki sync
 ```bash
 bash scripts/fetch_and_summarize.sh
+# Step 7 (auto): syncs new cards into wiki topics
 Search existing bookmarks
 Bash
 bash scripts/search_bookmarks.sh "openclaw seo"
@@ -57,24 +66,62 @@ python3 scripts/export_notebooklm.py
 Sync to Google Drive
 Bash
 bash scripts/sync_to_drive.sh
-📂 Repository Structure
-Plaintext
+### Wiki pipeline (v3+)
+```bash
+# Sync bookmark cards into wiki topics
+python3 scripts/sync_cards_to_wiki.py --apply --limit 20
+
+# Distill conversation memory into wiki candidates
+python3 scripts/distill_memory_to_wiki.py --stage --days 2 --label morning
+
+# Distill inline text (ad-hoc, no waiting for daily memory)
+python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight from today..."
+
+# Apply approved staging candidates
+python3 scripts/distill_memory_to_wiki.py --apply --staging-file wiki/_staging/YYYY-MM-DD-candidates.md
+
+# Wiki health check
+python3 scripts/lint_wiki.py [--fix]
+
+# Full pipeline status
+python3 scripts/status_knowledge_pipeline.py [--json] [--days N]
+
+# End-to-end smoke test
+bash scripts/smoke_test_pipeline.sh
+```
+
+## 📂 Repository Structure
+```
 x-knowledge-base/
-├── SKILL.md                 # Core behavioral prompt for AI Agents
-├── assets/                  # Media and UI assets
-├── config/                  # System configurations
-├── evals/                   # Evaluation metrics for recall accuracy
-├── references/              # Documentation (e.g., conversation-recall.md)
-├── scripts/                 # Core executable flows
-└── tools/                   # Helper utilities
-🗺️ Roadmap
-v1 (MVP): Working bookmark ingestion, local knowledge cards, keyword search index, and v1 conversation recall rules. (Completed)
+├── SKILL.md                      # Core behavioral prompt for AI Agents
+├── assets/                       # Media and UI assets
+├── config/                       # System configurations
+├── docs/
+│   └── xkb-wiki-architecture.md # Full 4-layer architecture reference
+├── evals/                        # Evaluation metrics for recall accuracy
+├── references/                   # Documentation
+├── scripts/                      # Core executable flows
+│   ├── fetch_and_summarize.sh    # Main XKB pipeline (fetch → cards → wiki sync)
+│   ├── sync_cards_to_wiki.py     # XKB cards → wiki topics (LLM absorb gate)
+│   ├── distill_memory_to_wiki.py # Conversation memory → wiki staging
+│   ├── lint_wiki.py              # Wiki health check
+│   ├── status_knowledge_pipeline.py  # Full pipeline status view
+│   └── smoke_test_pipeline.sh    # End-to-end smoke test
+├── tools/                        # Helper utilities
+└── wiki/
+    ├── WIKI-SCHEMA.md            # Page format spec & absorb gate policy
+    ├── topic-map.json            # Category → topic mapping (edit to configure)
+    ├── index.md                  # Topic registry (auto-generated)
+    └── topics/                   # Your wiki topic pages (gitignored — personal content)
+```
+## 🗺️ Roadmap
 
-v2 (Quality & Context): Better summary quality, robust source URL coverage, stronger ranking, and enhanced recall usefulness in real chats.
-
-v3 (Semantic Upgrade): Implementing semantic / vector recall (e.g., integrating LanceDB + Google Embedding models) for deeper query understanding and wording-agnostic relevance matching.
-
-v4 (The Cloud Library): Polished NotebookLM integration, advanced library sync, and laying the groundwork for an opt-in collective knowledge network.
+| Version | Status | Description |
+|---------|--------|-------------|
+| v1 (MVP) | ✅ Done | Bookmark ingestion, knowledge cards, keyword search index, v1 recall |
+| v2 (Quality) | ✅ Done | Robust content extraction (bird/curl/Jina/fxtwitter), enrichment worker, vector index |
+| v3 (Wiki Layer) | ✅ Done | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
+| v4 (Cloud Library) | 🔜 Planned | NotebookLM integration, Drive sync, opt-in collective knowledge network |
 
 🤝 Notes & Contributing
 This repository is the public skill repo. If you want to understand the architectural design rather than just copying scripts, we highly recommend starting with:

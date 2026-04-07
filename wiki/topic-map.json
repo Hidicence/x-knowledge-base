@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "description": "Maps XKB categories to wiki topic slugs. Edit this file to define your own topic mapping.",
+  "mapping": {
+    "your-category-slug": {
+      "topics": ["your-wiki-topic-slug"],
+      "status": "active"
+    },
+    "another-category": {
+      "topics": ["topic-a", "topic-b"],
+      "status": "draft"
+    }
+  }
+}

@@ -342,3 +342,13 @@ if [[ -n "$GEMINI_KEY" ]]; then
 else
     echo "  ⏭️ 略過（GEMINI_API_KEY 未設定）"
 fi
+
+
+echo ""
+echo "📚 步驟7：同步書籤卡到 wiki..."
+if [ "${SKIP_WIKI_SYNC:-0}" != "1" ]; then
+    python3 "$SKILL_DIR/scripts/sync_cards_to_wiki.py" --apply --limit 20 \
+        || echo "Wiki sync failed (non-fatal), continuing..."
+else
+    echo "  ⏭️ SKIP_WIKI_SYNC=1，略過"
+fi
