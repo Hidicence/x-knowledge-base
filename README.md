@@ -19,31 +19,41 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 
 ---
 
-## How It Works: Four Layers
+## How It Works
+
+XKB handles two things: **capturing external knowledge** and **sedimentation into wiki**.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Layer 4: Wiki (knowledge output layer)              │
-│  Topic pages that persist distilled understanding    │
-├─────────────────────────────────────────────────────┤
-│  Layer 3: X Knowledge Base (external capture)        │
-│  X bookmarks → cards → searchable index              │
-├─────────────────────────────────────────────────────┤
-│  Layer 2: Dreaming (background consolidation)        │
-│  Reduces noise, elevates signal over time            │
-├─────────────────────────────────────────────────────┤
-│  Layer 1: Working Memory (short-term context)        │
-│  Conversation logs, decisions, daily notes           │
-└─────────────────────────────────────────────────────┘
+X Bookmarks (external content)
+        │
+        ▼
+fetch_and_summarize.sh
+(fetch → enrich → summarize → categorize)
+        │
+        ▼
+knowledge cards + search index + vector index
+        │
+        ▼
+sync_cards_to_wiki.py + Absorb Gate
+(LLM asks: "What new dimension does this add?")
+        │
+        ▼
+wiki/topics/*.md  ←  durable, readable knowledge pages
 ```
 
-Each layer solves a different problem. They cannot be collapsed into one.
+The **absorb gate** is the key quality mechanism: before any card enters the wiki, an LLM evaluates — *"What new dimension does this add to what's already here?"* Only cards that bring a new case, new concept, or contradiction pass through. Everything else is logged and skipped.
 
-**Two paths into the wiki:**
-- **External**: `bookmarks → cards → absorb gate → wiki topics`
-- **Internal**: `conversation memory → distill → staging → approve → wiki topics`
+**Optional: connect your agent's memory logs**
 
-The **absorb gate** is the key quality mechanism: before any content enters the wiki, an LLM asks — *"What new dimension does this add to what's already here?"* If the answer is none, it doesn't enter.
+`distill_memory_to_wiki.py` can also read conversation logs from your AI agent and distill insights into wiki candidates. This bridges your agent's internal memory (managed by the agent, not XKB) into the same wiki output layer — but the memory management itself is outside XKB's scope.
+
+```bash
+# Distill from agent memory log files
+python3 scripts/distill_memory_to_wiki.py --stage --days 2
+
+# Or distill inline — paste any text you want to preserve
+python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight: ..."
+```
 
 For the full architecture reference: [`docs/xkb-wiki-architecture.md`](docs/xkb-wiki-architecture.md)
 
