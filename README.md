@@ -21,13 +21,14 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 
 ## How It Works
 
-XKB handles two things: **capturing external knowledge** and **sedimentation into wiki**.
+XKB handles two things: **capturing knowledge** and **sedimentation into wiki**.
 
 ```
-External content sources
-├── X/Twitter bookmarks  →  fetch_and_summarize.sh
-├── YouTube playlists    →  fetch_youtube_playlist.py
-└── GitHub forks/stars   →  fetch_github_repos.py  (repo-level cards only)
+Input sources
+├── Local notes / markdown     →  local_ingest.py  (✨ new)
+├── X/Twitter bookmarks        →  fetch_and_summarize.sh
+├── YouTube playlists          →  fetch_youtube_playlist.py
+└── GitHub forks/stars         →  fetch_github_repos.py  (repo-level cards only)
         │
         ▼
 (fetch → enrich → summarize → categorize)
@@ -41,6 +42,9 @@ sync_cards_to_wiki.py + Absorb Gate
         │
         ▼
 wiki/topics/*.md  ←  durable, readable knowledge pages
+        │
+        ▼
+xkb_ask.py  ←  ask questions, get cited answers  (✨ new)
 ```
 
 The **absorb gate** is the key quality mechanism: before any card enters the wiki, an LLM evaluates — *"What new dimension does this add to what's already here?"* Only cards that bring a new case, new concept, or contradiction pass through. Everything else is logged and skipped.
@@ -61,18 +65,45 @@ For the full architecture reference: [`docs/xkb-wiki-architecture.md`](docs/xkb-
 
 ---
 
+## Quick Start — Try It in 10 Minutes
+
+The fastest way to see XKB in action: run the demo mode with the bundled sample dataset.
+
+```bash
+# 1. Set your LLM API key (any OpenAI-compatible provider)
+export LLM_API_KEY="your-key-here"
+export LLM_API_URL="https://api.openai.com/v1/chat/completions"  # or your provider
+export LLM_MODEL="gpt-4o-mini"
+
+# 2. Run the demo
+bash scripts/xkb_demo.sh
+```
+
+This will:
+1. Convert 10 sample notes into knowledge cards
+2. Sync them through the absorb gate into wiki topic pages
+3. Show you a live question-answering demo with citations
+
+No API keys, topic-map config, or prior setup needed beyond the LLM key.
+
+---
+
 ## What's in This Repo
 
 ### Core Scripts
 
 | Script | What it does |
 |--------|-------------|
+| `xkb_demo.sh` | ✨ **Demo mode**: sample dataset → cards → wiki → ask in one command |
+| `xkb_ask.py` | ✨ **Ask your knowledge base**: query → search wiki + cards → cited answer |
+| `local_ingest.py` | ✨ **Local notes ingest**: markdown/txt files → knowledge cards → search index |
+| `suggest_topic_map.py` | ✨ **Auto topic-map**: analyze categories → LLM suggests wiki topic slugs |
 | `fetch_and_summarize.sh` | Full XKB pipeline: fetch X/Twitter bookmarks → enrich → summarize → categorize → wiki sync |
 | `fetch_youtube_playlist.py` | Fetch YouTube playlist subtitles → summarize → add to knowledge cards + search index |
 | `run_youtube_sync.sh` | Daily YouTube playlist sync (wraps fetch_youtube_playlist.py) |
 | `fetch_github_repos.py` | Fetch GitHub forks/stars → generate repo knowledge cards → add to search index |
 | `run_github_sync.sh` | Daily GitHub sync (wraps fetch_github_repos.py) |
-| `sync_cards_to_wiki.py` | XKB cards → wiki topic pages (LLM absorb gate, decision log) |
+| `sync_cards_to_wiki.py` | XKB cards → wiki topic pages (LLM absorb gate, decision log, explainability) |
 | `distill_memory_to_wiki.py` | Conversation memory → staging candidates → wiki (with `--input` for ad-hoc distillation) |
 | `lint_wiki.py` | Wiki health check: orphan pages, stale pages, gap topics |
 | `status_knowledge_pipeline.py` | Full pipeline status in one view |
@@ -90,13 +121,34 @@ wiki/
 
 ---
 
-## Quick Start
+## Full Setup
 
-### 1. Capture external content and build knowledge cards
+### 0. Try the demo first (optional but recommended)
+```bash
+bash scripts/xkb_demo.sh
+```
+
+### 1. Ingest local notes
+The fastest way to get started with your own content:
+
+```bash
+# Single file
+python3 scripts/local_ingest.py path/to/my-notes.md
+
+# Entire directory
+python3 scripts/local_ingest.py path/to/notes/
+
+# Preview what would be processed (no writes)
+python3 scripts/local_ingest.py notes/ --dry-run
+
+# With category and tag overrides
+python3 scripts/local_ingest.py notes/ --category learning --tag personal
+```
+
+### 2. Capture external content
 ```bash
 # Capture X/Twitter bookmarks
 bash scripts/fetch_and_summarize.sh
-# This runs the full pipeline: fetch → enrich → summarize → categorize → wiki sync
 
 # Capture YouTube playlists (subtitles → knowledge cards)
 python3 scripts/fetch_youtube_playlist.py --playlist "YOUR_PLAYLIST_URL"
@@ -107,15 +159,18 @@ python3 scripts/fetch_github_repos.py --forks --stars
 bash scripts/run_github_sync.sh    # daily sync
 ```
 
-### 2. Search your knowledge base
-```bash
-bash scripts/search_bookmarks.sh "your query"
+### 3. Set up your wiki topic map
 
-# Semantic search (requires Gemini API key)
-python3 scripts/recall_for_conversation.py "query" --format chat
+**Option A — Auto-suggest (recommended for new setups):**
+```bash
+# Review LLM suggestions (no writes)
+python3 scripts/suggest_topic_map.py --review
+
+# Apply suggestions to wiki/topic-map.json
+python3 scripts/suggest_topic_map.py --apply
 ```
 
-### 3. Set up your wiki topic map
+**Option B — Manual:**
 Edit `wiki/topic-map.json` to map your XKB categories to wiki topic slugs:
 ```json
 {
@@ -137,7 +192,35 @@ python3 scripts/sync_cards_to_wiki.py --review --no-llm
 python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 ```
 
-### 5. Distill conversation memory into wiki
+### 4b. Inspect absorb gate decisions (v5)
+```bash
+# See all rejected cards with reasons
+python3 scripts/sync_cards_to_wiki.py --review-rejects
+
+# Filter by topic or date
+python3 scripts/sync_cards_to_wiki.py --review-rejects --topic ai-memory --since 2025-01-01
+
+# Explain why a specific card was rejected
+python3 scripts/sync_cards_to_wiki.py --explain "https://example.com/article"
+
+# Override a rejection — force the card into the wiki on next --apply
+python3 scripts/sync_cards_to_wiki.py --force-absorb "https://example.com/article"
+python3 scripts/sync_cards_to_wiki.py --force-absorb "https://example.com/article" --topic ai-memory
+```
+
+### 5. Ask your knowledge base
+```bash
+# Ask a question — searches wiki topics + knowledge cards, returns cited answer
+python3 scripts/xkb_ask.py "What are the alternatives to RAG?"
+
+# Compact format for chat use
+python3 scripts/xkb_ask.py "How do I design an AI agent memory system?" --format chat
+
+# JSON output for programmatic use
+python3 scripts/xkb_ask.py "your question" --json
+```
+
+### 6. Distill conversation memory into wiki
 ```bash
 # Distill recent memory files (e.g. morning run)
 python3 scripts/distill_memory_to_wiki.py --stage --days 2 --label morning
@@ -150,7 +233,7 @@ python3 scripts/distill_memory_to_wiki.py --apply \
   --staging-file wiki/_staging/YYYY-MM-DD-morning-candidates.md
 ```
 
-### 6. Monitor pipeline health
+### 7. Monitor pipeline health
 ```bash
 python3 scripts/status_knowledge_pipeline.py        # Full status
 python3 scripts/lint_wiki.py [--fix]                # Wiki health check
@@ -171,15 +254,13 @@ Set up: read `SKILL.md`, create the workspace directory structure, schedule the 
 - `OPENCLAW_WORKSPACE` — path to your workspace directory (e.g. `~/.openclaw/workspace`)
 
 ### LLM API key (required)
-The scripts call any OpenAI-compatible LLM for summarization, absorb gate judgments, and memory distillation. Configure your provider at the top of each script:
+The scripts call any OpenAI-compatible LLM for summarization, absorb gate judgments, and memory distillation. Configure via environment variables:
 
-```python
-# In sync_cards_to_wiki.py / distill_memory_to_wiki.py
-LLM_API_URL = "https://..."        # your provider's chat completions endpoint
-LLM_MODEL   = "your-model-name"    # e.g. gpt-4o-mini, claude-3-haiku, gemini-flash
+```bash
+export LLM_API_KEY="your-api-key"
+export LLM_API_URL="https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
+export LLM_MODEL="gpt-4o-mini"   # e.g. gpt-4o-mini, claude-3-haiku, gemini-flash
 ```
-
-Set your API key as the `LLM_API_KEY` environment variable.
 
 ### Optional
 - `GEMINI_API_KEY` — semantic vector index (falls back to keyword search without it)
@@ -194,7 +275,9 @@ Set your API key as the `LLM_API_KEY` environment variable.
 | v1 | ✅ | Bookmark ingestion, knowledge cards, keyword search, v1 recall |
 | v2 | ✅ | Multi-layer content extraction, enrichment worker, vector index |
 | v3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
-| v4 | 🔜 | NotebookLM integration, Drive sync, collective knowledge network |
+| v4 | ✅ | Local notes ingest, ask layer with citations, demo mode, auto topic-map |
+| v5 | ✅ | Absorb gate explainability: --review-rejects, --explain, --force-absorb |
+| v6 | 🔜 | Quickstart onboarding wizard, proactive surface layer |
 
 ---
 
@@ -204,6 +287,7 @@ Set your API key as the `LLM_API_KEY` environment variable.
 - **Quality gates over quantity.** The absorb gate ensures the wiki stays a distilled output layer, not a second inbox.
 - **Human in the loop for internal knowledge.** Conversation memory goes through staging and human review before entering the wiki. External bookmarks can use LLM auto-filtering.
 - **Proactive over reactive.** Knowledge should surface when relevant, not when searched.
+- **Show value first.** New users see the output before they configure the system.
 
 ---
 
