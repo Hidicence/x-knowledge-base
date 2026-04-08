@@ -1,8 +1,10 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Sync x-knowledge-base cards into wiki topic pages.
 
 v3: LLM absorb gate + persistent decision log + per-run report.
+v4: P2 absorb gate explainability — --review-rejects, --explain, --force-absorb.
+
 Each candidate card is evaluated against the existing wiki page content
 using the Policy 6 quality gate: "What new dimension does this card add?"
 Decisions are persisted to review-decisions.json["decisions"] for status tracking.
@@ -11,6 +13,11 @@ Usage:
   python3 sync_cards_to_wiki.py --review [--topic SLUG] [--no-llm]
   python3 sync_cards_to_wiki.py --apply  [--topic SLUG] [--no-llm] [--limit N]
   python3 sync_cards_to_wiki.py --apply --topic ai-seo-and-geo
+
+  # P2: explainability
+  python3 sync_cards_to_wiki.py --review-rejects [--topic SLUG] [--since YYYY-MM-DD]
+  python3 sync_cards_to_wiki.py --explain URL
+  python3 sync_cards_to_wiki.py --force-absorb URL [--topic SLUG]
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
@@ -66,7 +74,7 @@ def _call_minimax(api_key: str, system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": 500,
+        "max_tokens": 1200,
         "temperature": 0.1,
     }
     req = urllib.request.Request(
@@ -445,20 +453,225 @@ def append_log(messages: list[str], apply: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# P2: Absorb gate explainability helpers
+# ---------------------------------------------------------------------------
+
+def _url_title_map() -> dict[str, str]:
+    """Build url→title lookup from search index (for reject display)."""
+    try:
+        items = load_search_items()
+        return {
+            (item.get("source_url") or item.get("url") or ""): (item.get("title") or item.get("tweet_title") or "")
+            for item in items
+        }
+    except Exception:
+        return {}
+
+
+def cmd_review_rejects(topic_filter: str | None, since: str | None) -> int:
+    """Show all rejected cards from review-decisions.json with reasons."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    url_titles = _url_title_map()
+
+    skipped = [
+        (url, rec)
+        for url, rec in decisions.items()
+        if rec.get("decision") == "skip"
+    ]
+
+    if topic_filter:
+        skipped = [(u, r) for u, r in skipped if r.get("topic") == topic_filter]
+
+    if since:
+        skipped = [(u, r) for u, r in skipped if r.get("evaluated_at", "") >= since]
+
+    if not skipped:
+        print("No rejected cards found" + (f" for topic '{topic_filter}'" if topic_filter else "") + ".")
+        return 0
+
+    # Group by topic
+    by_topic: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for url, rec in skipped:
+        by_topic[rec.get("topic", "(unknown)")].append((url, rec))
+
+    total = len(skipped)
+    print(f"\n{'─' * 55}")
+    print(f"  Reject Log — {total} rejected card(s)")
+    if topic_filter:
+        print(f"  Topic filter: {topic_filter}")
+    if since:
+        print(f"  Since: {since}")
+    print(f"{'─' * 55}")
+
+    for topic in sorted(by_topic):
+        entries = by_topic[topic]
+        print(f"\n  [{topic}] — {len(entries)} rejected")
+        for url, rec in sorted(entries, key=lambda x: x[1].get("evaluated_at", ""), reverse=True):
+            title = url_titles.get(url, "")
+            display_title = (title[:55] + "…") if len(title) > 55 else title
+            dim = rec.get("dimension", "none")
+            reason = rec.get("reason", "")
+            evaluated = rec.get("evaluated_at", "")
+            print(f"    • {display_title or url[:55]}")
+            print(f"      dim: {dim}  |  {evaluated}")
+            print(f"      reason: {reason}")
+            print(f"      url: {url}")
+
+    print(f"\n{'─' * 55}")
+    print("  To override a rejection:")
+    print("  python3 sync_cards_to_wiki.py --force-absorb <url>")
+    print(f"{'─' * 55}\n")
+    return 0
+
+
+def cmd_explain(url: str) -> int:
+    """Show full absorb gate decision for a specific URL."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    rec = decisions.get(url)
+    if not rec:
+        # Try prefix match
+        matches = [(u, r) for u, r in decisions.items() if url in u]
+        if len(matches) == 1:
+            url, rec = matches[0]
+        elif len(matches) > 1:
+            print(f"Multiple matches for '{url}':")
+            for u, _ in matches:
+                print(f"  {u}")
+            return 1
+        else:
+            print(f"No decision record found for: {url}")
+            return 1
+
+    url_titles = _url_title_map()
+    title = url_titles.get(url, "")
+
+    print(f"\n{'─' * 55}")
+    print("  Absorb Gate Decision")
+    print(f"{'─' * 55}")
+    if title:
+        print(f"  Title   : {title}")
+    print(f"  URL     : {url}")
+    print(f"  Topic   : {rec.get('topic', '(unknown)')}")
+    print(f"  Decision: {rec.get('decision', '?')}")
+    print(f"  Dimension: {rec.get('dimension', 'none')}")
+    print(f"  Reason  : {rec.get('reason', '(none)')}")
+    print(f"  Date    : {rec.get('evaluated_at', '?')}")
+    print(f"{'─' * 55}")
+
+    if rec.get("decision") == "skip":
+        print(f"\n  To override this rejection:")
+        print(f"  python3 sync_cards_to_wiki.py --force-absorb '{url}'")
+        if rec.get("topic"):
+            print(f"  (will add to manual allow list for topic: {rec['topic']})")
+    print()
+    return 0
+
+
+def cmd_force_absorb(url: str, topic_override: str | None) -> int:
+    """Add a URL to the manual allow list, overriding the gate rejection."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    # Resolve topic
+    topic = topic_override
+    if not topic:
+        rec = decisions.get(url)
+        if rec:
+            topic = rec.get("topic", "")
+        if not topic:
+            # Try prefix match
+            matches = [(u, r) for u, r in decisions.items() if url in u]
+            if len(matches) == 1:
+                url, rec = matches[0]
+                topic = rec.get("topic", "")
+
+    if not topic:
+        print(f"Cannot determine topic for '{url}'.")
+        print("Use --topic SLUG to specify the target topic.")
+        return 1
+
+    # Add to topics[topic]["allow"]
+    topics = data.setdefault("topics", {})
+    topic_entry = topics.setdefault(topic, {})
+    allow_list: list[str] = topic_entry.setdefault("allow", [])
+    if url in allow_list:
+        print(f"Already in allow list for topic '{topic}': {url}")
+        return 0
+
+    allow_list.append(url)
+
+    # Update decision record to reflect manual override
+    today = datetime.now(timezone.utc).date().isoformat()
+    if url in decisions:
+        decisions[url]["decision"] = "manual-allow"
+        decisions[url]["evaluated_at"] = today
+        decisions[url]["reason"] = decisions[url].get("reason", "") + " [human override]"
+    else:
+        decisions[url] = {
+            "decision": "manual-allow",
+            "dimension": "manual",
+            "reason": "forced by --force-absorb",
+            "topic": topic,
+            "evaluated_at": today,
+        }
+
+    data["decisions"] = decisions
+    data["topics"] = topics
+    REVIEW_DECISIONS_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    url_titles = _url_title_map()
+    title = url_titles.get(url, url[:60])
+    print(f"✅ Force-absorb registered:")
+    print(f"   Title : {title}")
+    print(f"   Topic : {topic}")
+    print(f"   URL   : {url}")
+    print(f"\nNext run of --apply will include this card.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sync x-knowledge-base cards into wiki (v2: LLM absorb gate)"
+        description="Sync x-knowledge-base cards into wiki (v4: LLM absorb gate + explainability)"
     )
     parser.add_argument("--topic", help="only sync one topic slug")
     parser.add_argument("--limit", type=int, default=15, help="max cards per topic per run")
     parser.add_argument("--review", action="store_true", help="show LLM judgment without writing")
     parser.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
     parser.add_argument("--no-llm", action="store_true", help="skip LLM, list all candidates")
+
+    # P2: explainability flags
+    parser.add_argument("--review-rejects", action="store_true",
+                        help="show all rejected cards with reasons (from review-decisions.json)")
+    parser.add_argument("--since", metavar="YYYY-MM-DD",
+                        help="filter --review-rejects to decisions on or after this date")
+    parser.add_argument("--explain", metavar="URL",
+                        help="show full absorb gate decision for a specific URL")
+    parser.add_argument("--force-absorb", metavar="URL",
+                        help="override gate rejection: add URL to manual allow list")
+
     args = parser.parse_args()
 
+    # ── P2 commands (early exit) ──────────────────────────────────────────────
+    if args.review_rejects:
+        return cmd_review_rejects(args.topic, args.since)
+
+    if args.explain:
+        return cmd_explain(args.explain)
+
+    if args.force_absorb:
+        return cmd_force_absorb(args.force_absorb, args.topic)
+
+    # ── Standard sync flow ────────────────────────────────────────────────────
     api_key = os.environ.get("LLM_API_KEY", "")
     use_llm = bool(api_key) and not args.no_llm
     if not api_key and not args.no_llm:
