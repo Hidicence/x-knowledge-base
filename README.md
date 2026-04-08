@@ -27,7 +27,7 @@ XKB handles two things: **capturing external knowledge** and **sedimentation int
 External content sources
 ├── X/Twitter bookmarks  →  fetch_and_summarize.sh
 ├── YouTube playlists    →  fetch_youtube_playlist.py
-└── GitHub forks/stars   →  fetch_github_repos.py
+└── GitHub forks/stars   →  fetch_github_repos.py  (repo-level cards only)
         │
         ▼
 (fetch → enrich → summarize → categorize)
