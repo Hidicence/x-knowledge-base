@@ -41,7 +41,7 @@ _USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
 MAX_WIKI_CHARS  = 2000   # per topic excerpt fed to LLM
 MAX_CARD_CHARS  = 300    # per card summary fed to LLM
 MAX_WIKI_TOPICS = 3
-MAX_CARDS       = 5
+MAX_CARDS       = 12
 
 STOPWORDS = {
     "的", "了", "是", "我", "你", "他", "她", "它", "在", "有", "和", "與", "就", "也", "都",
@@ -103,7 +103,13 @@ def llm_call(prompt: str, api_key: str, max_tokens: int = 1000) -> str:
 # ── Tokenization ──────────────────────────────────────────────────────────────
 
 def tokenize(text: str) -> list[str]:
-    raw = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", text.lower())
+    ascii_tokens = re.findall(r"[A-Za-z0-9_\-]{2,}", text.lower())
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", text.lower())
+    cjk_bigrams = []
+    for run in cjk_runs:
+        for i in range(len(run) - 1):
+            cjk_bigrams.append(run[i:i+2])
+    raw = ascii_tokens + cjk_bigrams
     return [t for t in raw if t not in STOPWORDS]
 
 

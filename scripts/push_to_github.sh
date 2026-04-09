@@ -52,6 +52,13 @@ if ! git -C "$SKILL_DIR" fetch origin main --depth=1 2>&1; then
 fi
 git -C "$SKILL_DIR" reset origin/main
 
+# ── 嚴格檢查：若 skill 目錄有未追蹤或未提交變更，先停止 ───────────────
+if [[ -n "$(git -C "$SKILL_DIR" status --porcelain)" ]]; then
+    echo "❌ 偵測到 skill 目錄有未提交變更；為避免把不相干修改一起推上 GitHub，腳本停止。" >&2
+    echo "   請先在獨立複本整理好要推的內容，或明確建立 commit 後再推。" >&2
+    exit 1
+fi
+
 # ── Stage 指定 skill 檔案（排除 .env、__pycache__、runtime state）──────────
 git -C "$SKILL_DIR" add \
     SKILL.md \

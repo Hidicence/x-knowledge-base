@@ -20,6 +20,8 @@ import os
 import re
 import sys
 import hashlib
+import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -32,6 +34,45 @@ except ImportError:
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
 SCRIPTS_DIR = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
+
+def _get_gemini_key() -> str:
+    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
+    try:
+        cfg = json.loads(cfg_path.read_text())
+        return cfg.get("env", {}).get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+    except Exception:
+        return os.getenv("GEMINI_API_KEY", "")
+
+
+def _llm_bilingual_summary(title: str, abstract: str) -> tuple[str, list[str]]:
+    """Call Gemini to generate bilingual summary + Chinese domain tags.
+    Returns (summary_str, tags_list). summary_str = 'zh | en'."""
+    key = _get_gemini_key()
+    if not key:
+        return "", []
+    prompt = (
+        f"Paper title: {title}\n\nAbstract (first 800 chars):\n{abstract[:800]}\n\n"
+        "Output exactly three lines:\n"
+        "ZH: <20-40字繁體中文摘要，說明這篇論文的核心發現>\n"
+        "EN: <15-30 word English summary of the core finding>\n"
+        "TAGS: <5-8個繁體中文醫療/技術關鍵詞，逗號分隔，例如：牙科,影像診斷,深度學習,心臟病>"
+    )
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={key}"
+        payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        zh = re.search(r"ZH:\s*(.+)", text)
+        en = re.search(r"EN:\s*(.+)", text)
+        tags_m = re.search(r"TAGS:\s*(.+)", text)
+        summary_parts = [x.group(1).strip() for x in [zh, en] if x]
+        summary = " | ".join(summary_parts) if summary_parts else ""
+        zh_tags = [t.strip() for t in tags_m.group(1).split(",") if t.strip()] if tags_m else []
+        return summary, zh_tags[:8]
+    except Exception:
+        return "", []
 INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 INGESTED_LOG = WORKSPACE / "memory" / "x-knowledge-base" / "pdf-ingested.json"
 
@@ -111,10 +152,12 @@ def extract_pdf(path: Path) -> Optional[dict]:
     # Generate a stable ID from file path
     file_id = hashlib.md5(str(path).encode()).hexdigest()[:12]
 
-    # Summary = first 500 chars of cleaned text (intro/abstract area)
-    summary = full_text[:500].replace("\n", " ").strip()
-    if len(summary) > 480:
-        summary = summary[:480] + "…"
+    # Summary: try bilingual LLM summary, fallback to first 500 chars
+    en_excerpt = full_text[:500].replace("\n", " ").strip()
+    if len(en_excerpt) > 480:
+        en_excerpt = en_excerpt[:480] + "…"
+    bilingual, llm_tags = _llm_bilingual_summary(title, en_excerpt)
+    summary = bilingual if bilingual else en_excerpt
 
     return {
         "id": file_id,
@@ -126,6 +169,7 @@ def extract_pdf(path: Path) -> Optional[dict]:
         "char_count": len(full_text),
         "full_text": full_text,
         "summary": summary,
+        "llm_tags": llm_tags,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -162,9 +206,11 @@ def extract_text_file(path: Path) -> Optional[dict]:
             author = m.group(1).strip()
             break
 
-    summary = content[:500].replace("\n", " ").strip()
-    if len(summary) > 480:
-        summary = summary[:480] + "…"
+    en_excerpt = content[:500].replace("\n", " ").strip()
+    if len(en_excerpt) > 480:
+        en_excerpt = en_excerpt[:480] + "…"
+    bilingual, llm_tags = _llm_bilingual_summary(title, en_excerpt)
+    summary = bilingual if bilingual else en_excerpt
 
     file_id = hashlib.md5(str(path).encode()).hexdigest()[:12]
 
@@ -178,6 +224,7 @@ def extract_text_file(path: Path) -> Optional[dict]:
         "char_count": len(content),
         "full_text": content,
         "summary": summary,
+        "llm_tags": llm_tags,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -186,8 +233,12 @@ def extract_text_file(path: Path) -> Optional[dict]:
 
 def _build_card(extracted: dict, category: str, tags: list[str]) -> dict:
     """Convert extracted PDF data into XKB bookmarks index format (compatible with xkb_ask.py)."""
-    all_tags = tags + (["author:" + extracted["author"]] if extracted["author"] else [])
+    llm_tags = extracted.get("llm_tags") or []
+    all_tags = tags + llm_tags + (["author:" + extracted["author"]] if extracted["author"] else [])
     source = extracted["source_file"]
+    # Prepend Chinese summary to searchable for better Chinese query matching
+    zh_summary = extracted["summary"].split(" | ")[0] if " | " in extracted["summary"] else ""
+    searchable = (zh_summary + " " if zh_summary else "") + extracted["full_text"][:8000]
     return {
         "path": source,
         "relative_path": extracted["filename"],
@@ -197,7 +248,7 @@ def _build_card(extracted: dict, category: str, tags: list[str]) -> dict:
         "summary": extracted["summary"],
         "source_url": source,
         "source_type": "pdf",
-        "searchable": extracted["full_text"][:8000],
+        "searchable": searchable[:8200],
         "mtime": extracted["extracted_at"],
         "size": extracted["char_count"],
         "enriched": True,
