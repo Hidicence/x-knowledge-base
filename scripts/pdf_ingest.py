@@ -130,6 +130,58 @@ def extract_pdf(path: Path) -> Optional[dict]:
     }
 
 
+# ── Text file extraction (for fetch_pubmed.py output) ─────────────────────────
+
+def extract_text_file(path: Path) -> Optional[dict]:
+    """Extract from markdown/txt files (e.g. from fetch_pubmed.py)."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"  ✗ Failed to read {path.name}: {e}")
+        return None
+
+    if len(content) < 200:
+        print(f"  ✗ Too little content in {path.name}")
+        return None
+
+    # Try to extract title from first heading
+    lines = content.splitlines()
+    title = ""
+    for line in lines[:5]:
+        if line.startswith("# "):
+            title = line.lstrip("# ").strip()
+            break
+    if not title:
+        title = path.stem.replace("_", " ").replace("-", " ")
+
+    # Author from **Authors:** line
+    author = ""
+    for line in lines[:10]:
+        m = re.search(r'\*\*Authors?:\*\*\s*(.+)', line)
+        if m:
+            author = m.group(1).strip()
+            break
+
+    summary = content[:500].replace("\n", " ").strip()
+    if len(summary) > 480:
+        summary = summary[:480] + "…"
+
+    file_id = hashlib.md5(str(path).encode()).hexdigest()[:12]
+
+    return {
+        "id": file_id,
+        "title": title,
+        "author": author,
+        "source_file": str(path),
+        "filename": path.name,
+        "page_count": 0,
+        "char_count": len(content),
+        "full_text": content,
+        "summary": summary,
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── Knowledge card builder ─────────────────────────────────────────────────────
 
 def _build_card(extracted: dict, category: str, tags: list[str]) -> dict:
@@ -213,20 +265,24 @@ def ingest(
     force: bool = False,
 ) -> int:
     tags = tags or []
-    pdf_files: list[Path] = []
+    all_files: list[Path] = []
 
     if path.is_dir():
-        pdf_files = sorted(path.glob("**/*.pdf"))
-        print(f"📂 Found {len(pdf_files)} PDF files in {path}")
-    elif path.suffix.lower() == ".pdf":
-        pdf_files = [path]
+        pdfs = sorted(path.glob("**/*.pdf"))
+        texts = sorted(path.glob("**/*.md")) + sorted(path.glob("**/*.txt"))
+        all_files = pdfs + texts
+        print(f"📂 Found {len(pdfs)} PDFs + {len(texts)} text/markdown files in {path}")
+    elif path.suffix.lower() in (".pdf", ".md", ".txt"):
+        all_files = [path]
     else:
-        print(f"Error: {path} is not a PDF or directory")
+        print(f"Error: {path} is not a PDF/MD/TXT or directory")
         return 1
 
-    if not pdf_files:
-        print("No PDF files found.")
+    if not all_files:
+        print("No files found.")
         return 0
+
+    pdf_files = all_files  # keep variable name for compatibility
 
     ingested_ids = _load_ingested_log()
     existing_index = _load_index()
@@ -245,7 +301,10 @@ def ingest(
             skipped += 1
             continue
 
-        extracted = extract_pdf(pdf_path)
+        if pdf_path.suffix.lower() in (".md", ".txt"):
+            extracted = extract_text_file(pdf_path)
+        else:
+            extracted = extract_pdf(pdf_path)
         if not extracted:
             failed += 1
             continue
