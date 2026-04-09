@@ -25,8 +25,20 @@ BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "book
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
-MINIMAX_API_URL = "https://api.minimaxi.chat/v1/chat/completions"
-MINIMAX_MODEL = "MiniMax-M2.5"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
+
+def _get_api_key() -> str:
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if key:
+        return key
+    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            key = config.get("env", {}).get("GEMINI_API_KEY", "")
+        except Exception:
+            pass
+    return key
 
 SYSTEM_PROMPT = """You are a bookmark knowledge card generator. Given the raw content of a single X/Twitter bookmark, output one structured knowledge card in Traditional Chinese.
 
@@ -61,38 +73,41 @@ One sentence capturing the core value in English.
 - Point 2
 - Point 3
 
-## 3. 作者補充 / Thread 重點
+## 3. Claim 等級
+標記這篇內容中最重要觀點的知識品質：
+- **等級**：[Attested | Scholarship | Inference]
+  - Attested：原文直接引用、有具體數據或實驗結果的陳述
+  - Scholarship：作者的分析觀點、領域共識，需附作者依據
+  - Inference：LLM 推論、作者猜測、尚未驗證的假設
+- **主張**：（一句話說明被標記的主要觀點）
+- **依據**：（為什麼是這個等級？有什麼支持/限制？）
+
+## 4. False Friends（如有）
+這篇涉及哪些看起來像普通詞彙但有特定技術含義的術語？
+- term: （如沒有，填「無」）
+  common_misunderstanding: （多數人誤以為是...）
+  actual_meaning: （在此領域實際指的是...）
+
+## 5. 作者補充 / Thread 重點
 - Thread highlights or author follow-ups (2–4 points)
 - If none: 無明顯補充
 
-## 4. 外部連結重點
-- Key info from linked articles/repos
-- If none: 無外部連結內容
-
-## 5. 對使用者的價值
+## 6. 對使用者的價值
 - What to track
 - How to apply it
 - Which project/workflow it fits
 
-## 6. 關聯主題
+## 7. 關聯主題
 - Topic A
 
-## 7. 原始來源
+## 8. 原始來源
 - Tweet: {source_url}
 - Links: (list URLs found in content)
 
 Quality principles: conservative > hallucination, quality > coverage, structured > verbose"""
 
 
-def _get_api_key() -> str:
-    key = os.environ.get("MINIMAX_API_KEY", "")
-    if key:
-        return key
-    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if config_path.exists():
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        key = config.get("env", {}).get("MINIMAX_API_KEY", "")
-    return key
+# _get_api_key defined above with GEMINI_API_URL
 
 
 def _now_iso() -> str:
@@ -114,7 +129,7 @@ def _read_bookmark(source_path: str) -> str:
     return ""
 
 
-def _call_minimax(api_key: str, bookmark_content: str, item: dict) -> str:
+def _call_gemini(api_key: str, bookmark_content: str, item: dict) -> str:
     system = SYSTEM_PROMPT.format(
         id=item["id"],
         source_url=item.get("source_url", ""),
@@ -122,9 +137,9 @@ def _call_minimax(api_key: str, bookmark_content: str, item: dict) -> str:
     )
     user_msg = f"""Please process this bookmark:
 
-ID: {item['id']}
-Source: {item.get('source_url', '')}
-Category: {item.get('category', '')}
+ID: {item["id"]}
+Source: {item.get("source_url", "")}
+Category: {item.get("category", "")}
 
 --- Raw content ---
 {bookmark_content}
@@ -132,35 +147,18 @@ Category: {item.get('category', '')}
 
 Output the knowledge card. If content is low-value (login page/404/noise), output only: SKIPPED"""
 
-    payload = {
-        "model": MINIMAX_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        "max_tokens": 2000,
-        "temperature": 0.3,
-    }
-
+    combined = system + "\n\n" + user_msg
+    payload = json.dumps({"contents": [{"parts": [{"text": combined}]}]})
+    url = f"{GEMINI_API_URL}?key={api_key}"
     req = urllib.request.Request(
-        MINIMAX_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        url,
+        data=payload.encode("utf-8"),
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-
-    # MiniMax may return thinking block first
-    content_blocks = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if isinstance(content_blocks, list):
-        text = next((b["text"] for b in content_blocks if b.get("type") == "text"), "")
-    else:
-        text = content_blocks
-    return text.strip()
+    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
 def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
@@ -198,7 +196,7 @@ def main() -> None:
 
     api_key = "" if args.dry_run else _get_api_key()
     if not api_key and not args.dry_run:
-        print("❌ MINIMAX_API_KEY not found. Set env var or add to openclaw.json.")
+        print("❌ GEMINI_API_KEY not found. Set env var or add to openclaw.json.")
         sys.exit(1)
 
     data = _load_queue()
