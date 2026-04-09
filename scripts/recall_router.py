@@ -287,20 +287,25 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                 "query": query,
             }
 
+        # Delivery mode based on content quality, not trigger confidence
+        best_wiki_score = max((r.score for r in wiki_results_filtered), default=0.0)
+        if best_wiki_score >= 2.0 or (not has_wiki and parsed.confidence >= 0.6):
+            delivery_mode = "side_hint"
+        else:
+            delivery_mode = "expandable_hint"
+
         text_parts = []
         # Wiki first (highest authority)
         if has_wiki:
             text_parts.append(wiki_text)
-        # Bookmark supplement (only if adds new info beyond wiki)
+        # Bookmark supplement
         if has_assoc:
-            if parsed.confidence >= 0.6:
+            if delivery_mode == "side_hint":
                 text_parts.append(_format_side_hint(assoc_text))
             elif not has_wiki:
                 text_parts.append(_format_expandable(query, len(assoc_results) or 1))
         if contrarian_text:
             text_parts.append(contrarian_text)
-
-        delivery_mode = "side_hint" if parsed.confidence >= 0.6 else "expandable_hint"
         formatted_text = "\n\n".join(text_parts)
 
         duration_ms = int((time.monotonic() - t0) * 1000)
