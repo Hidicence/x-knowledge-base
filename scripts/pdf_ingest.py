@@ -32,7 +32,7 @@ except ImportError:
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
 SCRIPTS_DIR = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
-INDEX_PATH = WORKSPACE / "memory" / "x-knowledge-base" / "search-index.json"
+INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 INGESTED_LOG = WORKSPACE / "memory" / "x-knowledge-base" / "pdf-ingested.json"
 
 # ── Text cleaning ──────────────────────────────────────────────────────────────
@@ -185,39 +185,49 @@ def extract_text_file(path: Path) -> Optional[dict]:
 # ── Knowledge card builder ─────────────────────────────────────────────────────
 
 def _build_card(extracted: dict, category: str, tags: list[str]) -> dict:
-    """Convert extracted PDF data into XKB knowledge card format."""
+    """Convert extracted PDF data into XKB bookmarks index format (compatible with xkb_ask.py)."""
+    all_tags = tags + (["author:" + extracted["author"]] if extracted["author"] else [])
+    source = extracted["source_file"]
     return {
-        "id": extracted["id"],
+        "path": source,
+        "relative_path": extracted["filename"],
         "title": extracted["title"],
-        "url": f"file://{extracted['source_file']}",
-        "source_url": extracted["source_file"],
-        "source_type": "pdf",
-        "summary": extracted["summary"],
-        "full_text": extracted["full_text"][:8000],  # Cap for index size
         "category": category,
-        "tags": tags + (["author:" + extracted["author"]] if extracted["author"] else []),
+        "tags": all_tags,
+        "summary": extracted["summary"],
+        "source_url": source,
+        "source_type": "pdf",
+        "searchable": extracted["full_text"][:8000],
+        "mtime": extracted["extracted_at"],
+        "size": extracted["char_count"],
+        "enriched": True,
+        "_pdf_id": extracted["id"],
         "author": extracted["author"],
         "page_count": extracted["page_count"],
-        "fetched_at": extracted["extracted_at"],
         "quality_score": min(1.0, extracted["char_count"] / 10000),
     }
 
 
 # ── Index management ───────────────────────────────────────────────────────────
 
-def _load_index() -> list:
+def _load_index() -> tuple[list, dict]:
+    """Returns (items_list, metadata_dict) from bookmarks index."""
     if INDEX_PATH.exists():
         try:
             data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
+            if isinstance(data, dict):
+                return data.get("items", []), {k: v for k, v in data.items() if k != "items"}
+            elif isinstance(data, list):
+                return data, {}
         except Exception:
-            return []
-    return []
+            pass
+    return [], {}
 
 
-def _save_index(cards: list) -> None:
+def _save_index(cards: list, meta: dict) -> None:
     INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-    INDEX_PATH.write_text(json.dumps(cards, ensure_ascii=False, indent=2), encoding="utf-8")
+    output = {**meta, "count": len(cards), "items": cards}
+    INDEX_PATH.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_ingested_log() -> set:
@@ -285,8 +295,8 @@ def ingest(
     pdf_files = all_files  # keep variable name for compatibility
 
     ingested_ids = _load_ingested_log()
-    existing_index = _load_index()
-    existing_ids = {c.get("id") for c in existing_index}
+    existing_index, index_meta = _load_index()
+    existing_ids = {c.get("_pdf_id") for c in existing_index if c.get("_pdf_id")}
 
     new_cards = []
     skipped = 0
@@ -324,10 +334,11 @@ def ingest(
         return 0
 
     if new_cards:
-        # Merge into existing index (update if same id)
-        updated_index = [c for c in existing_index if c.get("id") not in {c["id"] for c in new_cards}]
+        # Merge into existing index (dedup by _pdf_id)
+        new_ids = {c["_pdf_id"] for c in new_cards}
+        updated_index = [c for c in existing_index if c.get("_pdf_id") not in new_ids]
         updated_index.extend(new_cards)
-        _save_index(updated_index)
+        _save_index(updated_index, index_meta)
         _save_ingested_log(ingested_ids)
         print(f"\n✅ Added {len(new_cards)} cards to index (total: {len(updated_index)})")
     else:
