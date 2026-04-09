@@ -46,6 +46,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from conversation_state_parser import parse as parse_state, ParseResult
 from continuity_recall import recall as continuity_recall, format_chat as format_continuity_chat
+from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
+from action_recall import recall as action_recall, format_hint as format_action_hint
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
 SCRIPTS = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
@@ -183,8 +185,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
     if parsed.trigger_class == "suppress":
         duration_ms = int((time.monotonic() - t0) * 1000)
-        record = _build_telemetry(message, parsed, 0, "none", duration_ms)
-        _write_telemetry(record)
+        _write_telemetry(_build_telemetry(message, parsed, 0, "none", duration_ms))
         return {
             "trigger_class": "suppress",
             "state": parsed.state,
@@ -211,15 +212,29 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
     # Step 2: Execute recall
     if parsed.trigger_class == "hard":
+        # Continuity recall (primary)
         raw_results = continuity_recall(query, source="both", top_k=4)
         filtered = _filter_results(raw_results, MIN_SCORE_HARD)
-
-        duration_ms = int((time.monotonic() - t0) * 1000)
         result_dicts = _results_to_dicts(filtered[:3])
-        delivery_mode = "inline_injection" if filtered else "none"
-        formatted_text = _format_inline(format_continuity_chat(filtered[:3])) if filtered else ""
 
-        _write_telemetry(_build_telemetry(message, parsed, len(filtered), delivery_mode, duration_ms))
+        text_parts: list[str] = []
+        if filtered:
+            text_parts.append(_format_inline(format_continuity_chat(filtered[:3])))
+
+        # Action recall (supplement for execution-planning state)
+        action_results = action_recall(query, top_k=3)
+        if action_results:
+            action_text = format_action_hint(action_results)
+            if action_text:
+                text_parts.append(action_text)
+                result_dicts += [{"source_type": "action", "source_file": r.path,
+                                   "section": r.name, "excerpt": r.description,
+                                   "score": r.score, "url": ""} for r in action_results]
+
+        delivery_mode = "inline_injection" if text_parts else "none"
+        formatted_text = "\n\n".join(text_parts) if text_parts else ""
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        _write_telemetry(_build_telemetry(message, parsed, len(result_dicts), delivery_mode, duration_ms))
 
         return {
             "trigger_class": "hard",
@@ -232,9 +247,24 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         }
 
     else:  # soft
+        # Associative recall (primary)
         assoc_text, assoc_results = run_associative_recall(query, limit=2)
 
-        if not assoc_text or len(assoc_text) < 20:
+        # Contrarian recall (supplement — max 1 result, only on high-confidence soft)
+        contrarian_text = ""
+        contrarian_results = []
+        if parsed.confidence >= 0.55:
+            c_raw = contrarian_recall(query, top_k=1)
+            if c_raw:
+                contrarian_text = format_contrarian_hint(c_raw)
+                contrarian_results = [{"source_type": "contrarian", "source_file": r.source_file,
+                                       "section": r.section, "excerpt": r.excerpt,
+                                       "score": r.score, "url": ""} for r in c_raw]
+
+        all_results = assoc_results + contrarian_results
+        has_content = bool(assoc_text and len(assoc_text) >= 20)
+
+        if not has_content and not contrarian_text:
             duration_ms = int((time.monotonic() - t0) * 1000)
             _write_telemetry(_build_telemetry(message, parsed, 0, "none", duration_ms))
             return {
@@ -247,21 +277,26 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                 "query": query,
             }
 
-        if parsed.confidence >= 0.6:
-            delivery_mode = "side_hint"
-            formatted_text = _format_side_hint(assoc_text)
-        else:
-            delivery_mode = "expandable_hint"
-            formatted_text = _format_expandable(query, len(assoc_results) or 1)
+        text_parts = []
+        if has_content:
+            if parsed.confidence >= 0.6:
+                text_parts.append(_format_side_hint(assoc_text))
+            else:
+                text_parts.append(_format_expandable(query, len(assoc_results) or 1))
+        if contrarian_text:
+            text_parts.append(contrarian_text)
+
+        delivery_mode = "side_hint" if parsed.confidence >= 0.6 else "expandable_hint"
+        formatted_text = "\n\n".join(text_parts)
 
         duration_ms = int((time.monotonic() - t0) * 1000)
-        _write_telemetry(_build_telemetry(message, parsed, len(assoc_results), delivery_mode, duration_ms))
+        _write_telemetry(_build_telemetry(message, parsed, len(all_results), delivery_mode, duration_ms))
 
         return {
             "trigger_class": "soft",
             "state": parsed.state,
             "delivery_mode": delivery_mode,
-            "results": assoc_results,
+            "results": all_results,
             "confidence": parsed.confidence,
             "formatted_text": formatted_text,
             "query": query,
