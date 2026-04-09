@@ -45,7 +45,7 @@ SCRIPTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from conversation_state_parser import parse as parse_state, ParseResult
-from continuity_recall import recall as continuity_recall, format_chat as format_continuity_chat
+from continuity_recall import recall as continuity_recall, recall_from_wiki, format_chat as format_continuity_chat
 from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
 from action_recall import recall as action_recall, format_hint as format_action_hint
 
@@ -247,7 +247,15 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         }
 
     else:  # soft
-        # Associative recall (primary)
+        # Wiki recall (highest priority — synthesized knowledge)
+        wiki_results = recall_from_wiki(query, top_k=2)
+        wiki_results_filtered = [r for r in wiki_results if r.score >= 0.4]
+        wiki_text = format_continuity_chat(wiki_results_filtered) if wiki_results_filtered else ""
+        wiki_result_dicts = [{"source_type": "wiki", "source_file": r.source_file,
+                               "section": r.section, "excerpt": r.excerpt,
+                               "score": r.score, "url": r.url} for r in wiki_results_filtered]
+
+        # Associative recall (bookmark/card supplement)
         assoc_text, assoc_results = run_associative_recall(query, limit=2)
 
         # Contrarian recall (supplement — max 1 result, only on high-confidence soft)
@@ -261,8 +269,10 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                        "section": r.section, "excerpt": r.excerpt,
                                        "score": r.score, "url": ""} for r in c_raw]
 
-        all_results = assoc_results + contrarian_results
-        has_content = bool(assoc_text and len(assoc_text) >= 20)
+        all_results = wiki_result_dicts + assoc_results + contrarian_results
+        has_wiki = bool(wiki_text)
+        has_assoc = bool(assoc_text and len(assoc_text) >= 20)
+        has_content = has_wiki or has_assoc
 
         if not has_content and not contrarian_text:
             duration_ms = int((time.monotonic() - t0) * 1000)
@@ -278,10 +288,14 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             }
 
         text_parts = []
-        if has_content:
+        # Wiki first (highest authority)
+        if has_wiki:
+            text_parts.append(wiki_text)
+        # Bookmark supplement (only if adds new info beyond wiki)
+        if has_assoc:
             if parsed.confidence >= 0.6:
                 text_parts.append(_format_side_hint(assoc_text))
-            else:
+            elif not has_wiki:
                 text_parts.append(_format_expandable(query, len(assoc_results) or 1))
         if contrarian_text:
             text_parts.append(contrarian_text)
