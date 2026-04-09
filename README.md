@@ -21,14 +21,14 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 
 ## How It Works
 
-XKB handles two things: **capturing knowledge** and **sedimentation into wiki**.
+XKB handles three things: **capturing knowledge**, **sedimentation into wiki**, and **proactive recall**.
 
 ```
 Input sources
-├── Local notes / markdown     →  local_ingest.py  (✨ new)
+├── Local notes / markdown     →  local_ingest.py
 ├── X/Twitter bookmarks        →  fetch_and_summarize.sh
 ├── YouTube playlists          →  fetch_youtube_playlist.py
-└── GitHub forks/stars         →  fetch_github_repos.py  (repo-level cards only)
+└── GitHub forks/stars         →  fetch_github_repos.py
         │
         ▼
 (fetch → enrich → summarize → categorize)
@@ -43,11 +43,17 @@ sync_cards_to_wiki.py + Absorb Gate
         ▼
 wiki/topics/*.md  ←  durable, readable knowledge pages
         │
-        ▼
-xkb_ask.py  ←  ask questions, get cited answers  (✨ new)
+     ┌──┴──────────────────────────────────────────┐
+     │                                              │
+     ▼                                              ▼
+xkb_ask.py                              Active Recall Layer  ✨ new
+ask questions, get cited answers        knowledge surfaces automatically
+                                        during AI conversations
 ```
 
 The **absorb gate** is the key quality mechanism: before any card enters the wiki, an LLM evaluates — *"What new dimension does this add to what's already here?"* Only cards that bring a new case, new concept, or contradiction pass through. Everything else is logged and skipped.
+
+The **Active Recall Layer** is what makes the system proactive: instead of waiting for you to search, it monitors every conversation topic and automatically surfaces relevant knowledge when it detects a match — project status, strategy questions, past decisions, how-to queries, and more.
 
 **Optional: connect your agent's memory logs**
 
@@ -92,12 +98,25 @@ No API keys, topic-map config, or prior setup needed beyond the LLM key.
 
 ### Core Scripts
 
+**Active Recall Layer** ✨
+
 | Script | What it does |
 |--------|-------------|
-| `xkb_demo.sh` | ✨ **Demo mode**: sample dataset → cards → wiki → ask in one command |
-| `xkb_ask.py` | ✨ **Ask your knowledge base**: query → search wiki + cards → cited answer |
-| `local_ingest.py` | ✨ **Local notes ingest**: markdown/txt files → knowledge cards → search index |
-| `suggest_topic_map.py` | ✨ **Auto topic-map**: analyze categories → LLM suggests wiki topic slugs |
+| `recall_router.py` | ✨ **Main recall entry point**: message → classify → route → structured output + telemetry |
+| `conversation_state_parser.py` | ✨ **Trigger classifier**: detects hard/soft/suppress from any message (no LLM) |
+| `continuity_recall.py` | ✨ **Continuity recall**: searches MEMORY.md + wiki for project state, decisions, definitions |
+| `contrarian_recall.py` | ✨ **Contrarian recall**: surfaces warnings, failures, limitations, counter-examples |
+| `action_recall.py` | ✨ **Action recall**: finds reusable scripts, wiki roadmap sections, plan docs |
+| `xkb_recall_server.py` | ✨ **MCP server**: exposes `xkb_recall` as an MCP tool for AI agents |
+
+**Knowledge Capture**
+
+| Script | What it does |
+|--------|-------------|
+| `xkb_demo.sh` | **Demo mode**: sample dataset → cards → wiki → ask in one command |
+| `xkb_ask.py` | **Ask your knowledge base**: query → search wiki + cards → cited answer |
+| `local_ingest.py` | **Local notes ingest**: markdown/txt files → knowledge cards → search index |
+| `suggest_topic_map.py` | **Auto topic-map**: analyze categories → LLM suggests wiki topic slugs |
 | `fetch_and_summarize.sh` | Full XKB pipeline: fetch X/Twitter bookmarks → enrich → summarize → categorize → wiki sync |
 | `fetch_youtube_playlist.py` | Fetch YouTube playlist subtitles → summarize → add to knowledge cards + search index |
 | `run_youtube_sync.sh` | Daily YouTube playlist sync (wraps fetch_youtube_playlist.py) |
@@ -242,6 +261,92 @@ bash scripts/smoke_test_pipeline.sh                 # End-to-end test
 
 ---
 
+## Active Recall Layer ✨
+
+The Active Recall Layer makes XKB proactive — knowledge surfaces automatically during AI conversations without you having to ask.
+
+### How it works
+
+Every incoming message is classified by a lightweight rule-based parser (no LLM, <5ms). Based on the classification, the relevant recall module fires and returns structured output.
+
+```
+User message
+    │
+    ▼
+conversation_state_parser.py
+    │ → trigger_class: hard | soft | suppress
+    │ → state: continuity | brainstorming | strategy | execution
+    │
+    ├─ hard trigger → continuity_recall.py (MEMORY.md + wiki)
+    │                 + action_recall.py (scripts, plans, roadmaps)
+    │                 → inline injection
+    │
+    ├─ soft trigger → recall_for_conversation.py (vector search)
+    │                 + contrarian_recall.py (warnings, failures)
+    │                 → side hint
+    │
+    └─ suppress    → nothing (casual chat, greetings)
+```
+
+**Trigger examples:**
+- Hard: *"XKB 現在在哪個階段？"*, *"之前怎麼定義 active recall？"*, *"下一步是什麼？"*
+- Soft: *"AI SEO 值不值得做？"*, *"怎麼設計 agent memory？"*, *"有沒有類似案例？"*
+- Suppress: *"你好"*, *"今天幾號？"*, *"幫我翻譯這句話"*
+
+### Use from command line
+
+```bash
+# Route a message and see what recall fires
+python3 scripts/recall_router.py "XKB active recall 現在的架構是什麼？"
+
+# Dry-run — see classification without executing recall
+python3 scripts/recall_router.py "你的問題" --dry-run
+
+# Full structured output as JSON
+python3 scripts/recall_router.py "你的問題" --json
+```
+
+### Use as MCP tool (OpenClaw / Claude Code)
+
+The `xkb_recall_server.py` exposes the router as an MCP tool. Once registered, the AI agent will call `xkb_recall` automatically before responding to substantive messages.
+
+**OpenClaw setup** — add to `openclaw.json`:
+```json
+{
+  "mcp": {
+    "servers": {
+      "xkb-recall": {
+        "command": "python3",
+        "args": ["/path/to/workspace/skills/x-knowledge-base/scripts/xkb_recall_server.py"],
+        "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
+      }
+    }
+  }
+}
+```
+
+**Claude Code setup** — add to `.claude/settings.json` or `~/.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "xkb-recall": {
+      "command": "python3",
+      "args": ["/path/to/workspace/skills/x-knowledge-base/scripts/xkb_recall_server.py"],
+      "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
+    }
+  }
+}
+```
+
+### Telemetry
+
+Every recall event is logged to `memory/x-knowledge-base/recall-telemetry.jsonl`:
+```json
+{"ts": "...", "trigger_class": "hard", "state": "continuity", "recalled": true, "result_count": 2, "duration_ms": 45}
+```
+
+---
+
 ## Requirements
 
 ### Agent compatibility
@@ -277,7 +382,8 @@ export LLM_MODEL="gpt-4o-mini"   # e.g. gpt-4o-mini, claude-3-haiku, gemini-flas
 | v3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
 | v4 | ✅ | Local notes ingest, ask layer with citations, demo mode, auto topic-map |
 | v5 | ✅ | Absorb gate explainability: --review-rejects, --explain, --force-absorb |
-| v6 | 🔜 | Quickstart onboarding wizard, proactive surface layer |
+| v6 | ✅ | Active Recall Layer: proactive recall during AI conversations, MCP server, telemetry |
+| v7 | 🔜 | Recall quality improvement (semantic scoring), onboarding wizard |
 
 ---
 

@@ -30,13 +30,14 @@ SERVER_INFO = {
 TOOL_DEF = {
     "name": "xkb_recall",
     "description": (
-        "Proactive knowledge recall from XKB (X Knowledge Base). "
-        "Given the user's current message, automatically checks if it matches a "
-        "recall trigger (hard: continuity/definition/status queries; soft: strategy/case study/how-to). "
-        "Returns relevant knowledge from MEMORY.md, wiki topics, or knowledge cards. "
-        "Returns empty string if the message is casual chat or a one-off task. "
-        "Call this BEFORE responding to any substantive question about XKB, OpenClaw, "
-        "workflows, AI strategy, decisions, or topics in the knowledge base."
+        "ALWAYS call this tool before responding to any substantive user message. "
+        "It proactively checks if the current conversation topic matches knowledge stored in the user's "
+        "personal knowledge base (XKB). Topics include but are not limited to: projects, strategies, "
+        "decisions, how-to questions, case studies, roadmaps, people, tools, workflows, AI, SEO, startups, "
+        "products, or any domain the user works in. "
+        "Returns relevant excerpts from MEMORY.md, wiki topics, or knowledge cards if a match is found. "
+        "Returns empty string for purely casual chat (greetings, weather, jokes). "
+        "The router decides internally whether recall is needed — you just call it and use the result."
     ),
     "inputSchema": {
         "type": "object",
