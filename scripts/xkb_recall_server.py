@@ -51,24 +51,25 @@ TOOL_DEF = {
 }
 
 
-def _run_recall(message: str) -> str:
-    """Call recall_router.py and return its output."""
+def _run_recall_structured(message: str) -> dict:
+    """Call recall_router.py --json and return structured result."""
+    empty = {"trigger_class": "suppress", "state": "suppress", "delivery_mode": "none",
+             "results": [], "confidence": 0.0, "formatted_text": "", "query": ""}
     if not ROUTER_SCRIPT.exists():
-        return f"[xkb_recall] recall_router.py not found at {ROUTER_SCRIPT}"
+        return {**empty, "formatted_text": f"[xkb_recall] router not found at {ROUTER_SCRIPT}"}
     try:
         result = subprocess.run(
-            [sys.executable, str(ROUTER_SCRIPT), message],
+            [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
             capture_output=True,
             text=True,
             timeout=30,
             env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE)},
         )
-        output = result.stdout.strip()
-        return output  # Empty string = suppress (silent)
+        return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return ""
+        return empty
     except Exception as e:
-        return f"[xkb_recall error: {e}]"
+        return {**empty, "formatted_text": f"[xkb_recall error: {e}]"}
 
 
 def _respond(req_id, result=None, error=None):
@@ -124,9 +125,15 @@ def handle(req: dict):
             _respond(req_id, {"content": [{"type": "text", "text": ""}], "isError": False})
             return
 
-        output = _run_recall(message)
+        structured = _run_recall_structured(message)
+        # formatted_text for human-readable context injection
+        text_output = structured.get("formatted_text", "")
+        # Full structured data as JSON annotation (agent can use it for routing decisions)
         _respond(req_id, {
-            "content": [{"type": "text", "text": output}],
+            "content": [
+                {"type": "text", "text": text_output},
+                {"type": "text", "text": f"[xkb_recall_meta] {json.dumps(structured, ensure_ascii=False)}"},
+            ],
             "isError": False,
         })
         return
