@@ -28,7 +28,9 @@ Input sources
 ├── Local notes / markdown     →  local_ingest.py
 ├── X/Twitter bookmarks        →  fetch_and_summarize.sh
 ├── YouTube playlists          →  fetch_youtube_playlist.py
-└── GitHub forks/stars         →  fetch_github_repos.py
+├── GitHub forks/stars         →  fetch_github_repos.py
+├── PDF / academic papers      →  pdf_ingest.py
+└── PubMed open-access papers  →  fetch_pubmed.py
         │
         ▼
 (fetch → enrich → summarize → categorize)
@@ -128,6 +130,15 @@ No API keys, topic-map config, or prior setup needed beyond the LLM key.
 | `status_knowledge_pipeline.py` | Full pipeline status in one view |
 | `smoke_test_pipeline.sh` | End-to-end pipeline verification (10 checks) |
 
+**Academic Research Pipeline** 🔬
+
+| Script | What it does |
+|--------|-------------|
+| `fetch_pubmed.py` | Fetch open-access full-text papers from PubMed Central → markdown files |
+| `pdf_ingest.py` | PDF / markdown → bilingual (zh+en) knowledge cards with Gemini-generated summaries and domain tags → search index |
+| `topic_guide_generator.py` | Generate a structured domain guide from existing cards: reading order, key terms, knowledge gaps, key authors |
+| `health_check.py` | Knowledge base audit: semantic conflict detection, gap analysis, duplicate detection |
+
 ### Wiki Template
 
 ```
@@ -176,6 +187,25 @@ bash scripts/run_youtube_sync.sh   # daily sync
 # Capture GitHub forks and starred repos
 python3 scripts/fetch_github_repos.py --forks --stars
 bash scripts/run_github_sync.sh    # daily sync
+
+# Fetch open-access academic papers from PubMed
+python3 scripts/fetch_pubmed.py "AI medical imaging" --limit 20 --out /tmp/papers
+python3 scripts/pdf_ingest.py /tmp/papers/ --category research --rebuild-index
+
+# Ingest local PDF files directly
+python3 scripts/pdf_ingest.py /path/to/papers/ --category research
+python3 scripts/pdf_ingest.py paper.pdf --tag ai --tag medical
+```
+
+### 2b. Research tools
+```bash
+# Generate a domain guide from collected research cards
+python3 scripts/topic_guide_generator.py --topic "AI Medical Imaging" --category research
+
+# Run a knowledge base health check
+python3 scripts/health_check.py --category research          # all checks
+python3 scripts/health_check.py --mode gaps                  # gap analysis only
+python3 scripts/health_check.py --mode conflicts             # conflict detection
 ```
 
 ### 3. Set up your wiki topic map
@@ -358,17 +388,28 @@ Set up: read `SKILL.md`, create the workspace directory structure, schedule the 
 - Python 3.10+
 - `OPENCLAW_WORKSPACE` — path to your workspace directory (e.g. `~/.openclaw/workspace`)
 
-### LLM API key (required)
-The scripts call any OpenAI-compatible LLM for summarization, absorb gate judgments, and memory distillation. Configure via environment variables:
+### LLM API keys (required)
+XKB uses two API keys:
 
+**Gemini API key** (for enrichment, summaries, search — required for full functionality):
+```bash
+export GEMINI_API_KEY="your-gemini-key"
+# Get one free at: https://aistudio.google.com/
+```
+
+Used by: `run_bookmark_worker.py`, `run_scan_worker.py`, `pdf_ingest.py`, `fetch_pubmed.py`,
+`topic_guide_generator.py`, `health_check.py`, vector index (`build_vector_index.py`)
+
+**OpenAI-compatible API key** (for wiki absorb gate and memory distillation):
 ```bash
 export LLM_API_KEY="your-api-key"
 export LLM_API_URL="https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
-export LLM_MODEL="gpt-4o-mini"   # e.g. gpt-4o-mini, claude-3-haiku, gemini-flash
+export LLM_MODEL="gpt-4o-mini"
 ```
 
-### Optional
-- `GEMINI_API_KEY` — semantic vector index (falls back to keyword search without it)
+Used by: `sync_cards_to_wiki.py`, `distill_memory_to_wiki.py`, `xkb_ask.py`
+
+Without `GEMINI_API_KEY`, enrichment and vector search fall back to keyword-only mode.
 - `BIRD_AUTH_TOKEN` + `BIRD_CT0` — X/Twitter bookmark fetching via [bird CLI](https://github.com/zedeus/nitter); falls back to curl/Jina without it
 
 ---
@@ -383,7 +424,8 @@ export LLM_MODEL="gpt-4o-mini"   # e.g. gpt-4o-mini, claude-3-haiku, gemini-flas
 | v4 | ✅ | Local notes ingest, ask layer with citations, demo mode, auto topic-map |
 | v5 | ✅ | Absorb gate explainability: --review-rejects, --explain, --force-absorb |
 | v6 | ✅ | Active Recall Layer: proactive recall during AI conversations, MCP server, telemetry |
-| v7 | 🔜 | Recall quality improvement (semantic scoring), onboarding wizard |
+| v7 | ✅ | Knowledge quality layer: bilingual summaries, Claim levels, CJK bigram search, academic PDF pipeline, domain guides, health check |
+| v8 | 🔜 | Proactive linking (cross-reference on ingest), onboarding wizard |
 
 ---
 
