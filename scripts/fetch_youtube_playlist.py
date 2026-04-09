@@ -203,8 +203,10 @@ def extract_frontmatter(md_content: str) -> dict:
 
 
 def extract_summary(md_content: str) -> str:
-    m = re.search(r"## 📝 一句話摘要\s*\n(.+?)(?=\n##|\Z)", md_content, re.DOTALL)
-    return m.group(1).strip() if m else ""
+    zh = re.search(r"## 📝 一句話摘要\s*\n(.+?)(?=\n##|\Z)", md_content, re.DOTALL)
+    en = re.search(r"## 📝 English Summary\s*\n(.+?)(?=\n##|\Z)", md_content, re.DOTALL)
+    parts = [x.group(1).strip() for x in [zh, en] if x]
+    return " | ".join(parts) if parts else ""
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

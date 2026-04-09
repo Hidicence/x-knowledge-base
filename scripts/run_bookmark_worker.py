@@ -51,7 +51,10 @@ confidence: medium
 # <title>
 
 ## 1. 核心摘要
-One sentence capturing the core value.
+繁體中文，一句話說明核心價值。
+
+## 1. English Summary
+One sentence capturing the core value in English.
 
 ## 2. 重點整理
 - Point 1

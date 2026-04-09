@@ -72,6 +72,14 @@ source_type: local
 
 <這份文件的核心內容，20-40字，繁體中文>
 
+## 📝 English Summary
+
+<Core content in English, 15-30 words>
+
+## 📝 English Summary
+
+<Core content in English, 15-30 words>
+
 ## 重點
 
 - <重點1，15-25字>
@@ -162,9 +170,11 @@ def extract_frontmatter(card: str) -> dict:
 
 
 def extract_summary(card: str) -> str:
-    m = re.search(r"##\s*📝 一句話摘要\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
-    if m:
-        return m.group(1).strip()
+    zh = re.search(r"##\s*📝 一句話摘要\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
+    en = re.search(r"##\s*📝 English Summary\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
+    parts = [x.group(1).strip() for x in [zh, en] if x]
+    if parts:
+        return " | ".join(parts)
     lines = [l.strip() for l in card.splitlines()
              if l.strip() and not l.startswith("#") and not l.startswith("---")]
     return lines[0] if lines else ""
