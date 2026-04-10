@@ -66,6 +66,7 @@ author: (infer from content, leave blank if unsure)
 created_at: (infer from content, leave blank if unsure)
 category: {category}
 tags: [tag1, tag2, tag3]
+sensitivity: public
 confidence: medium
 ---
 
@@ -257,11 +258,15 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bookmark enrichment worker")
-    parser.add_argument("--limit",    type=int, default=5,       help="Max items to process (default: 5)")
-    parser.add_argument("--worker",   default="worker",          help="Worker name recorded in queue")
-    parser.add_argument("--dry-run",  action="store_true",       help="Simulate without calling API")
-    parser.add_argument("--category", help="Filter by category slug (e.g. 01-openclaw-workflows)")
+    parser.add_argument("--limit",      type=int, default=5,     help="Max items to process (default: 5)")
+    parser.add_argument("--worker",     default="worker",        help="Worker name recorded in queue")
+    parser.add_argument("--dry-run",    action="store_true",     help="Simulate without calling API")
+    parser.add_argument("--local-only", action="store_true",     help="Skip LLM enrichment — index bookmarks without sending content to any API")
+    parser.add_argument("--category",   help="Filter by category slug (e.g. 01-openclaw-workflows)")
     args = parser.parse_args()
+
+    if args.local_only:
+        args.dry_run = True  # local-only implies dry-run (no API calls)
 
     api_key = "" if args.dry_run else _get_api_key()
     if not api_key and not args.dry_run:
@@ -282,8 +287,12 @@ def main() -> None:
 
     total_todo = len([i for i in items if i["status"] == "todo"])
     print(f"📋 Processing {len(todo)}/{total_todo} todo items  [worker: {args.worker}]")
-    if args.dry_run:
+    if args.local_only:
+        print("   (local-only mode — no content sent to external APIs)")
+    elif args.dry_run:
         print("   (dry-run mode — no API calls)")
+    else:
+        print(f"   ⚠️  Bookmark content will be sent to LLM API ({LLM_API_URL}) for enrichment.")
 
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):

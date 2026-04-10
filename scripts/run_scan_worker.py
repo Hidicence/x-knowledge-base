@@ -71,6 +71,7 @@ author: (infer from content, leave blank if unsure)
 created_at: (infer from content, leave blank if unsure)
 category: {category}
 tags: [tag1, tag2, tag3]
+sensitivity: public
 confidence: medium
 ---
 
@@ -310,11 +311,15 @@ def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan-mode bookmark enrichment worker")
-    parser.add_argument("--limit",    type=int, default=20,          help="Max items to process (default: 20)")
-    parser.add_argument("--worker",   default="scan-worker",         help="Worker name")
-    parser.add_argument("--dry-run",  action="store_true",           help="Simulate without API calls")
-    parser.add_argument("--category", default="",                    help="Filter by category slug")
+    parser.add_argument("--limit",      type=int, default=20,    help="Max items to process (default: 20)")
+    parser.add_argument("--worker",     default="scan-worker",   help="Worker name")
+    parser.add_argument("--dry-run",    action="store_true",     help="Simulate without API calls")
+    parser.add_argument("--local-only", action="store_true",     help="Skip LLM enrichment — scan and list unenriched bookmarks without sending content to any API")
+    parser.add_argument("--category",   default="",              help="Filter by category slug")
     args = parser.parse_args()
+
+    if args.local_only:
+        args.dry_run = True  # local-only implies dry-run (no API calls)
 
     api_key = "" if args.dry_run else _get_api_key()
     if not api_key and not args.dry_run:
@@ -329,8 +334,12 @@ def main() -> None:
         return
 
     print(f"📋 Found {total_missing} unenriched bookmarks  |  Processing {len(missing)} [worker: {args.worker}]")
-    if args.dry_run:
+    if args.local_only:
+        print("   (local-only mode — no content sent to external APIs)")
+    elif args.dry_run:
         print("   (dry-run — no API calls)")
+    else:
+        print(f"   ⚠️  Bookmark content will be sent to LLM API ({LLM_API_URL}) for enrichment.")
 
     results = {"done": 0, "skipped": 0, "failed": 0}
 
