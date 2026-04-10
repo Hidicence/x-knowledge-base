@@ -294,8 +294,21 @@ def generate_ai_summary(bookmark):
 2. （論點二）
 3. （論點三）
 
-## 🧵 作者補充 / Thread 重點
-- （有 thread 或補充就整理 2-4 點；沒有就寫「無」）
+## ⚠️ False Friends（如有）
+這篇有哪些看起來是普通詞彙但有特定技術含義的術語？
+- （術語）：多數人誤以為是...，實際在此指...
+如果沒有：無
+
+## 💡 驚訝點
+讀者讀完後可能感到意外或需要重新思考的是什麼？
+（如果沒有明顯驚訝點：無）
+
+## 🔗 與現有知識的關係
+這篇是補充新面向、與某個既有概念衝突、還是帶入全新框架？（一句話）
+
+## 📝 雙語摘要
+ZH: <20-40字繁體中文摘要，說明核心發現>
+EN: <15-30 word English summary of the core finding>
 
 ## 💡 可執行的應用方向
 - （實際可追蹤、可操作的方向，2-3 點）
@@ -323,7 +336,7 @@ def add_ai_summary(bookmark, summary):
     path = Path(bookmark["path"])
     content = path.read_text(encoding="utf-8", errors="ignore")
 
-    if "## 📌 一句話摘要" in content or "## 📝 AI 濃縮" in content:
+    if "## 📌 核心問題與結論" in content or "## 📌 一句話摘要" in content or "## 📝 AI 濃縮" in content:
         print("  ⏭️  跳過（已有摘要）")
         return False
 

@@ -81,10 +81,6 @@ language: {language}
 
 <What this repo does and why it matters, 15-30 words in English>
 
-## 📝 English Summary
-
-<What this repo does and why it matters, 15-30 words in English>
-
 ## 重點
 
 - <這個 repo 是做什麼的，15-25字>
