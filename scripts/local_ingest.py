@@ -76,10 +76,6 @@ source_type: local
 
 <Core content in English, 15-30 words>
 
-## 📝 English Summary
-
-<Core content in English, 15-30 words>
-
 ## 重點
 
 - <重點1，15-25字>

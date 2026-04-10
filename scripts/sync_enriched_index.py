@@ -33,12 +33,27 @@ INDEX_FILE = Path(os.getenv("INDEX_FILE", str(BOOKMARKS_DIR / "search_index.json
 
 
 def _extract_summary(text: str) -> str:
-    zh = re.search(r"##\s+1\.\s*核心摘要\s*\n(.+?)(?=\n##|\Z)", text, re.DOTALL)
-    en = re.search(r"##\s+1\.\s*English Summary\s*\n(.+?)(?=\n##|\Z)", text, re.DOTALL)
+    # ── New format: ## 7. 雙語摘要（搜尋索引用）with ZH:/EN: labels ──────────
+    bilingual = re.search(r"##\s+7\.\s*雙語摘要[^\n]*\n(.+?)(?=\n##|\Z)", text, re.DOTALL)
+    if bilingual:
+        block = bilingual.group(1)
+        zh_m = re.search(r"^ZH:\s*(.+)$", block, re.MULTILINE)
+        en_m = re.search(r"^EN:\s*(.+)$", block, re.MULTILINE)
+        parts = [m.group(1).strip() for m in [zh_m, en_m] if m and m.group(1).strip()]
+        if parts:
+            return " | ".join(parts)
+
+    # ── Legacy formats (old worker cards, github/local ingest cards) ──────────
+    patterns = [
+        r"##\s+1\.\s*核心摘要\s*\n(.+?)(?=\n##|\Z)",
+        r"##\s+1\.\s*English Summary\s*\n(.+?)(?=\n##|\Z)",
+        r"##\s*📝\s*English Summary\s*\n(.+?)(?=\n##|\Z)",
+    ]
     parts = []
-    for match in [zh, en]:
-        if match:
-            lines = [l.strip().lstrip("-").strip() for l in match.group(1).strip().splitlines() if l.strip()]
+    for pat in patterns:
+        m = re.search(pat, text, re.DOTALL)
+        if m:
+            lines = [l.strip().lstrip("-").strip() for l in m.group(1).strip().splitlines() if l.strip()]
             parts.append(" ".join(lines)[:300])
     return " | ".join(parts) if parts else ""
 
