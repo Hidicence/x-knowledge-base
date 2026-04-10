@@ -7,6 +7,7 @@
 
 import os
 import re
+import sys
 import time
 import json
 import subprocess
@@ -14,14 +15,14 @@ import requests
 from pathlib import Path
 from collections import Counter
 
+# ── Shared card prompt module ─────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call
+
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(Path.home() / ".openclaw" / "workspace" / "memory" / "bookmarks")))
-# ── LLM config (OpenAI-compatible, configurable via env vars) ──────────────────
-# LLM_API_KEY takes priority; falls back to MINIMAX_API_KEY for backwards-compat
+# ── LLM config ────────────────────────────────────────────────────────────────
 MINIMAX_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY", "")
-MINIMAX_ENDPOINT = os.getenv("LLM_API_URL", os.getenv("MINIMAX_ENDPOINT", "https://api.minimaxi.chat/v1/chat/completions"))
-MINIMAX_MODEL = os.getenv("LLM_MODEL", os.getenv("MINIMAX_MODEL", "MiniMax-M2.5"))
 OPENCLAW_FALLBACK_ENABLED = os.getenv("OPENCLAW_MINIMAX_FALLBACK", "1") not in ("0", "false", "False")
-# 保留 session + agent 兩種路由控制；新版 openclaw agent CLI 不支援 --model 旗標。
 OPENCLAW_FALLBACK_SESSION = os.getenv("OPENCLAW_MINIMAX_SESSION", "xkb-summarizer")
 OPENCLAW_FALLBACK_AGENT = os.getenv("OPENCLAW_MINIMAX_AGENT", "")
 
@@ -224,8 +225,9 @@ def get_inbox_bookmarks():
             
         content = f.read_text(encoding="utf-8", errors="ignore")
         
-        # 跳過已濃縮的
-        if "## 📝 AI 濃縮" in content or "## 📌 一句話摘要" in content:
+        # 跳過已濃縮的（含新版 9-section 格式）
+        if ("## 📝 AI 濃縮" in content or "## 📌 一句話摘要" in content
+                or "## 1. 核心問題與結論" in content or "type: knowledge-card" in content):
             continue
             
         title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
@@ -273,70 +275,65 @@ def find_related_bookmarks(current_bookmark, all_bookmarks, limit=3):
     return related[:limit]
 
 
+def _get_card_id(bookmark: dict) -> str:
+    """Derive stable card ID from bookmark metadata."""
+    content = bookmark.get("content", "")
+    filename = bookmark.get("filename", "unknown")
+    # frontmatter tweet_id
+    m = re.search(r'^tweet_id:\s*"?(\d{15,20})"?\s*$', content, re.MULTILINE)
+    if m:
+        return m.group(1)
+    # source_url /status/...
+    url = bookmark.get("url", "")
+    m2 = re.search(r"/status/(\d{15,20})", url)
+    if m2:
+        return m2.group(1)
+    # numeric filename
+    if re.fullmatch(r"\d{15,20}", filename):
+        return filename
+    m3 = re.match(r"^(\d{15,20})", filename)
+    if m3:
+        return m3.group(1)
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", filename).strip("-").lower() or "untitled"
+
+
 def generate_ai_summary(bookmark):
     content = bookmark.get("content", "")
-    title = bookmark.get("title", "(untitled)")
-    truncated = content[:8000]
+    url = bookmark.get("url", "")
+    card_id = _get_card_id(bookmark)
 
-    prompt = f"""請為以下 X 書籤產生結構化知識摘要。
+    if not url and re.fullmatch(r"\d{15,20}", card_id):
+        url = f"https://x.com/i/status/{card_id}"
 
-注意：內容可能包含原始 tweet、thread 全文、作者補充、外部文章/GitHub 摘錄，請整合所有上下文。
+    api_key = MINIMAX_API_KEY
+    if not api_key:
+        print("  ℹ️ 改用本地摘要模式（no API key）")
+        return generate_local_summary(bookmark)
 
-格式如下：
-
-## 📌 核心問題與結論
-- **提問**：這篇試圖解答什麼問題？（一句話）
-- **結論**：作者給出的答案是什麼？（一句話）
-- **Claim 等級**：[Attested（有數據/實驗） | Scholarship（分析觀點） | Inference（推論/假設）]
-
-## 🎯 關鍵論點
-1. （論點一）
-2. （論點二）
-3. （論點三）
-
-## ⚠️ False Friends（如有）
-這篇有哪些看起來是普通詞彙但有特定技術含義的術語？
-- （術語）：多數人誤以為是...，實際在此指...
-如果沒有：無
-
-## 💡 驚訝點
-讀者讀完後可能感到意外或需要重新思考的是什麼？
-（如果沒有明顯驚訝點：無）
-
-## 🔗 與現有知識的關係
-這篇是補充新面向、與某個既有概念衝突、還是帶入全新框架？（一句話）
-
-## 📝 雙語摘要
-ZH: <20-40字繁體中文摘要，說明核心發現>
-EN: <15-30 word English summary of the core finding>
-
-## 💡 可執行的應用方向
-- （實際可追蹤、可操作的方向，2-3 點）
-
----
-
-書籤標題：{title}
-
-書籤內容：
-{truncated}
-
----
-
-請用繁體中文回覆，格式要清晰，重視理解而非堆疊文字。"""
-
-    ai_summary = call_minimax(prompt)
-    if ai_summary:
-        return ai_summary
-
-    print("  ℹ️ 改用本地摘要模式（TieGe-style fallback）")
-    return generate_local_summary(bookmark)
+    prompt = build_prompt(
+        content=content[:8000],
+        card_id=card_id,
+        source_type="x-bookmark",
+        source_url=url or "(unknown)",
+        category="",
+        related_context="（知識庫中尚無明顯相關的已存 card）",
+    )
+    try:
+        result = _llm_call(prompt, api_key, max_tokens=2500)
+        return result or None
+    except Exception as e:
+        print(f"  ❌ LLM 呼叫失敗: {e}")
+        print("  ℹ️ 改用本地摘要模式")
+        return generate_local_summary(bookmark)
 
 
 def add_ai_summary(bookmark, summary):
     path = Path(bookmark["path"])
     content = path.read_text(encoding="utf-8", errors="ignore")
 
-    if "## 📌 核心問題與結論" in content or "## 📌 一句話摘要" in content or "## 📝 AI 濃縮" in content:
+    if ("## 📝 AI 濃縮" in content or "## 📌 一句話摘要" in content
+            or "## 📌 核心問題與結論" in content or "## 1. 核心問題與結論" in content
+            or "type: knowledge-card" in content):
         print("  ⏭️  跳過（已有摘要）")
         return False
 

@@ -46,41 +46,93 @@ _USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
 
 CARD_CATEGORIES = [
     "ai-tools", "developer-tools", "workflows", "data",
-    "startup", "design", "tech", "learning", "other"
+    "startup", "design", "tech", "learning", "research", "other"
 ]
 
-MAX_CONTENT_CHARS = 3000   # truncate long files before sending to LLM
+MAX_CONTENT_CHARS = 4000   # truncate long files before sending to LLM
 SUPPORTED_EXTS    = {".md", ".txt", ".markdown"}
 
+SYSTEM_PROMPT = """\
+You are a knowledge card generator for a personal learning base. \
+Given the content of an academic paper or local document, output one structured knowledge card in Traditional Chinese.
+
+Strict rules:
+- Leave sections empty with "無" if uncertain — never hallucinate
+- Use only information from the provided content
+- Do NOT use the reader's personal name in any section
+
+Quality principles: conservative > hallucination, understanding > summary, structured > verbose"""
+
 CARD_PROMPT = """\
-你是一個知識庫管理員，請根據以下本地文件內容生成一張知識卡片。
+以下是一篇論文或本地文件的內容，請生成一張 9-section 知識卡片。
 
 檔名: {filename}
+來源: {source_url}
+分類: {category}
+
 內容:
 {content}
 
+{related_section}
 請輸出以下格式（YAML frontmatter + Markdown）：
 
 ---
-title: <文件標題，15-40字，繁體中文>
-category: <從以下選一：{categories}>
-tags: <3-5個標籤，逗號分隔，英文小寫>
-source_type: local
+id: {card_id}
+type: knowledge-card
+source_type: local-paper
+source_url: {source_url}
+category: {category}
+tags: [tag1, tag2, tag3]
+sensitivity: public
+confidence: medium
 ---
 
-## 📝 一句話摘要
+# <論文標題，保留英文原名或簡短繁體中文翻譯>
 
-<這份文件的核心內容，20-40字，繁體中文>
+## 1. 核心問題與結論
+- **提問**：這篇論文試圖解答什麼問題？（一句話）
+- **結論**：作者給出的答案是什麼？（一句話）
+- **可信度說明**：這個結論有沒有數據/實驗/引用支撐？
 
-## 📝 English Summary
+## 2. Claim 等級
+- **等級**：[Attested | Scholarship | Inference]
+  - Attested：原文直接引用、有具體數據或實驗結果
+  - Scholarship：作者/領域的分析觀點，有明確來源依據
+  - Inference：LLM 推論、尚未驗證的假設
+- **主要主張**：（一句話說明核心主張）
+- **依據**：（為什麼是這個等級？）
 
-<Core content in English, 15-30 words>
+## 3. 關鍵論點
+- 論點一
+- 論點二
+- 論點三
 
-## 重點
+## 4. False Friends（如有）
+這篇涉及哪些看起來像普通詞彙但有特定技術含義的術語？
+- term: （術語名稱）
+  common_misunderstanding: （多數人誤以為是...）
+  actual_meaning: （在此領域/文章中實際指的是...）
+如果沒有：無
 
-- <重點1，15-25字>
-- <重點2，15-25字>
-- <重點3，15-25字>
+## 5. 驚訝點
+讀者讀完這篇後，可能感到意外或需要重新思考的是什麼？
+（如果沒有明顯驚訝點，填「無」）
+
+## 6. 與現有知識的關係
+{related_cards_placeholder}
+
+## 7. 雙語摘要（搜尋索引用）
+ZH: <20-40字繁體中文摘要，說明核心發現>
+EN: <15-30 word English summary of the core finding>
+
+## 8. 對使用者的價值
+- 可追蹤的研究方向
+- 可執行的應用場景
+- 與現有工作流程的關聯
+
+## 9. 原始來源
+- 來源: {source_url}
+- Links: (list DOI or other URLs found in content)
 """
 
 
@@ -96,13 +148,16 @@ def load_env_key() -> str:
         return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
 
 
-def llm_call(prompt: str, api_key: str) -> str:
+def llm_call(prompt: str, api_key: str, system: str | None = None) -> str:
     if _USE_ANTHROPIC:
-        payload = json.dumps({
+        body: dict = {
             "model": LLM_MODEL,
-            "max_tokens": 1200,
+            "max_tokens": 2000,
             "messages": [{"role": "user", "content": prompt}],
-        }).encode()
+        }
+        if system:
+            body["system"] = system
+        payload = json.dumps(body).encode()
         req = urllib.request.Request(
             f"{LLM_API_BASE}/v1/messages", data=payload,
             headers={
@@ -111,21 +166,25 @@ def llm_call(prompt: str, api_key: str) -> str:
                 "anthropic-version": "2023-06-01",
             },
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:
             data = json.loads(resp.read())
         return next(item["text"] for item in data["content"] if item.get("type") == "text").strip()
     else:
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         payload = json.dumps({
             "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1200,
+            "messages": messages,
+            "max_tokens": 2000,
             "temperature": 0.3,
         }).encode()
         req = urllib.request.Request(
             LLM_API_BASE, data=payload,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=90) as resp:
             data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"].strip()
 
@@ -166,6 +225,16 @@ def extract_frontmatter(card: str) -> dict:
 
 
 def extract_summary(card: str) -> str:
+    # New format: ## 7. 雙語摘要 with ZH:/EN: lines
+    bilingual = re.search(r"##\s+7\.\s*雙語摘要[^\n]*\n(.+?)(?=\n##|\Z)", card, re.DOTALL)
+    if bilingual:
+        block = bilingual.group(1)
+        zh_m = re.search(r"^ZH:\s*(.+)$", block, re.MULTILINE)
+        en_m = re.search(r"^EN:\s*(.+)$", block, re.MULTILINE)
+        parts = [m.group(1).strip() for m in [zh_m, en_m] if m and m.group(1).strip()]
+        if parts:
+            return " | ".join(parts)
+    # Legacy fallback
     zh = re.search(r"##\s*📝 一句話摘要\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
     en = re.search(r"##\s*📝 English Summary\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
     parts = [x.group(1).strip() for x in [zh, en] if x]
@@ -174,6 +243,51 @@ def extract_summary(card: str) -> str:
     lines = [l.strip() for l in card.splitlines()
              if l.strip() and not l.startswith("#") and not l.startswith("---")]
     return lines[0] if lines else ""
+
+
+def pmc_url_from_filename(filename: str) -> str:
+    """Extract PMC ID from filename and return NCBI URL."""
+    m = re.match(r"(PMC\d+)", filename, re.IGNORECASE)
+    if m:
+        return f"https://www.ncbi.nlm.nih.gov/pmc/articles/{m.group(1)}/"
+    return ""
+
+
+def find_related_context(content: str, existing_items: list[dict], top_k: int = 3) -> str:
+    """Keyword search against existing index to find related cards for section 6."""
+    stopwords = {"的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
+                 "this", "that", "with", "from", "have", "will", "for", "and", "the", "a"}
+    raw_tokens = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", content[:1000].lower())
+    query_tokens: set[str] = set()
+    for t in raw_tokens:
+        if re.match(r"[\u4e00-\u9fff]", t):
+            for i in range(len(t) - 1):
+                query_tokens.add(t[i:i+2])
+        else:
+            query_tokens.add(t)
+    query_tokens -= stopwords
+    if not query_tokens:
+        return "（無相關既有卡片）"
+
+    scored = []
+    for item in existing_items:
+        combined = " ".join([
+            (item.get("title") or "").lower(),
+            (item.get("summary") or "").lower(),
+            " ".join(item.get("tags") or []).lower(),
+        ])
+        score = sum(1 for t in query_tokens if t in combined)
+        if score > 0:
+            scored.append((item, score))
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    if not scored:
+        return "（無相關既有卡片）"
+
+    lines = []
+    for item, _ in scored[:top_k]:
+        lines.append(f"- **{item.get('title', '(untitled)')}**：{(item.get('summary') or '')[:80]}")
+    return "\n".join(lines)
 
 
 def collect_files(input_path: Path) -> list[Path]:
@@ -195,6 +309,7 @@ def process_file(
     path: Path,
     api_key: str,
     existing_keys: set,
+    existing_items: list[dict],
     force_category: str | None,
     extra_tags: list[str],
     dry_run: bool,
@@ -211,7 +326,6 @@ def process_file(
         print(f"  [SKIP] 空檔案：{path.name}")
         return None
 
-    # Truncate for LLM
     truncated = content[:MAX_CONTENT_CHARS]
     if len(content) > MAX_CONTENT_CHARS:
         truncated += f"\n\n[內容截斷，原始長度 {len(content)} 字元]"
@@ -221,18 +335,27 @@ def process_file(
     if dry_run:
         return None
 
+    source_url = pmc_url_from_filename(path.name)
+    category = force_category or "research"
+    related_ctx = find_related_context(content, existing_items)
+    related_section = f"相關既有卡片（供 Section 6 參考）：\n{related_ctx}\n" if related_ctx else ""
+
     prompt = CARD_PROMPT.format(
         filename=path.name,
         content=truncated,
-        categories=", ".join(CARD_CATEGORIES),
+        card_id=card_id,
+        source_url=source_url or str(path),
+        category=category,
+        related_section=related_section,
+        related_cards_placeholder=related_ctx,
     )
     try:
-        card_content = llm_call(prompt, api_key)
+        card_content = llm_call(prompt, api_key, system=SYSTEM_PROMPT)
     except Exception as e:
         print(f"     ❌ LLM 失敗：{e}")
         return None
 
-    # Inject id
+    # Ensure id in frontmatter
     if "---\n" in card_content and "id:" not in card_content:
         card_content = card_content.replace("---\n", f"---\nid: {card_id}\n", 1)
 
@@ -252,7 +375,9 @@ def process_file(
     # Build index item
     fm = extract_frontmatter(card_content)
     summary = extract_summary(card_content)
-    tags_raw = fm.get("tags", "")
+
+    # Parse tags (supports both "a, b, c" and "[a, b, c]" formats)
+    tags_raw = fm.get("tags", "").strip("[]")
     tags = list({t.strip() for t in tags_raw.split(",") if t.strip()})
     tags.extend(extra_tags)
     if force_category:
@@ -262,11 +387,11 @@ def process_file(
         "path": str(card_path),
         "relative_path": f"cards/{card_id}.md",
         "title": fm.get("title", path.stem),
-        "category": fm.get("category", "other"),
+        "category": fm.get("category", category),
         "tags": list(set(tags)),
         "summary": summary,
-        "source_url": "",
-        "source_type": "local",
+        "source_url": source_url,
+        "source_type": "local-paper",
         "source_file": str(path),
         "searchable": f"{path.name} {fm.get('title','')} {summary} {' '.join(tags)}",
         "mtime": datetime.now(timezone.utc).isoformat(),
@@ -303,16 +428,17 @@ def main() -> int:
     print(f"📂 找到 {len(files)} 個檔案")
 
     index_data = load_index()
+    existing_items = index_data.get("items", [])
     existing_keys = {
         f"local|{item.get('relative_path','').split('/')[-1].replace('.md','')}"
-        for item in index_data.get("items", [])
-        if item.get("source_type") == "local"
+        for item in existing_items
+        if item.get("source_type") in ("local", "local-paper")
     }
 
     new_items: list[dict] = []
     for path in files:
         result = process_file(
-            path, api_key, existing_keys,
+            path, api_key, existing_keys, existing_items,
             args.category, args.tags, args.dry_run
         )
         if result:

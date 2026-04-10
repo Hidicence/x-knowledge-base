@@ -29,6 +29,15 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ── Shared card prompt module ─────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+from _card_prompt import (
+    build_prompt, extract_summary, find_related_context,
+    llm_call as _llm_call, SOURCE_LABELS,
+)
+SOURCE_LABELS["github_fork"] = "GitHub 倉庫（Fork）"
+SOURCE_LABELS["github_star"] = "GitHub 倉庫（Star）"
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(
     os.getenv("OPENCLAW_WORKSPACE",
@@ -39,58 +48,10 @@ CARDS_DIR = WORKSPACE_DIR / "memory" / "cards"
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 GITHUB_RAW_DIR = BOOKMARKS_DIR / "github"   # raw metadata per repo (source layer)
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-LLM_API_BASE   = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
-LLM_MODEL      = os.getenv("LLM_MODEL", "MiniMax-M2.5")
-_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
-
 CARD_CATEGORIES = [
     "ai-tools", "developer-tools", "workflows", "data",
     "startup", "design", "tech", "learning", "other"
 ]
-
-CARD_PROMPT = """\
-你是一個知識庫管理員，請根據以下 GitHub repo 資訊生成一張知識卡片。
-
-Repo: {full_name}
-Description: {description}
-Language: {language}
-Topics: {topics}
-Stars: {stars}
-Action: {action_type} (github_fork = 主動複製並可能修改；github_star = 標記感興趣)
-URL: {url}
-README 摘要（前 500 字）:
-{readme}
-
-請輸出以下格式（YAML frontmatter + Markdown）：
-
----
-title: <repo 名稱 + 一句話說明，繁體中文>
-category: <從以下選一：{categories}>
-tags: <3-5個標籤，逗號分隔，英文小寫>
-source_url: {url}
-source_type: {action_type}
-language: {language}
----
-
-## 📝 一句話摘要
-
-<這個 repo 解決什麼問題，為什麼值得收藏，繁體中文，20-40字>
-
-## 📝 English Summary
-
-<What this repo does and why it matters, 15-30 words in English>
-
-## 重點
-
-- <這個 repo 是做什麼的，15-25字>
-- <它的核心技術或方法，15-25字>
-- <可能用在哪個場景，15-25字>
-
-## 為什麼值得收藏
-
-<跟使用者的長期主題（AI agent、知識管理、自動化、內容創作）有何關聯，30-50字>
-"""
 
 
 def load_env_key() -> str:
@@ -104,40 +65,7 @@ def load_env_key() -> str:
         return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
 
 
-def llm_call(prompt: str, api_key: str) -> str:
-    if _USE_ANTHROPIC:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "max_tokens": 600,
-            "messages": [{"role": "user", "content": prompt}],
-        }).encode()
-        req = urllib.request.Request(
-            f"{LLM_API_BASE}/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        return next(item["text"] for item in data["content"] if item.get("type") == "text").strip()
-    else:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 600,
-            "temperature": 0.3,
-        }).encode()
-        req = urllib.request.Request(
-            LLM_API_BASE,
-            data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"].strip()
+# llm_call imported from _card_prompt as _llm_call
 
 
 def gh_api(endpoint: str) -> list:
@@ -207,15 +135,7 @@ def extract_frontmatter(card: str) -> dict:
     return result
 
 
-def extract_summary(card: str) -> str:
-    zh = re.search(r"##\s*📝 一句話摘要\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
-    en = re.search(r"##\s*📝 English Summary\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
-    parts = [x.group(1).strip() for x in [zh, en] if x]
-    if parts:
-        return " | ".join(parts)
-    lines = [l.strip() for l in card.splitlines()
-             if l.strip() and not l.startswith("#") and not l.startswith("---")]
-    return lines[0] if lines else ""
+# extract_summary imported from _card_prompt
 
 
 def filter_stars(repos: list) -> list:
@@ -230,7 +150,8 @@ def make_dedup_key(url: str, action_type: str) -> str:
 
 
 def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
-                  existing_keys: set, limit: int) -> tuple[int, list[dict]]:
+                  existing_keys: set, limit: int,
+                  existing_items: list[dict] | None = None) -> tuple[int, list[dict]]:
     """
     Returns (count_processed, new_index_items).
     Does NOT write to index — caller batches and saves once.
@@ -280,20 +201,36 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
         # Fetch README preview (non-fatal)
         readme = get_readme_preview(full_name)
 
-        # Generate enriched card via LLM (stored in memory/cards/)
-        prompt = CARD_PROMPT.format(
-            full_name=full_name, description=description, language=language,
-            topics=topics, stars=stars, action_type=action_type, url=url,
-            readme=readme or "(not available)", categories=", ".join(CARD_CATEGORIES),
+        # Card ID (also used in frontmatter and filename)
+        card_id = f"{action_type}-{full_name.replace('/', '-')}"
+
+        # Generate 9-section card via shared _card_prompt
+        content = (
+            f"Repo: {full_name}\n"
+            f"Description: {description}\n"
+            f"Language: {language}\n"
+            f"Topics: {topics}\n"
+            f"Stars: {stars}\n"
+            f"Action: {action_type} "
+            f"(github_fork = 主動複製並可能修改；github_star = 標記感興趣)\n\n"
+            f"README:\n{readme or '(not available)'}"
+        )
+        related = find_related_context(content, existing_items or [])
+        prompt = build_prompt(
+            content=content,
+            card_id=card_id,
+            source_type=action_type,
+            source_url=url,
+            category="tech",
+            related_context=related,
         )
         try:
-            card_content = llm_call(prompt, api_key)
+            card_content = _llm_call(prompt, api_key)
         except Exception as e:
             print(f"     ❌ LLM 失敗：{e}")
             continue
 
-        # Inject id into frontmatter (unique per source_type + repo)
-        card_id = f"{action_type}-{full_name.replace('/', '-')}"
+        # Inject id into frontmatter if missing
         if "---\n" in card_content and "id:" not in card_content:
             card_content = card_content.replace("---\n", f"---\nid: {card_id}\n", 1)
 
@@ -350,9 +287,10 @@ def main():
 
     # Build dedup key set from existing index
     index_data = load_index()
+    existing_items_list = index_data.get("items", [])
     existing_keys = {
         make_dedup_key(item.get("source_url", ""), item.get("source_type", ""))
-        for item in index_data.get("items", [])
+        for item in existing_items_list
     }
 
     all_new_items: list[dict] = []
@@ -363,7 +301,7 @@ def main():
         repos = gh_api("user/repos?type=fork&per_page=100")
         print(f"   Found {len(repos)} forks")
         n, items = process_repos(repos, "github_fork", args.dry_run, api_key,
-                                 existing_keys, args.limit)
+                                 existing_keys, args.limit, existing_items_list)
         print(f"   ✅ Processed {n} fork cards")
         total += n
         all_new_items.extend(items)
@@ -378,7 +316,7 @@ def main():
         else:
             print(f"   Found {len(repos)} stars (no filter)")
         n, items = process_repos(repos, "github_star", args.dry_run, api_key,
-                                 existing_keys, args.limit)
+                                 existing_keys, args.limit, existing_items_list)
         print(f"   ✅ Processed {n} star cards")
         total += n
         all_new_items.extend(items)

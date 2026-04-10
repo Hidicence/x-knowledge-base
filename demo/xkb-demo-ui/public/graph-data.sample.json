@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "id": "1234567890123456789",
+      "label": "Example: Why RAG beats fine-tuning for knowledge retrieval",
+      "type": "card",
+      "category": "ai-tools",
+      "tags": ["rag", "llm", "retrieval"],
+      "summary": "RAG 提供更新鮮、可追溯的知識，fine-tuning 適合風格/能力而非事實注入",
+      "source_url": "https://x.com/i/status/1234567890123456789",
+      "source_type": "x-bookmark"
+    },
+    {
+      "id": "topic-ai-tools",
+      "label": "AI Tools",
+      "type": "topic",
+      "category": "ai-tools"
+    },
+    {
+      "id": "tag-rag",
+      "label": "rag",
+      "type": "tag"
+    }
+  ],
+  "links": [
+    { "source": "1234567890123456789", "target": "topic-ai-tools" },
+    { "source": "1234567890123456789", "target": "tag-rag" }
+  ]
+}
