@@ -340,7 +340,25 @@ Used by: `build_vector_index.py`, `health_check.py`
 Without it, XKB falls back to CJK-bigram keyword search (still functional, lower recall quality).
 
 ### Optional: Twitter/X auth
+
+> ⚠️ **`BIRD_AUTH_TOKEN` and `BIRD_CT0` are X/Twitter session cookies, not regular API keys.**
+> Anyone holding these can read your private bookmarks and browse X as you.
+> Store only in system env vars or `.secrets/x-knowledge-base.env` — never paste in chat or issues.
+> If exposed: log out of X immediately to invalidate the session.
+
 - `BIRD_AUTH_TOKEN` + `BIRD_CT0` — X/Twitter bookmark fetching; falls back to curl/Jina without it
+
+### Privacy & Data Flow
+
+XKB sends bookmark content to your configured LLM API for enrichment. To understand exactly what leaves your machine per script, see [`docs/data-flow.md`](docs/data-flow.md).
+
+**Local-only mode** — process bookmarks without any external API calls:
+```bash
+python3 scripts/run_bookmark_worker.py --local-only
+python3 scripts/run_scan_worker.py --local-only
+```
+
+For fully local vector search, use Ollama: `EMBEDDING_PROVIDER=ollama`
 
 ---
 
