@@ -1,17 +1,37 @@
 ---
 name: x-knowledge-base
 description: |
-  Turns X/Twitter bookmarks into a searchable, proactive personal knowledge base for AI agents.
-  Use for: fetching & organizing X bookmarks, enriching threads, generating knowledge cards,
-  building search index, recalling saved knowledge during conversations, exporting to NotebookLM.
-  將 X/Twitter 書籤整理成可檢索、可關聯、可匯出到 NotebookLM 的個人知識庫系統。
-  使用於：抓取與整理 X 書籤、生成知識卡、更新搜尋索引、對話中主動召回既存知識，或匯出 NotebookLM。
+  Evolve scattered inputs into a proactive, reusable personal knowledge base for AI agents.
+  Use for: ingesting X/Twitter bookmarks, local notes, YouTube, GitHub, PDFs, and PubMed papers;
+  generating knowledge cards; building search/vector indexes; surfacing relevant knowledge during conversations;
+  and distilling durable wiki pages.
+  將分散資料來源整理成可檢索、可主動召回、可沉澱成 wiki 的個人知識系統。
+  使用於：抓取與整理 X/Twitter 書籤、本地筆記、YouTube、GitHub、PDF、PubMed 論文；生成知識卡；更新搜尋/向量索引；在對話中主動召回既有知識；以及沉澱長期 wiki。
 ---
 
 # X Knowledge Base
 
-Upgrade X bookmarks from "saved" to a "reusable knowledge base".
-把 X 書籤從「收藏」升級成「可回用知識庫」。
+From saved fragments to a reusable, proactive knowledge system.
+從零散收藏走向可回用、可主動召回的知識系統。
+
+> Originally rooted in X/Twitter bookmarks, XKB now acts as a multi-source knowledge lifecycle system: ingest → card/index → recall → wiki.
+>
+> XKB 最初從 X/Twitter 書籤出發，現在已演化成多來源知識生命週期系統：ingest → card/index → recall → wiki。
+
+## Canonical Model / 正式架構
+
+XKB 目前可視為四層：
+
+1. **Ingest layer**
+   - 從 X/Twitter、本地筆記、YouTube、GitHub、PDF、PubMed 抓進原始內容
+2. **Card / Index layer**
+   - 將內容整理成可檢索 knowledge cards，並建立 search index / vector index
+3. **Recall / Ask layer**
+   - 在對話或明確提問時，主動浮現最相關的既有知識
+4. **Wiki layer**
+   - 經 absorb gate 後，把高價值內容沉澱為長期可讀的 wiki topics
+
+一句話說，XKB 不只是收藏系統，而是讓知識在需要的時候重新浮現，並逐步沉澱成可回用理解。
 
 ## Main Entry Points / 主入口
 
@@ -54,13 +74,13 @@ python3 scripts/build_topic_profile.py
 python3 scripts/build_topic_profile.py --dry-run
 ```
 
-Search existing knowledge cards / bookmarks / 搜尋既有知識卡／書籤：
+Search existing knowledge cards / indexed sources / 搜尋既有知識卡／已索引資料：
 
 ```bash
 bash scripts/search_bookmarks.sh "openclaw seo"
 ```
 
-Proactive conversation recall (given a query about the current topic, finds the most relevant saved bookmarks) / 對話主動召回（給當前問題一段 query，找最該主動提的書籤）：
+Proactive conversation recall (given a query about the current topic, finds the most relevant saved knowledge across indexed sources) / 對話主動召回（給當前問題一段 query，找最該主動提的已索引知識）：
 
 ```bash
 python3 scripts/recall_for_conversation.py "agent workflow 記憶召回"
@@ -119,16 +139,16 @@ When `fetch_and_summarize.sh` runs, it performs these steps in order / 執行 `f
 >
 > **目前技術說明**：召回目前支援 **兩種模式**。預設行為是：**若 `vector_index.json` 存在就走語意召回**，否則自動降級為 **關鍵字 token 比對**。關鍵字模式零依賴、速度快；語意模式則更適合同義詞與中英混用場景。
 
-Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved bookmarks first, then decide whether to surface them to the user.
-把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關書籤，再決定要不要主動提給使用者。
+Treat this skill as a second layer of memory in conversation. When the current conversation needs examples, approaches, context, or actionable references, use proactive recall to find relevant saved knowledge first, then decide whether to surface it to the user.
+把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關知識，再決定要不要主動提給使用者。
 
 ### When to Use / 什麼時候用
 
 Prioritize these situations / 優先用在這些情境：
 - The user is asking about approaches, workflows, case studies, inspiration, or decision direction / 使用者在問做法、workflow、案例、靈感、決策方向
 - The user is organizing ideas, context, comparing options, or needs external examples to aid decision-making / 使用者在整理想法、脈絡、比較不同路線，或需要外部案例幫忙決策
-- The current topic clearly falls within frequently bookmarked domains: OpenClaw / agent / workflow, SEO / GEO / AEO, AI video / prompts / content, automation / tools / GitHub, startup / SaaS / GTM / 當前主題明顯落在常見收藏領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM
-- You judge the bookmark library likely has reusable content, and proactively surfacing it would improve the conversation quality / 你判斷書籤庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
+- The current topic clearly falls within high-frequency knowledge domains: OpenClaw / agent / workflow, SEO / GEO / AEO, AI video / prompts / content, automation / tools / GitHub, startup / SaaS / GTM, research / papers / domain knowledge / 當前主題明顯落在高頻知識領域：OpenClaw / agent / workflow、SEO / GEO / AEO、AI 影片 / prompts / content、automation / tools / GitHub、startup / SaaS / GTM、research / papers / domain knowledge
+- You judge the existing knowledge base likely has reusable content, and proactively surfacing it would improve the conversation quality / 你判斷現有知識庫裡很可能有可回用內容，且主動提醒會提升當前對話品質
 
 ### Trigger Rules (v1) / 觸發規則（v1）
 
@@ -137,20 +157,20 @@ Default stance / 預設立場：
 - The first goal is deterministic behavior on the right question types, not maximum recall volume. / 第一目標是讓「對的題型」觸發更穩定，而不是把召回次數拉滿。
 
 Only proactively recall when **both** conditions are met / 只有同時滿足這兩件事才主動召回：
-1. The current conversation is worth checking bookmarks / 當前對話值得查書籤
+1. The current conversation is worth checking the existing knowledge base / 當前對話值得查既有知識庫
 2. The results retrieved can genuinely advance the conversation / 查到的結果真的能推進對話
 
 Treat the following as **strong trigger classes** / 以下題型視為 **強觸發類型**：
 - How-to / workflow / SOP / framework questions / 做法、workflow、SOP、framework 類問題
 - Case study / inspiration / reference / comparison questions / 案例、靈感、參考、對照類問題
 - Strategy / decision / prioritization questions / 策略、決策、優先順序類問題
-- Topics that clearly fall into high-frequency bookmark domains / 明顯落在高頻收藏主題的問題
+- Topics that clearly fall into high-frequency knowledge domains / 明顯落在高頻知識主題的問題
 
 In practice, at least one of the following must match / 實際判斷時，至少先命中以下其中一項：
 - The question is looking for approaches, case studies, workflows, or decision direction / 問法像在找做法、案例、workflow、決策方向
 - The question is organizing context, perspectives, or next steps / 問法像在整理脈絡、觀點、下一步
-- The topic falls within high-frequency bookmark domains / 主題落在高頻收藏領域
-- Your subjective judgment: the user's bookmark library is more likely to provide valuable references than general knowledge / 你主觀判斷：使用者的書籤庫比通用知識更可能提供有價值的參考
+- The topic falls within high-frequency knowledge domains / 主題落在高頻知識領域
+- Your subjective judgment: the user's existing knowledge base is more likely to provide valuable references than general knowledge / 你主觀判斷：使用者的既有知識庫比通用知識更可能提供有價值的參考
 
 Generate a **short, intention-focused query** before recall / 召回前先產生**短而聚焦意圖的 query**：
 - Extract topic words / 抽主題詞
@@ -187,7 +207,7 @@ First ensure `search_index.json` exists and is up to date, then run / 先確保 
 
 ```bash
 # Auto (semantic if index exists, keyword fallback) / 自動模式（有索引用語意，無索引降級 keyword）
-python3 scripts/recall_for_conversation.py "主動召回 書籤知識 對話回用"
+python3 scripts/recall_for_conversation.py "主動召回 既有知識 對話回用"
 python3 scripts/recall_for_conversation.py "OpenClaw workflow agent memory" --limit 5 --json
 python3 scripts/recall_for_conversation.py "AI SEO 案例" --format chat
 
@@ -208,8 +228,8 @@ python3 scripts/recall_for_conversation.py "query" --no-semantic
 ## Semantic Recall (v3, Optional) / 語意向量召回（v3，可選）
 
 > **Upgrade from v1 keyword matching to true semantic search.**
-> Find relevant bookmarks even when your query uses completely different words from the card.
-> 從 v1 關鍵字比對升級為真正的語意搜尋，查詢用詞和書籤內容不同也能找到。
+> Find relevant knowledge cards even when your query uses completely different words from the card.
+> 從 v1 關鍵字比對升級為真正的語意搜尋，查詢用詞和卡片內容不同也能找到相關知識。
 
 ### Why it matters / 為什麼值得用
 
@@ -267,7 +287,7 @@ python3 scripts/recall_for_conversation.py "省錢跑 AI" --semantic --format ch
 2. At recall time, the query is also embedded
 3. Cards are ranked by cosine similarity — meaning nearest in semantic space, not just matching words
 
-每張卡的 `title + summary` 透過 embedding 模型轉成向量，召回時 query 也轉成向量，用 cosine similarity 找語意最近的書籤。
+每張卡的 `title + summary` 透過 embedding 模型轉成向量，召回時 query 也轉成向量，用 cosine similarity 找語意最近的知識卡。
 
 ### Notes / 注意事項
 
