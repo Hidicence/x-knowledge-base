@@ -21,6 +21,14 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+# ── Shared card prompt module ─────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+from _card_prompt import (
+    build_prompt, extract_summary, find_related_context,
+    llm_call as _llm_call, SOURCE_LABELS,
+)
+SOURCE_LABELS["youtube"] = "YouTube 影片"   # ensure registered
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SKILL_DIR = Path(__file__).resolve().parent.parent
 WORKSPACE_DIR = Path(
@@ -42,6 +50,7 @@ CARD_CATEGORIES = [
     "ai-tools", "seo-marketing", "workflows", "video",
     "startup", "design", "tech", "learning", "other"
 ]
+BOOKMARKS_DIR_ITEMS: list[dict] = []  # populated after index load, used for related context
 
 # ── yt-dlp helpers ────────────────────────────────────────────────────────────
 def _yt_cmd(extra_args: list) -> list:
@@ -116,66 +125,24 @@ def _parse_vtt(vtt_path: Path) -> str:
     return " ".join(texts)
 
 
-# ── LLM card generation ───────────────────────────────────────────────────────
-CARD_PROMPT = """你是一個知識卡片生成器。根據以下 YouTube 影片資訊，生成一張繁體中文知識卡片。
+# ── LLM card generation (uses shared _card_prompt) ───────────────────────────
 
-影片標題：{title}
-影片網址：https://www.youtube.com/watch?v={video_id}
-字幕語言：{lang}
-字幕內容（前3000字）：
-{transcript}
-
-請輸出以下格式的 Markdown（不要加其他文字）：
-
----
-title: {title}
-category: <從以下選一：ai-tools / seo-marketing / workflows / video / startup / design / tech / learning / other>
-tags: <3-5個標籤，逗號分隔，英文小寫>
-source_url: https://www.youtube.com/watch?v={video_id}
----
-
-## 📝 一句話摘要
-
-<一句話說明這個影片的核心價值，繁體中文，20-40字>
-
-## 三個重點
-
-- <重點1，繁體中文，15-30字>
-- <重點2，繁體中文，15-30字>
-- <重點3，繁體中文，15-30字>
-"""
-
-
-def generate_card(title: str, video_id: str, transcript: str, lang: str, api_key: str) -> str:
-    """呼叫 MiniMax API 生成知識卡片內容"""
-    import urllib.request
-    prompt = CARD_PROMPT.format(
-        title=title,
-        video_id=video_id,
-        transcript=transcript[:3000],
-        lang=lang or "unknown"
+def generate_card(title: str, video_id: str, transcript: str, lang: str,
+                  api_key: str, existing_items: list[dict]) -> str:
+    """Generate 9-section knowledge card for a YouTube video."""
+    source_url = f"https://www.youtube.com/watch?v={video_id}"
+    card_id    = f"youtube-{video_id}"
+    content    = f"標題: {title}\n字幕語言: {lang or 'unknown'}\n\n{transcript[:4000]}"
+    related    = find_related_context(content, existing_items)
+    prompt     = build_prompt(
+        content=content,
+        card_id=card_id,
+        source_type="youtube",
+        source_url=source_url,
+        category="video",
+        related_context=related,
     )
-    payload = json.dumps({
-        "model": MINIMAX_MODEL,
-        "max_tokens": 600,
-        "messages": [{"role": "user", "content": prompt}]
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{MINIMAX_BASE_URL}/v1/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    # MiniMax may return a thinking block before the text block
-    text = next(item["text"] for item in data["content"] if item.get("type") == "text")
-    return text.strip()
+    return _llm_call(prompt, api_key)
 
 
 # ── Search index helpers ──────────────────────────────────────────────────────
@@ -202,11 +169,7 @@ def extract_frontmatter(md_content: str) -> dict:
     return result
 
 
-def extract_summary(md_content: str) -> str:
-    zh = re.search(r"## 📝 一句話摘要\s*\n(.+?)(?=\n##|\Z)", md_content, re.DOTALL)
-    en = re.search(r"## 📝 English Summary\s*\n(.+?)(?=\n##|\Z)", md_content, re.DOTALL)
-    parts = [x.group(1).strip() for x in [zh, en] if x]
-    return " | ".join(parts) if parts else ""
+# extract_summary imported from _card_prompt
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -237,9 +200,10 @@ def main():
 
     # Load existing index to check processed videos
     index_data = load_index()
+    existing_items_list = index_data.get("items", [])
     existing_ids = {
         item.get("relative_path", "").split("/")[-1].replace(".md", "")
-        for item in index_data.get("items", [])
+        for item in existing_items_list
     }
 
     print(f"📋 抓取播放清單：{args.playlist}")
@@ -287,9 +251,10 @@ def main():
             print(f"   ✓ 字幕 ({lang})：{len(transcript)} 字")
 
             # Generate card
-            print(f"   🤖 生成知識卡片...")
+            print(f"   🤖 生成知識卡片（9-section）...")
             try:
-                card_content = generate_card(title, vid_id, transcript, lang, api_key)
+                card_content = generate_card(title, vid_id, transcript, lang,
+                                             api_key, existing_items_list)
             except Exception as e:
                 print(f"   ❌ LLM 失敗：{e}")
                 continue
@@ -302,23 +267,27 @@ def main():
             # Parse and add to index
             fm = extract_frontmatter(card_content)
             summary = extract_summary(card_content)
+            source_url = f"https://www.youtube.com/watch?v={vid_id}"
             relative_path = f"youtube/{vid_id}.md"
-            tags_raw = fm.get("tags", "")
+            tags_raw = fm.get("tags", "").strip("[]")
             tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-            index_data["items"].append({
+            new_item = {
                 "path": str(md_path),
                 "relative_path": relative_path,
                 "title": fm.get("title", title),
-                "category": fm.get("category", "other"),
+                "category": fm.get("category", "video"),
                 "tags": tags,
                 "summary": summary,
-                "source_url": f"https://www.youtube.com/watch?v={vid_id}",
+                "source_url": source_url,
+                "source_type": "youtube",
                 "searchable": f"{title} {summary} {' '.join(tags)}",
                 "mtime": datetime.now().isoformat(),
                 "size": md_path.stat().st_size,
-                "source": "youtube",
-            })
+                "enriched": True,
+            }
+            index_data["items"].append(new_item)
+            existing_items_list.append(new_item)  # keep related context fresh
             save_index(index_data)
             processed += 1
 

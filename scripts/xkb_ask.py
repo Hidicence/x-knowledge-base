@@ -66,13 +66,17 @@ def load_env_key() -> str:
         return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
 
 
-def llm_call(prompt: str, api_key: str, max_tokens: int = 1000) -> str:
+def llm_call(prompt: str, api_key: str, max_tokens: int = 1000,
+             system: str | None = None) -> str:
     if _USE_ANTHROPIC:
-        payload = json.dumps({
+        body: dict[str, Any] = {
             "model": LLM_MODEL,
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
-        }).encode()
+        }
+        if system:
+            body["system"] = system
+        payload = json.dumps(body).encode()
         req = urllib.request.Request(
             f"{LLM_API_BASE}/v1/messages", data=payload,
             headers={
@@ -85,9 +89,13 @@ def llm_call(prompt: str, api_key: str, max_tokens: int = 1000) -> str:
             data = json.loads(resp.read())
         return next(item["text"] for item in data["content"] if item.get("type") == "text").strip()
     else:
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         payload = json.dumps({
             "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": 0.3,
         }).encode()
@@ -253,58 +261,75 @@ def search_cards(query: str, limit: int = MAX_CARDS) -> list[dict]:
 
 # ── Answer generation ─────────────────────────────────────────────────────────
 
-ANSWER_PROMPT = """\
-你是一個知識庫助理。請根據以下知識庫內容回答問題。
+SYSTEM_PROMPT = """\
+你是一個直接、有判斷力的助理。你平常會整理筆記和閱讀材料，回答問題時可以參考這些背景資料。
 
-問題：{query}
-
-{wiki_section}{card_section}
-
-請用繁體中文回答，要求：
-1. 直接回答問題，100-300 字
-2. 在句子中用 [W1]、[W2] 引用 wiki topic，用 [C1]、[C2] 引用知識卡
-3. 若知識庫沒有相關內容，直接說「知識庫中沒有這方面的紀錄」
-4. 不要列出引用清單（那由系統處理），只在答案內文標示
+回答方式：
+- 先給結論，再補充細節
+- 語氣自然，像在跟認識的人說話，不要像在念報告
+- 全程用繁體中文，不要出現簡體字
+- 不要在答案裡提「知識庫」「卡片」「wiki」這些系統詞
+- 不要加 [W1]、[C1] 這類引用標記
+- 如果背景資料裡真的沒有相關內容，直接說不確定，不要硬掰
+- 背景資料裡可能有研究分析用的角色標籤（例如「圖書館員」「教練」「主動決策者」「被動記錄者」之類），這些是內部分析用語，不要直接引用，用你自己的話說清楚那個意思就好
+- 長度以夠回答為準，不用湊字數
 """
 
-WIKI_SECTION_TMPL = """\
-=== Wiki Topics（主題知識頁）===
-{entries}
+CONTEXT_TMPL = """\
+以下是我整理過的相關背景資料，可以參考：
+
+{context}
+
+---
+
+{query}
+
+（用自己的話回答，不要引用上面的原文措辭）
 """
 
-CARD_SECTION_TMPL = """\
-=== Knowledge Cards（書籤 / 筆記卡片）===
-{entries}
-"""
+WIKI_ENTRY_TMPL = "【{title}】\n{excerpt}"
+
+CARD_ENTRY_TMPL = "【{title}】\n{summary}"
+
+# Internal metaphor/role labels that appear in card summaries but shouldn't leak into answers
+_INTERNAL_LABELS = re.compile(
+    r"(圖書館管理員|圖書館員|主動決策者|被動記錄者?|被動記錄|知識庫助理|主力維護者|偶爾的閱讀者)",
+    re.UNICODE,
+)
+
+
+def _strip_internal_labels(text: str) -> str:
+    """Remove internal analysis role-labels from card/wiki excerpts before sending to LLM."""
+    text = _INTERNAL_LABELS.sub("", text)
+    # Clean up empty bracket pairs left behind (regex avoids CJK char class issues)
+    text = re.sub("\u300c\u300d", "", text)  # 「」
+    text = re.sub("\u300e\u300f", "", text)  # 『』
+    # Clean up orphaned connectors like "和「」" -> "和"
+    text = re.sub(r"\s*\u548c\s*$", "", text, flags=re.MULTILINE)  # 和
+    return text
 
 
 def build_answer(query: str, wiki_hits: list[dict], card_hits: list[dict],
                  query_tokens: list[str], api_key: str) -> str:
-    wiki_entries = []
-    for i, t in enumerate(wiki_hits, 1):
-        excerpt = excerpt_wiki_topic(t, query_tokens)
-        wiki_entries.append(f"[W{i}] 標題：{t['title']}\n{excerpt[:MAX_WIKI_CHARS]}")
+    entries = []
+    for t in wiki_hits:
+        excerpt = _strip_internal_labels(excerpt_wiki_topic(t, query_tokens))
+        entries.append(WIKI_ENTRY_TMPL.format(
+            title=t["title"], excerpt=excerpt[:MAX_WIKI_CHARS]))
+    for c in card_hits:
+        summary = _strip_internal_labels(c["summary"][:MAX_CARD_CHARS])
+        entries.append(CARD_ENTRY_TMPL.format(
+            title=c["title"], summary=summary))
 
-    card_entries = []
-    for i, c in enumerate(card_hits, 1):
-        summary = c["summary"][:MAX_CARD_CHARS]
-        tags    = ", ".join(c["tags"][:5])
-        card_entries.append(f"[C{i}] {c['title']}\n摘要：{summary}\n標籤：{tags}")
+    if not entries:
+        return "這方面我目前沒有足夠的資料，說不準。"
 
-    wiki_section = WIKI_SECTION_TMPL.format(
-        entries="\n\n".join(wiki_entries)) if wiki_entries else ""
-    card_section = CARD_SECTION_TMPL.format(
-        entries="\n\n".join(card_entries)) if card_entries else ""
-
-    if not wiki_section and not card_section:
-        return "知識庫中沒有這方面的紀錄。"
-
-    prompt = ANSWER_PROMPT.format(
+    prompt = CONTEXT_TMPL.format(
+        context="\n\n".join(entries),
         query=query,
-        wiki_section=wiki_section,
-        card_section=card_section,
     )
-    return llm_call(prompt, api_key, max_tokens=600)
+    answer = llm_call(prompt, api_key, max_tokens=900, system=SYSTEM_PROMPT)
+    return _strip_internal_labels(answer)
 
 
 # ── Output formatting ─────────────────────────────────────────────────────────
