@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 SCRIPTS_DIR = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
 WIKI_TOPICS_DIR = WORKSPACE / "wiki" / "topics"
 DOCS_PLANS_DIR = WORKSPACE / "docs" / "plans"

@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 ROUTER_SCRIPT = WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py"
 
 SERVER_INFO = {
