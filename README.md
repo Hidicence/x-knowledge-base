@@ -48,24 +48,27 @@ wiki/topics/*.md  ←  durable, readable knowledge pages
      ┌──┴──────────────────────────────────────────┐
      │                                              │
      ▼                                              ▼
-xkb_ask.py                              Active Recall Layer  ✨ new
+xkb_ask.py                              Active Recall Layer
 ask questions, get cited answers        knowledge surfaces automatically
                                         during AI conversations
 ```
 
-The **absorb gate** is the key quality mechanism: before any card enters the wiki, an LLM evaluates — *"What new dimension does this add to what's already here?"* Only cards that bring a new case, new concept, or contradiction pass through. Everything else is logged and skipped.
+The **absorb gate** is the key quality mechanism: before any card enters the wiki, an LLM evaluates — *"What new dimension does this add to what's already here?"* Only cards that bring a new case, new concept, or contradiction pass through.
 
-The **Active Recall Layer** is what makes the system proactive: instead of waiting for you to search, it monitors every conversation topic and automatically surfaces relevant knowledge when it detects a match — project status, strategy questions, past decisions, how-to queries, and more.
+The **Active Recall Layer** makes the system proactive: instead of waiting for you to search, it monitors every conversation topic and automatically surfaces relevant knowledge when it detects a match.
+
+Each knowledge card is now **understanding-oriented**, not summary-oriented. Every card answers:
+- What question is this trying to answer?
+- What is the author's conclusion, and what is the claim level? (Attested / Scholarship / Inference)
+- What might surprise the reader?
+- How does this relate to existing cards?
 
 **Optional: connect your agent's memory logs**
 
-`distill_memory_to_wiki.py` can also read conversation logs from your AI agent and distill insights into wiki candidates. This bridges your agent's internal memory (managed by the agent, not XKB) into the same wiki output layer — but the memory management itself is outside XKB's scope.
+`distill_memory_to_wiki.py` can read conversation logs from your AI agent and distill insights into wiki candidates.
 
 ```bash
-# Distill from agent memory log files
 python3 scripts/distill_memory_to_wiki.py --stage --days 2
-
-# Or distill inline — paste any text you want to preserve
 python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight: ..."
 ```
 
@@ -74,8 +77,6 @@ For the full architecture reference: [`docs/xkb-wiki-architecture.md`](docs/xkb-
 ---
 
 ## Quick Start — Try It in 10 Minutes
-
-The fastest way to see XKB in action: run the demo mode with the bundled sample dataset.
 
 ```bash
 # 1. Set your LLM API key (any OpenAI-compatible provider)
@@ -87,55 +88,46 @@ export LLM_MODEL="gpt-4o-mini"
 bash scripts/xkb_demo.sh
 ```
 
-This will:
-1. Convert 10 sample notes into knowledge cards
-2. Sync them through the absorb gate into wiki topic pages
-3. Show you a live question-answering demo with citations
-
-No API keys, topic-map config, or prior setup needed beyond the LLM key.
-
 ---
 
 ## What's in This Repo
 
-### Core Scripts
-
-**Active Recall Layer** ✨
+### Active Recall Layer
 
 | Script | What it does |
 |--------|-------------|
-| `recall_router.py` | ✨ **Main recall entry point**: message → classify → route → structured output + telemetry |
-| `conversation_state_parser.py` | ✨ **Trigger classifier**: detects hard/soft/suppress from any message (no LLM) |
-| `continuity_recall.py` | ✨ **Continuity recall**: searches MEMORY.md + wiki for project state, decisions, definitions |
-| `contrarian_recall.py` | ✨ **Contrarian recall**: surfaces warnings, failures, limitations, counter-examples |
-| `action_recall.py` | ✨ **Action recall**: finds reusable scripts, wiki roadmap sections, plan docs |
-| `xkb_recall_server.py` | ✨ **MCP server**: exposes `xkb_recall` as an MCP tool for AI agents |
+| `recall_router.py` | Main recall entry point: message → classify → route → structured output + telemetry |
+| `conversation_state_parser.py` | Trigger classifier: detects hard/soft/suppress from any message (no LLM) |
+| `continuity_recall.py` | Continuity recall: searches MEMORY.md + wiki for project state, decisions, definitions |
+| `contrarian_recall.py` | Contrarian recall: surfaces warnings, failures, limitations, counter-examples |
+| `action_recall.py` | Action recall: finds reusable scripts, wiki roadmap sections, plan docs |
+| `xkb_recall_server.py` | MCP server: exposes `xkb_recall` as an MCP tool for AI agents |
 
-**Knowledge Capture**
+### Knowledge Capture
 
 | Script | What it does |
 |--------|-------------|
-| `xkb_demo.sh` | **Demo mode**: sample dataset → cards → wiki → ask in one command |
-| `xkb_ask.py` | **Ask your knowledge base**: query → search wiki + cards → cited answer |
-| `local_ingest.py` | **Local notes ingest**: markdown/txt files → knowledge cards → search index |
-| `suggest_topic_map.py` | **Auto topic-map**: analyze categories → LLM suggests wiki topic slugs |
-| `fetch_and_summarize.sh` | Full XKB pipeline: fetch X/Twitter bookmarks → enrich → summarize → categorize → wiki sync |
-| `fetch_youtube_playlist.py` | Fetch YouTube playlist subtitles → summarize → add to knowledge cards + search index |
-| `run_youtube_sync.sh` | Daily YouTube playlist sync (wraps fetch_youtube_playlist.py) |
-| `fetch_github_repos.py` | Fetch GitHub forks/stars → generate repo knowledge cards → add to search index |
-| `run_github_sync.sh` | Daily GitHub sync (wraps fetch_github_repos.py) |
+| `xkb_demo.sh` | Demo mode: sample dataset → cards → wiki → ask in one command |
+| `xkb_ask.py` | Ask your knowledge base: query → search wiki + cards → cited answer |
+| `local_ingest.py` | Local notes ingest: markdown/txt files → knowledge cards → search index |
+| `suggest_topic_map.py` | Auto topic-map: analyze categories → LLM suggests wiki topic slugs |
+| `fetch_and_summarize.sh` | Full XKB pipeline: fetch X/Twitter bookmarks → enrich → categorize → wiki sync |
+| `fetch_youtube_playlist.py` | Fetch YouTube playlist subtitles → summarize → knowledge cards + search index |
+| `run_youtube_sync.sh` | Daily YouTube playlist sync |
+| `fetch_github_repos.py` | Fetch GitHub forks/stars → generate repo knowledge cards → search index |
+| `run_github_sync.sh` | Daily GitHub sync |
 | `sync_cards_to_wiki.py` | XKB cards → wiki topic pages (LLM absorb gate, decision log, explainability) |
-| `distill_memory_to_wiki.py` | Conversation memory → staging candidates → wiki (with `--input` for ad-hoc distillation) |
+| `distill_memory_to_wiki.py` | Conversation memory → staging candidates → wiki |
 | `lint_wiki.py` | Wiki health check: orphan pages, stale pages, gap topics |
 | `status_knowledge_pipeline.py` | Full pipeline status in one view |
 | `smoke_test_pipeline.sh` | End-to-end pipeline verification (10 checks) |
 
-**Academic Research Pipeline** 🔬
+### Academic Research Pipeline
 
 | Script | What it does |
 |--------|-------------|
 | `fetch_pubmed.py` | Fetch open-access full-text papers from PubMed Central → markdown files |
-| `pdf_ingest.py` | PDF / markdown → bilingual (zh+en) knowledge cards with Gemini-generated summaries and domain tags → search index |
+| `pdf_ingest.py` | PDF / markdown → bilingual (zh+en) knowledge cards → search index |
 | `topic_guide_generator.py` | Generate a structured domain guide from existing cards: reading order, key terms, knowledge gaps, key authors |
 | `health_check.py` | Knowledge base audit: semantic conflict detection, gap analysis, duplicate detection |
 
@@ -159,40 +151,30 @@ bash scripts/xkb_demo.sh
 ```
 
 ### 1. Ingest local notes
-The fastest way to get started with your own content:
-
 ```bash
-# Single file
 python3 scripts/local_ingest.py path/to/my-notes.md
-
-# Entire directory
-python3 scripts/local_ingest.py path/to/notes/
-
-# Preview what would be processed (no writes)
 python3 scripts/local_ingest.py notes/ --dry-run
-
-# With category and tag overrides
 python3 scripts/local_ingest.py notes/ --category learning --tag personal
 ```
 
 ### 2. Capture external content
 ```bash
-# Capture X/Twitter bookmarks
+# X/Twitter bookmarks
 bash scripts/fetch_and_summarize.sh
 
-# Capture YouTube playlists (subtitles → knowledge cards)
+# YouTube playlists
 python3 scripts/fetch_youtube_playlist.py --playlist "YOUR_PLAYLIST_URL"
-bash scripts/run_youtube_sync.sh   # daily sync
+bash scripts/run_youtube_sync.sh
 
-# Capture GitHub forks and starred repos
+# GitHub forks and starred repos
 python3 scripts/fetch_github_repos.py --forks --stars
-bash scripts/run_github_sync.sh    # daily sync
+bash scripts/run_github_sync.sh
 
-# Fetch open-access academic papers from PubMed
+# Open-access academic papers from PubMed
 python3 scripts/fetch_pubmed.py "AI medical imaging" --limit 20 --out /tmp/papers
 python3 scripts/pdf_ingest.py /tmp/papers/ --category research --rebuild-index
 
-# Ingest local PDF files directly
+# Local PDF files
 python3 scripts/pdf_ingest.py /path/to/papers/ --category research
 python3 scripts/pdf_ingest.py paper.pdf --tag ai --tag medical
 ```
@@ -210,92 +192,52 @@ python3 scripts/health_check.py --mode conflicts             # conflict detectio
 
 ### 3. Set up your wiki topic map
 
-**Option A — Auto-suggest (recommended for new setups):**
+**Option A — Auto-suggest:**
 ```bash
-# Review LLM suggestions (no writes)
 python3 scripts/suggest_topic_map.py --review
-
-# Apply suggestions to wiki/topic-map.json
 python3 scripts/suggest_topic_map.py --apply
 ```
 
-**Option B — Manual:**
-Edit `wiki/topic-map.json` to map your XKB categories to wiki topic slugs:
-```json
-{
-  "mapping": {
-    "your-xkb-category": {
-      "topics": ["your-wiki-topic-slug"],
-      "status": "active"
-    }
-  }
-}
-```
+**Option B — Manual:** Edit `wiki/topic-map.json`.
 
 ### 4. Sync cards into wiki topics
 ```bash
-# Preview what would be added (no LLM)
 python3 scripts/sync_cards_to_wiki.py --review --no-llm
-
-# Apply with LLM absorb gate
 python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 ```
 
-### 4b. Inspect absorb gate decisions (v5)
+### 4b. Inspect absorb gate decisions
 ```bash
-# See all rejected cards with reasons
 python3 scripts/sync_cards_to_wiki.py --review-rejects
-
-# Filter by topic or date
-python3 scripts/sync_cards_to_wiki.py --review-rejects --topic ai-memory --since 2025-01-01
-
-# Explain why a specific card was rejected
 python3 scripts/sync_cards_to_wiki.py --explain "https://example.com/article"
-
-# Override a rejection — force the card into the wiki on next --apply
 python3 scripts/sync_cards_to_wiki.py --force-absorb "https://example.com/article"
-python3 scripts/sync_cards_to_wiki.py --force-absorb "https://example.com/article" --topic ai-memory
 ```
 
 ### 5. Ask your knowledge base
 ```bash
-# Ask a question — searches wiki topics + knowledge cards, returns cited answer
 python3 scripts/xkb_ask.py "What are the alternatives to RAG?"
-
-# Compact format for chat use
 python3 scripts/xkb_ask.py "How do I design an AI agent memory system?" --format chat
-
-# JSON output for programmatic use
 python3 scripts/xkb_ask.py "your question" --json
 ```
 
-### 6. Distill conversation memory into wiki
+### 6. Distill conversation memory
 ```bash
-# Distill recent memory files (e.g. morning run)
 python3 scripts/distill_memory_to_wiki.py --stage --days 2 --label morning
-
-# Distill a specific insight right now (no waiting)
 python3 scripts/distill_memory_to_wiki.py --stage --input "Key insight: ..."
-
-# Apply approved staging candidates
 python3 scripts/distill_memory_to_wiki.py --apply \
   --staging-file wiki/_staging/YYYY-MM-DD-morning-candidates.md
 ```
 
 ### 7. Monitor pipeline health
 ```bash
-python3 scripts/status_knowledge_pipeline.py        # Full status
-python3 scripts/lint_wiki.py [--fix]                # Wiki health check
-bash scripts/smoke_test_pipeline.sh                 # End-to-end test
+python3 scripts/status_knowledge_pipeline.py
+python3 scripts/lint_wiki.py [--fix]
+bash scripts/smoke_test_pipeline.sh
 ```
 
 ---
 
-## Active Recall Layer ✨
-
-The Active Recall Layer makes XKB proactive — knowledge surfaces automatically during AI conversations without you having to ask.
-
-### How it works
+## Active Recall Layer
 
 Every incoming message is classified by a lightweight rule-based parser (no LLM, <5ms). Based on the classification, the relevant recall module fires and returns structured output.
 
@@ -324,21 +266,13 @@ conversation_state_parser.py
 - Suppress: *"你好"*, *"今天幾號？"*, *"幫我翻譯這句話"*
 
 ### Use from command line
-
 ```bash
-# Route a message and see what recall fires
 python3 scripts/recall_router.py "XKB active recall 現在的架構是什麼？"
-
-# Dry-run — see classification without executing recall
 python3 scripts/recall_router.py "你的問題" --dry-run
-
-# Full structured output as JSON
 python3 scripts/recall_router.py "你的問題" --json
 ```
 
-### Use as MCP tool (OpenClaw / Claude Code)
-
-The `xkb_recall_server.py` exposes the router as an MCP tool. Once registered, the AI agent will call `xkb_recall` automatically before responding to substantive messages.
+### Use as MCP tool
 
 **OpenClaw setup** — add to `openclaw.json`:
 ```json
@@ -355,7 +289,7 @@ The `xkb_recall_server.py` exposes the router as an MCP tool. Once registered, t
 }
 ```
 
-**Claude Code setup** — add to `.claude/settings.json` or `~/.claude/settings.json`:
+**Claude Code setup** — add to `.claude/settings.json`:
 ```json
 {
   "mcpServers": {
@@ -369,7 +303,6 @@ The `xkb_recall_server.py` exposes the router as an MCP tool. Once registered, t
 ```
 
 ### Telemetry
-
 Every recall event is logged to `memory/x-knowledge-base/recall-telemetry.jsonl`:
 ```json
 {"ts": "...", "trigger_class": "hard", "state": "continuity", "recalled": true, "result_count": 2, "duration_ms": 45}
@@ -379,38 +312,35 @@ Every recall event is logged to `memory/x-knowledge-base/recall-telemetry.jsonl`
 
 ## Requirements
 
-### Agent compatibility
-XKB runs as a **skill on top of any AI agent** — Claude Code, OpenClaw, or any agent that can read a system prompt and run shell scripts. The scripts are plain Python/bash with no agent-specific dependencies.
-
-Set up: read `SKILL.md`, create the workspace directory structure, schedule the scripts.
-
 ### Environment
 - Python 3.10+
 - `OPENCLAW_WORKSPACE` — path to your workspace directory (e.g. `~/.openclaw/workspace`)
 
-### LLM API keys (required)
-XKB uses two API keys:
+### LLM API key (required)
+XKB uses **one primary LLM key** for all enrichment, absorb gate judgments, and memory distillation. Configure via environment variables:
 
-**Gemini API key** (for enrichment, summaries, search — required for full functionality):
+```bash
+export LLM_API_KEY="your-api-key"
+export LLM_API_URL="https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
+export LLM_MODEL="gpt-4o-mini"   # e.g. gpt-4o-mini, claude-3-haiku, MiniMax-M2.5
+```
+
+Used by: all worker scripts (`run_bookmark_worker.py`, `run_scan_worker.py`), `local_ingest.py`, `fetch_github_repos.py`, `fetch_youtube_playlist.py`, `sync_cards_to_wiki.py`, `distill_memory_to_wiki.py`, `pdf_ingest.py`, `fetch_pubmed.py`, `topic_guide_generator.py`, `xkb_ask.py`
+
+### Optional: Gemini API key
+`GEMINI_API_KEY` is only needed for semantic vector search and the health check conflict detector:
+
 ```bash
 export GEMINI_API_KEY="your-gemini-key"
 # Get one free at: https://aistudio.google.com/
 ```
 
-Used by: `run_bookmark_worker.py`, `run_scan_worker.py`, `pdf_ingest.py`, `fetch_pubmed.py`,
-`topic_guide_generator.py`, `health_check.py`, vector index (`build_vector_index.py`)
+Used by: `build_vector_index.py`, `health_check.py`
 
-**OpenAI-compatible API key** (for wiki absorb gate and memory distillation):
-```bash
-export LLM_API_KEY="your-api-key"
-export LLM_API_URL="https://api.openai.com/v1/chat/completions"  # or any compatible endpoint
-export LLM_MODEL="gpt-4o-mini"
-```
+Without it, XKB falls back to CJK-bigram keyword search (still functional, lower recall quality).
 
-Used by: `sync_cards_to_wiki.py`, `distill_memory_to_wiki.py`, `xkb_ask.py`
-
-Without `GEMINI_API_KEY`, enrichment and vector search fall back to keyword-only mode.
-- `BIRD_AUTH_TOKEN` + `BIRD_CT0` — X/Twitter bookmark fetching via [bird CLI](https://github.com/zedeus/nitter); falls back to curl/Jina without it
+### Optional: Twitter/X auth
+- `BIRD_AUTH_TOKEN` + `BIRD_CT0` — X/Twitter bookmark fetching; falls back to curl/Jina without it
 
 ---
 
@@ -418,14 +348,14 @@ Without `GEMINI_API_KEY`, enrichment and vector search fall back to keyword-only
 
 | Version | Status | What it delivered |
 |---------|--------|-------------------|
-| v1 | ✅ | Bookmark ingestion, knowledge cards, keyword search, v1 recall |
-| v2 | ✅ | Multi-layer content extraction, enrichment worker, vector index |
-| v3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
-| v4 | ✅ | Local notes ingest, ask layer with citations, demo mode, auto topic-map |
-| v5 | ✅ | Absorb gate explainability: --review-rejects, --explain, --force-absorb |
-| v6 | ✅ | Active Recall Layer: proactive recall during AI conversations, MCP server, telemetry |
-| v7 | ✅ | Knowledge quality layer: bilingual summaries, Claim levels, CJK bigram search, academic PDF pipeline, domain guides, health check |
-| v8 | 🔜 | Proactive linking (cross-reference on ingest), onboarding wizard |
+| v0.1 | ✅ | Bookmark ingestion, knowledge cards, keyword search, basic recall |
+| v0.2 | ✅ | Multi-layer content extraction, enrichment worker, vector index |
+| v0.3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation, staging review |
+| v0.4 | ✅ | Local notes ingest, ask layer with citations, demo mode, auto topic-map |
+| v0.5 | ✅ | Absorb gate explainability: --review-rejects, --explain, --force-absorb |
+| v0.6 | ✅ | Active Recall Layer: proactive recall during AI conversations, MCP server, telemetry |
+| v0.7 | ✅ | Knowledge quality layer: understanding-oriented cards (Claim levels, False Friends, bilingual summaries, cross-card context injection), academic PDF pipeline, domain guides, health check |
+| v0.8 | 🔜 | Proactive linking (cross-reference on ingest), onboarding wizard |
 
 ---
 
@@ -433,7 +363,8 @@ Without `GEMINI_API_KEY`, enrichment and vector search fall back to keyword-only
 
 - **Layers, not one database.** Working memory, consolidation, external capture, and output are separate problems requiring separate solutions.
 - **Quality gates over quantity.** The absorb gate ensures the wiki stays a distilled output layer, not a second inbox.
-- **Human in the loop for internal knowledge.** Conversation memory goes through staging and human review before entering the wiki. External bookmarks can use LLM auto-filtering.
+- **Understanding over summarization.** Cards answer "what question does this solve?" not "what does this say?".
+- **Human in the loop for internal knowledge.** Conversation memory goes through staging and human review before entering the wiki.
 - **Proactive over reactive.** Knowledge should surface when relevant, not when searched.
 - **Show value first.** New users see the output before they configure the system.
 
