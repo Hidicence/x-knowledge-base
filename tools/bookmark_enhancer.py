@@ -15,9 +15,11 @@ from pathlib import Path
 from collections import Counter
 
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(Path.home() / ".openclaw" / "workspace" / "memory" / "bookmarks")))
-MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
-MINIMAX_ENDPOINT = os.getenv("MINIMAX_ENDPOINT", "https://api.minimax.io/anthropic/v1/messages")
-MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
+# ── LLM config (OpenAI-compatible, configurable via env vars) ──────────────────
+# LLM_API_KEY takes priority; falls back to MINIMAX_API_KEY for backwards-compat
+MINIMAX_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_ENDPOINT = os.getenv("LLM_API_URL", os.getenv("MINIMAX_ENDPOINT", "https://api.minimaxi.chat/v1/chat/completions"))
+MINIMAX_MODEL = os.getenv("LLM_MODEL", os.getenv("MINIMAX_MODEL", "MiniMax-M2.5"))
 OPENCLAW_FALLBACK_ENABLED = os.getenv("OPENCLAW_MINIMAX_FALLBACK", "1") not in ("0", "false", "False")
 # 保留 session + agent 兩種路由控制；新版 openclaw agent CLI 不支援 --model 旗標。
 OPENCLAW_FALLBACK_SESSION = os.getenv("OPENCLAW_MINIMAX_SESSION", "xkb-summarizer")
@@ -276,35 +278,27 @@ def generate_ai_summary(bookmark):
     title = bookmark.get("title", "(untitled)")
     truncated = content[:8000]
 
-    prompt = f"""請為以下 X 書籤知識卡產生濃縮摘要。
+    prompt = f"""請為以下 X 書籤產生結構化知識摘要。
 
-注意：內容可能包含
-- 原始 tweet
-- thread 全文
-- 作者後續補充
-- 外部文章/網站摘錄
-- GitHub repo / issue / PR 摘錄
-
-請整合這些上下文，不要只摘要第一段。
+注意：內容可能包含原始 tweet、thread 全文、作者補充、外部文章/GitHub 摘錄，請整合所有上下文。
 
 格式如下：
 
-## 📌 一句話摘要
-（一句話概括核心，20字以內）
+## 📌 核心問題與結論
+- **提問**：這篇試圖解答什麼問題？（一句話）
+- **結論**：作者給出的答案是什麼？（一句話）
+- **Claim 等級**：[Attested（有數據/實驗） | Scholarship（分析觀點） | Inference（推論/假設）]
 
-## 🎯 三個重點
-1. （重點一）
-2. （重點二）
-3. （重點三）
+## 🎯 關鍵論點
+1. （論點一）
+2. （論點二）
+3. （論點三）
 
 ## 🧵 作者補充 / Thread 重點
-- （如果有 thread 或補充，就整理 2-4 點；沒有就寫「無明顯補充」）
+- （有 thread 或補充就整理 2-4 點；沒有就寫「無」）
 
-## 🔗 外部連結重點
-- （如果有文章 / GitHub / 外部連結內容，就整理 2-4 點；沒有就寫「無外部連結內容」）
-
-## 💡 對 Pan 的價值
-- （實際應用、可追、可做的方向，2-3 點）
+## 💡 可執行的應用方向
+- （實際可追蹤、可操作的方向，2-3 點）
 
 ---
 
@@ -315,7 +309,7 @@ def generate_ai_summary(bookmark):
 
 ---
 
-請用繁體中文回覆，格式要清晰、內容要可執行。"""
+請用繁體中文回覆，格式要清晰，重視理解而非堆疊文字。"""
 
     ai_summary = call_minimax(prompt)
     if ai_summary:
