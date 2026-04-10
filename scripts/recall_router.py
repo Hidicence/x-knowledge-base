@@ -49,7 +49,7 @@ from continuity_recall import recall as continuity_recall, recall_from_wiki, for
 from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
 from action_recall import recall as action_recall, format_hint as format_action_hint
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 SCRIPTS = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
 TELEMETRY_PATH = WORKSPACE / "memory" / "x-knowledge-base" / "recall-telemetry.jsonl"
 

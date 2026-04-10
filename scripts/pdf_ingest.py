@@ -32,7 +32,7 @@ except ImportError:
     print("Error: pymupdf not installed. Run: pip install pymupdf --break-system-packages")
     sys.exit(1)
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 SCRIPTS_DIR = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
 
 def _get_gemini_key() -> str:

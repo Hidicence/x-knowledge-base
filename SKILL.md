@@ -289,24 +289,77 @@ python3 scripts/recall_for_conversation.py "省錢跑 AI" --semantic --format ch
   - The queue is not tied to any specific agent — any worker/model can claim and process items
 - The active queue state file must not be placed inside the skill directory; store it in the workspace data path: `memory/x-knowledge-base/tiege-queue.json` / 實際執行中的 queue 狀態檔不放在 skill 內，存工作區資料路徑：`memory/x-knowledge-base/tiege-queue.json`
 
+## Security & Privacy / 安全與隱私
+
+> Full data flow reference: [`docs/data-flow.md`](docs/data-flow.md)
+
+### High-Sensitivity Credentials / 高風險憑證
+
+**BIRD_AUTH_TOKEN / BIRD_CT0** are X/Twitter session cookies — **not** regular API keys.
+
+- Risk: Anyone holding these can read your private bookmarks and browse X as you
+- Never paste in chat, GitHub issues, wiki, or any shared system
+- Store only in: system env vars, or `.secrets/x-knowledge-base.env` (gitignored)
+- If exposed: log out of X immediately to invalidate the session
+
+**LLM_API_KEY / GEMINI_API_KEY** are standard API keys (billing risk if exposed, not account takeover). Rotate immediately if exposed.
+
+### What data leaves your machine / 哪些資料會送到外部
+
+- Bookmark content (text) → sent to LLM API for enrichment
+- External article URLs → sent to r.jina.ai for extraction
+- Card titles + summaries → sent to embedding API for vector index (Gemini/OpenAI)
+- Search queries (PubMed) → sent to NCBI public API
+- Raw bookmark files, search_index.json, wiki pages → **stay local**
+
+See `docs/data-flow.md` for the complete per-script breakdown.
+
 ## Environment Requirements / 環境需求
 
-Ensure at least the following variables or tools are available / 至少確認下列變數或工具可用：
+### Required env vars / 必要環境變數
 
-- `BIRD_AUTH_TOKEN`
-- `BIRD_CT0`
-- `TWITTER_AUTH_TOKEN` (optional; if not set, recommendation scripts fall back to `BIRD_AUTH_TOKEN` / 可選；若未提供，推薦腳本會回退使用 `BIRD_AUTH_TOKEN`)
-- `TWITTER_CT0` (optional; if not set, recommendation scripts fall back to `BIRD_CT0` / 可選；若未提供，推薦腳本會回退使用 `BIRD_CT0`)
-- `BOOKMARKS_DIR` (optional / 可選)
-- `MINIMAX_API_KEY` (optional; falls back if not provided / 可選；未提供時走 fallback)
-- `agent-reach` (recommended / 建議)
-- `xreach` (recommended / 建議)
-- `gh` (recommended / 建議)
-- `rclone` (required for Google Drive sync / 若要同步到 Google Drive)
-- `RCLONE_REMOTE` (optional; e.g. `my-drive:XKnowledgeBase-Bookmarks` / 可選；例如 `my-drive:XKnowledgeBase-Bookmarks`)
+| Variable | Purpose | Sensitivity |
+|----------|---------|-------------|
+| `LLM_API_KEY` | Card generation, wiki sync, ask | Standard API key |
+| `LLM_API_URL` | LLM endpoint (any OpenAI-compatible) | — |
+| `LLM_MODEL` | Model name | — |
+| `BIRD_AUTH_TOKEN` | X/Twitter bookmark fetch | **High — session cookie** |
+| `BIRD_CT0` | X/Twitter bookmark fetch | **High — session cookie** |
 
-Do not place `.env` or other secrets inside the skill directory. Use workspace environment variables, external environment management, or workspace `.secrets/x-knowledge-base.env` instead.
-不要把 `.env` 或其他 secrets 放進 skill 目錄；改由工作區環境變數、外部環境管理，或工作區 `.secrets/x-knowledge-base.env`。
+### Optional env vars / 可選環境變數
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GEMINI_API_KEY` | Vector embeddings, health_check | Falls back to keyword search |
+| `OPENCLAW_WORKSPACE` | Workspace root path | `~/.openclaw/workspace` |
+| `OPENCLAW_JSON` | Config file path | `~/.openclaw/openclaw.json` |
+| `BOOKMARKS_DIR` | Bookmarks directory | `$WORKSPACE/memory/bookmarks` |
+| `CARDS_DIR` | Knowledge cards directory | `$WORKSPACE/memory/cards` |
+| `MINIMAX_API_KEY` | Legacy fallback for LLM_API_KEY | — |
+| `TWITTER_AUTH_TOKEN` | Recommendation scripts (falls back to BIRD_AUTH_TOKEN) | — |
+| `TWITTER_CT0` | Recommendation scripts (falls back to BIRD_CT0) | — |
+| `RCLONE_REMOTE` | Google Drive sync | — |
+
+### Required binaries / 必要二進位
+
+| Tool | Purpose | Required? |
+|------|---------|-----------|
+| `python3` (3.10+) | All scripts | Required |
+| `xreach` or `bird` | X/Twitter bookmark fetch | Required for X ingestion |
+| `gh` | GitHub repo fetch | Required for GitHub ingestion |
+| `yt-dlp` | YouTube subtitle fetch | Required for YouTube ingestion |
+| `rclone` | Google Drive sync | Optional |
+
+### External services / 外部服務依賴
+
+- **LLM API** (configurable via `LLM_API_URL`) — card generation, wiki sync
+- **r.jina.ai** — external article extraction (public, no auth)
+- **Gemini API** — vector embeddings (optional, falls back to keyword)
+- **NCBI eutils** — PubMed paper fetch (public, no auth)
+- **X/Twitter servers** — bookmark fetch via bird/xreach
+
+Do not place `.env` or secrets inside the skill directory. Use `.secrets/x-knowledge-base.env` (gitignored) or system env vars.
+不要把 `.env` 或 secrets 放進 skill 目錄；改用 `.secrets/x-knowledge-base.env`（已 gitignore）或系統環境變數。
 
 ## Key Files / 重要檔案
 

@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", "/root/.openclaw/workspace"))
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 WIKI_DIR = WORKSPACE / "wiki"
 TOPICS_DIR = WIKI_DIR / "topics"
 STAGING_DIR = WIKI_DIR / "_staging"
@@ -35,7 +35,7 @@ LLM_MODEL = "gpt-4o-mini"
 
 
 def load_env_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON", "/root/.openclaw/openclaw.json"))
+    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
     try:
         cfg = json.loads(cfg_path.read_text())
         return cfg.get("env", {}).get("LLM_API_KEY", "") or os.getenv("LLM_API_KEY", "")
