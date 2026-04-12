@@ -27,7 +27,6 @@ import json
 import os
 import re
 import sys
-import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,15 +35,16 @@ from pathlib import Path
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+sys.path.insert(0, str(_SKILL_DIR / "scripts"))
+from _llm import call as _llm_backend
 TOPICS_DIR = WIKI_DIR / "topics"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
 TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"
 REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
 SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
-
-LLM_API_URL = "https://api.openai.com/v1/chat/completions"
-LLM_MODEL = "gpt-4o-mini"
 
 _llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
 
@@ -69,27 +69,7 @@ SOURCES_SECTION_RE = re.compile(r"\n## 來源\n(.*)$", re.DOTALL)
 # ---------------------------------------------------------------------------
 
 def _call_minimax(api_key: str, system: str, user: str) -> str:
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": 1200,
-        "temperature": 0.1,
-    }
-    req = urllib.request.Request(
-        LLM_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"].strip()
+    return _llm_backend(system, user)
 
 
 def llm_absorb_judgment(
@@ -673,10 +653,8 @@ def main() -> int:
         return cmd_force_absorb(args.force_absorb, args.topic)
 
     # ── Standard sync flow ────────────────────────────────────────────────────
-    api_key = os.environ.get("LLM_API_KEY", "")
-    use_llm = bool(api_key) and not args.no_llm
-    if not api_key and not args.no_llm:
-        print("WARNING: LLM_API_KEY not set. Use --no-llm to list candidates without LLM.")
+    api_key = ""  # auth handled by _llm.py via openclaw CLI
+    use_llm = not args.no_llm
 
     topic_map = load_topic_map()
     review_decisions = load_review_decisions()

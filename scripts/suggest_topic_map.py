@@ -16,7 +16,6 @@ import json
 import os
 import re
 import sys
-import urllib.request
 from collections import Counter
 from pathlib import Path
 
@@ -30,57 +29,17 @@ WIKI_DIR       = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
 TOPIC_MAP_FILE = WIKI_DIR / "topic-map.json"
 TOPICS_DIR     = WIKI_DIR / "topics"
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-LLM_API_BASE   = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
-LLM_MODEL      = os.getenv("LLM_MODEL", "MiniMax-M2.5")
-_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+from _llm import call as _llm_backend
 
 
 def load_env_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON",
-        str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        env = cfg.get("env", {})
-        return (env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or
-                os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or "")
-    except Exception:
-        return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
+    return ""  # auth handled by _llm.py via openclaw CLI
 
 
-def llm_call(prompt: str, api_key: str) -> str:
-    if _USE_ANTHROPIC:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "max_tokens": 800,
-            "messages": [{"role": "user", "content": prompt}],
-        }).encode()
-        req = urllib.request.Request(
-            f"{LLM_API_BASE}/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        return next(item["text"] for item in data["content"] if item.get("type") == "text").strip()
-    else:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 800,
-            "temperature": 0.2,
-        }).encode()
-        req = urllib.request.Request(
-            LLM_API_BASE, data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"].strip()
+def llm_call(prompt: str, api_key: str = "") -> str:
+    return _llm_backend("", prompt)
 
 
 def load_index() -> list:
