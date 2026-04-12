@@ -37,8 +37,8 @@ def _extract_summary(text: str) -> str:
     bilingual = re.search(r"##\s+7\.\s*雙語摘要[^\n]*\n(.+?)(?=\n##|\Z)", text, re.DOTALL)
     if bilingual:
         block = bilingual.group(1)
-        zh_m = re.search(r"^ZH[：:]\s*(.+)$", block, re.MULTILINE)
-        en_m = re.search(r"^EN[：:]\s*(.+)$", block, re.MULTILINE)
+        zh_m = re.search(r"^(?:ZH|中文)[：:]\s*(.+)$", block, re.MULTILINE)
+        en_m = re.search(r"^(?:EN|英文)[：:]\s*(.+)$", block, re.MULTILINE)
         parts = [m.group(1).strip() for m in [zh_m, en_m] if m and m.group(1).strip()]
         if parts:
             return " | ".join(parts)
