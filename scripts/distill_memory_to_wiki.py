@@ -81,7 +81,10 @@ def llm_call(system: str, user: str, api_key: str) -> str:
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read())
     if _USE_ANTHROPIC:
-        raw = data["content"][0]["text"].strip()
+        text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
+        if text_block is None:
+            raise KeyError(f"No text block in response content: {[b.get('type') for b in data.get('content', [])]}")
+        raw = text_block["text"].strip()
     else:
         raw = data["choices"][0]["message"]["content"].strip()
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
