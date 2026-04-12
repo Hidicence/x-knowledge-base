@@ -8,17 +8,14 @@ One unified 9-section format, source_type adapts per script.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import urllib.request
+import sys
 from pathlib import Path
 from typing import Any
 
-# ── LLM config (read once, shared) ───────────────────────────────────────────
-LLM_API_BASE   = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
-LLM_MODEL      = os.getenv("LLM_MODEL", "MiniMax-M2.5")
-_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
+# ── Unified LLM helper (config/llm.json → single model setting) ──────────────
+sys.path.insert(0, str(Path(__file__).parent))
+from _llm import call as _llm_call
 
 # ── Shared system prompt ──────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
@@ -125,49 +122,11 @@ def source_label(source_type: str) -> str:
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
-def llm_call(prompt: str, api_key: str, max_tokens: int = 2000,
+def llm_call(prompt: str, api_key: str = "", max_tokens: int = 2000,
              system: str | None = SYSTEM_PROMPT) -> str:
-    if _USE_ANTHROPIC:
-        body: dict[str, Any] = {
-            "model": LLM_MODEL,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system:
-            body["system"] = system
-        payload = json.dumps(body).encode()
-        req = urllib.request.Request(
-            f"{LLM_API_BASE}/v1/messages", data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read())
-        return next(
-            item["text"] for item in data["content"] if item.get("type") == "text"
-        ).strip()
-    else:
-        messages: list[dict] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.3,
-        }).encode()
-        req = urllib.request.Request(
-            LLM_API_BASE, data=payload,
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"].strip()
+    """api_key kept for backwards compatibility but is no longer used.
+    Model is configured via config/llm.json."""
+    return _llm_call(system or "", prompt)
 
 
 # ── Summary extraction ────────────────────────────────────────────────────────

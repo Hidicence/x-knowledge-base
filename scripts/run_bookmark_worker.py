@@ -16,7 +16,6 @@ import json
 import os
 import re
 import sys
-import urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,26 +25,14 @@ BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "book
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
-# ── LLM config (OpenAI-compatible, configurable via env vars) ──────────────────
-# Default: MiniMax. Override with LLM_API_URL + LLM_API_KEY + LLM_MODEL
-LLM_API_URL = os.getenv("LLM_API_URL", "https://api.minimaxi.chat/v1/chat/completions")
-LLM_MODEL   = os.getenv("LLM_MODEL",   "MiniMax-M2.5")
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_SKILL_DIR / "scripts"))
+from _llm import call as _llm_backend
 
 
 def _get_api_key() -> str:
-    for env_key in ("LLM_API_KEY", "MINIMAX_API_KEY"):
-        key = os.environ.get(env_key, "")
-        if key:
-            return key
-    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            env = config.get("env", {})
-            return env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or ""
-        except Exception:
-            pass
-    return ""
+    return ""  # auth handled by _llm.py via openclaw CLI
 
 
 SYSTEM_PROMPT = """You are a knowledge card generator for a personal learning base. Given the raw content of a single X/Twitter bookmark and optionally a list of related existing cards, output one structured knowledge card in Traditional Chinese.
@@ -186,29 +173,7 @@ def _call_llm(api_key: str, bookmark_content: str, item: dict, related_context: 
         f"--- Raw content ---\n{bookmark_content[:4000]}\n---\n\n"
         "Output the knowledge card. If content is low-value (login page/404/noise), output only: SKIPPED"
     )
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": user_msg},
-        ],
-        "max_tokens": 2500,
-        "temperature": 0.3,
-    })
-    req = urllib.request.Request(
-        LLM_API_URL,
-        data=payload.encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    content_blocks = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if isinstance(content_blocks, list):
-        text = next((b["text"] for b in content_blocks if b.get("type") == "text"), "")
-    else:
-        text = content_blocks
-    return text.strip()
+    return _llm_backend(system, user_msg)
 
 
 def _now_iso() -> str:
@@ -268,10 +233,7 @@ def main() -> None:
     if args.local_only:
         args.dry_run = True  # local-only implies dry-run (no API calls)
 
-    api_key = "" if args.dry_run else _get_api_key()
-    if not api_key and not args.dry_run:
-        print("❌ LLM_API_KEY not found. Set env var or add to openclaw.json.")
-        sys.exit(1)
+    api_key = ""  # auth handled by _llm.py via openclaw CLI
 
     data = _load_queue()
     items = data["items"]
@@ -292,7 +254,7 @@ def main() -> None:
     elif args.dry_run:
         print("   (dry-run mode — no API calls)")
     else:
-        print(f"   ⚠️  Bookmark content will be sent to LLM API ({LLM_API_URL}) for enrichment.")
+        print(f"   ⚠️  Bookmark content will be sent to LLM for enrichment (via openclaw).")
 
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):

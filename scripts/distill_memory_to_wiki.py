@@ -18,77 +18,30 @@ import argparse
 import json
 import os
 import re
-import urllib.request
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+sys.path.insert(0, str(_SKILL_DIR / "scripts"))
+from _llm import call as _llm_backend
 TOPICS_DIR = WIKI_DIR / "topics"
 STAGING_DIR = WIKI_DIR / "_staging"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
 MEMORY_DIR = WORKSPACE / "memory"
 
-LLM_API_BASE = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
-LLM_MODEL = os.getenv("LLM_MODEL", "MiniMax-M2.5")
-_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
-
-
 def load_env_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        return cfg.get("env", {}).get("LLM_API_KEY", "") or os.getenv("LLM_API_KEY", "")
-    except Exception:
-        return os.getenv("LLM_API_KEY", "")
+    return ""  # auth handled by _llm.py via openclaw CLI
 
 
-def llm_call(system: str, user: str, api_key: str) -> str:
-    if _USE_ANTHROPIC:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "max_tokens": 2000,
-            "temperature": 0.2,
-            "system": system,
-            "messages": [{"role": "user", "content": user}],
-        }).encode()
-        req = urllib.request.Request(
-            f"{LLM_API_BASE}/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-    else:
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 2000,
-        }).encode()
-        req = urllib.request.Request(
-            LLM_API_BASE,
-            data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-    if _USE_ANTHROPIC:
-        text_block = next((b for b in data.get("content", []) if b.get("type") == "text"), None)
-        if text_block is None:
-            raise KeyError(f"No text block in response content: {[b.get('type') for b in data.get('content', [])]}")
-        raw = text_block["text"].strip()
-    else:
-        raw = data["choices"][0]["message"]["content"].strip()
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-    return raw
+def llm_call(system: str, user: str, api_key: str = "") -> str:
+    raw = _llm_backend(system, user)
+    return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
 
 def load_topic_slugs() -> list[str]:
@@ -393,10 +346,7 @@ def main() -> None:
             print(content[:400] + "..." if len(content) > 400 else content)
         return
 
-    api_key = load_env_key()
-    if not api_key:
-        print("[ERROR] LLM_API_KEY not found")
-        return
+    api_key = ""  # auth handled by _llm.py via openclaw CLI
 
     # Load today's already-staged content for dedup (only for memory-based runs, not --input)
     already_staged = ""

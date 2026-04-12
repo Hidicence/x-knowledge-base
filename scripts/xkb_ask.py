@@ -20,9 +20,11 @@ import math
 import os
 import re
 import sys
-import urllib.request
 from pathlib import Path
-from typing import Any
+
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+from _llm import call as _llm_backend
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
@@ -35,9 +37,6 @@ WIKI_DIR       = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
 TOPICS_DIR     = WIKI_DIR / "topics"
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
-LLM_API_BASE   = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
-LLM_MODEL      = os.getenv("LLM_MODEL", "MiniMax-M2.5")
-_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
 
 MAX_WIKI_CHARS  = 2000   # per topic excerpt fed to LLM
 MAX_CARD_CHARS  = 300    # per card summary fed to LLM
@@ -56,57 +55,12 @@ STOPWORDS = {
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
 def load_env_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON",
-        str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        env = cfg.get("env", {})
-        return (env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or
-                os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or "")
-    except Exception:
-        return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
+    return ""  # auth handled by _llm.py via openclaw CLI
 
 
-def llm_call(prompt: str, api_key: str, max_tokens: int = 1000,
+def llm_call(prompt: str, api_key: str = "", max_tokens: int = 1000,
              system: str | None = None) -> str:
-    if _USE_ANTHROPIC:
-        body: dict[str, Any] = {
-            "model": LLM_MODEL,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system:
-            body["system"] = system
-        payload = json.dumps(body).encode()
-        req = urllib.request.Request(
-            f"{LLM_API_BASE}/v1/messages", data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read())
-        return next(item["text"] for item in data["content"] if item.get("type") == "text").strip()
-    else:
-        messages: list[dict] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        payload = json.dumps({
-            "model": LLM_MODEL,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.3,
-        }).encode()
-        req = urllib.request.Request(
-            LLM_API_BASE, data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"].strip()
+    return _llm_backend(system or "", prompt)
 
 
 # ── Tokenization ──────────────────────────────────────────────────────────────
@@ -393,11 +347,7 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    api_key = load_env_key()
-    if not api_key:
-        print("[ERROR] 找不到 LLM_API_KEY", file=sys.stderr)
-        return 1
-
+    api_key = ""  # auth handled by _llm.py
     query_tokens = tokenize(query)
 
     wiki_hits = [] if args.no_wiki  else search_wiki_topics(query, args.max_wiki)

@@ -1,0 +1,14 @@
+{
+  "_comment": "XKB unified LLM config. Change 'model' here to switch all scripts at once.",
+  "_comment2": "Format: 'provider/model-id' as accepted by `openclaw capability model run --model`",
+  "_comment3": "Embedding uses Gemini separately (GEMINI_API_KEY in openclaw.json env) and is NOT affected by this config.",
+
+  "model": "openai-codex/gpt-5.4",
+
+  "_examples": {
+    "gpt_5_4":     "openai-codex/gpt-5.4",
+    "gpt_5_4_mini": "openai-codex/gpt-5.4-mini",
+    "minimax":     "MiniMax-M2.7",
+    "minimax_m25": "MiniMax-M2.5"
+  }
+}
