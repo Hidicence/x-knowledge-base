@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import NamedTuple
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+_SKILL_DIR = Path(__file__).resolve().parent.parent
 MEMORY_DIR = WORKSPACE / "memory"
-WIKI_TOPICS_DIR = WORKSPACE / "wiki" / "topics"
+WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki"))) / "topics"
 MEMORY_MD = WORKSPACE / "MEMORY.md"
 
 STOPWORDS = {

@@ -25,7 +25,8 @@ WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
     os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE     = BOOKMARKS_DIR / "search_index.json"
-WIKI_DIR       = WORKSPACE_DIR / "wiki"
+_SKILL_DIR     = Path(__file__).resolve().parent.parent
+WIKI_DIR       = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
 TOPIC_MAP_FILE = WIKI_DIR / "topic-map.json"
 TOPICS_DIR     = WIKI_DIR / "topics"
 

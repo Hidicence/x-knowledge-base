@@ -21,6 +21,8 @@ VECTOR_FILE = Path(os.getenv("VECTOR_INDEX_PATH", os.getenv("VECTOR_FILE", str(_
 TOPIC_PROFILE_FILE = Path(
     os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
 )
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki"))) / "topics"
 GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
 LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
 LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}
@@ -335,6 +337,83 @@ def _display_title(item: dict) -> str:
             return first + "…"
     return title or "(untitled)"
 
+def wiki_recall(query: str, limit: int = 2) -> List[Dict[str, Any]]:
+    """第一層召回：從 wiki/topics/*.md 找合成知識段落。"""
+    if not WIKI_TOPICS_DIR.exists():
+        return []
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return []
+
+    results = []
+    for path in WIKI_TOPICS_DIR.glob("*.md"):
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        # 從 frontmatter 取 title
+        fm_match = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
+        topic_title = path.stem
+        if fm_match:
+            title_m = re.search(r"^title:\s*(.+)$", fm_match.group(1), re.MULTILINE)
+            if title_m:
+                topic_title = title_m.group(1).strip().strip('"')
+
+        # 移除 frontmatter，切成 ## 段落
+        body = re.sub(r"^---\n.*?\n---\n", "", content, flags=re.DOTALL).strip()
+        sections = re.split(r"\n(?=##+ )", body)
+
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+            first_line = section.split("\n")[0]
+            section_title = re.sub(r"^#+\s*", "", first_line).strip()
+            section_body = "\n".join(section.split("\n")[1:]).strip()
+            if not section_body:
+                continue
+
+            text_lower = (section_title + " " + section_body).lower()
+            score = 0
+            for token in query_tokens:
+                if token in section_title.lower():
+                    score += 6
+                elif token in text_lower:
+                    score += 2
+
+            if score < 4:
+                continue
+
+            # 擷取有意義的摘錄（跳過純分隔線）
+            excerpt_lines = [l for l in section_body.split("\n")
+                             if l.strip() and not re.fullmatch(r"-{3,}", l.strip())]
+            excerpt = " ".join(excerpt_lines)[:240].strip()
+            if len(excerpt) >= 240:
+                excerpt = excerpt.rsplit(" ", 1)[0] + "…"
+
+            results.append({
+                "topic_title": topic_title,
+                "section_title": section_title,
+                "excerpt": excerpt,
+                "path": f"wiki/topics/{path.name}",
+                "score": score,
+            })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+
+    # 每個 topic 最多保留最高分的一個段落
+    seen: set = set()
+    deduped = []
+    for r in results:
+        if r["topic_title"] not in seen:
+            seen.add(r["topic_title"])
+            deduped.append(r)
+
+    return deduped[:limit]
+
+
 def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
                     index_file: Path = INDEX_FILE,
                     topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
@@ -518,58 +597,79 @@ def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE
     return results[:limit]
 
 
-def print_markdown(results: List[Dict[str, Any]], query: str) -> None:
-    if not results:
-        print("沒有找到適合主動召回的書籤。")
+def print_markdown(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
+        print("沒有找到適合主動召回的知識。")
         return
 
     print(f"# 對話主動召回結果\n")
     print(f"查詢：{query}\n")
-    for idx, item in enumerate(results, start=1):
-        print(f"## {idx}. {item['title']}")
-        print(f"- 分類：{item['category']}")
-        if item.get("tags"):
-            print(f"- 標籤：{', '.join(item['tags'][:8])}")
-        print(f"- 相關原因：{item['relevance_reason']}")
-        print(f"- 分數：{item['score']}")
-        if item.get("summary"):
-            print(f"- 一句話摘要：{item['summary'][:180]}")
-        if item.get("source_url"):
-            print(f"- 原文連結：{item['source_url']}")
-        print(f"- 檔案：{item['relative_path']}\n")
+
+    if wiki_hits:
+        print("## Wiki 知識層\n")
+        for hit in wiki_hits:
+            print(f"### {hit['topic_title']} — {hit['section_title']}")
+            print(f"{hit['excerpt']}")
+            print(f"- 來源：{hit['path']}\n")
+
+    if results:
+        print("## 原始卡片層\n")
+        for idx, item in enumerate(results, start=1):
+            print(f"### {idx}. {item['title']}")
+            print(f"- 分類：{item['category']}")
+            if item.get("tags"):
+                print(f"- 標籤：{', '.join(item['tags'][:8])}")
+            print(f"- 相關原因：{item['relevance_reason']}")
+            print(f"- 分數：{item['score']}")
+            if item.get("summary"):
+                print(f"- 一句話摘要：{item['summary'][:180]}")
+            if item.get("source_url"):
+                print(f"- 原文連結：{item['source_url']}")
+            print(f"- 檔案：{item['relative_path']}\n")
 
 
-def print_prompt(results: List[Dict[str, Any]], query: str) -> None:
-    if not results:
+def print_prompt(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
         print("NO_RECALL")
         return
 
-    print("你之前 X 書籤裡有幾篇可能相關的：")
-    for item in results:
-        print(f"- {item['title']}")
-        if item.get("summary"):
-            print(f"  摘要：{item['summary'][:120]}")
-        print(f"  為什麼相關：{item['relevance_reason']}")
-        if item.get("source_url"):
-            print(f"  原文：{item['source_url']}")
-        else:
-            print(f"  檔案：{item['relative_path']}")
+    if wiki_hits:
+        print("根據你的知識庫，這個主題有以下整理：")
+        for hit in wiki_hits:
+            print(f"- [{hit['topic_title']}] {hit['section_title']}：{hit['excerpt'][:120]}")
+
+    if results:
+        print("相關原始書籤：")
+        for item in results:
+            print(f"- {item['title']}")
+            if item.get("summary"):
+                print(f"  摘要：{item['summary'][:120]}")
+            print(f"  為什麼相關：{item['relevance_reason']}")
+            if item.get("source_url"):
+                print(f"  原文：{item['source_url']}")
+            else:
+                print(f"  檔案：{item['relative_path']}")
 
 
-def print_chat(results: List[Dict[str, Any]], query: str) -> None:
-    if not results:
+def print_chat(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
         print("NO_RECALL")
         return
 
-    top = results[:2]
-    print("你之前 X 書籤裡有篇相關的：")
-    for item in top:
-        summary = item.get("summary") or "這篇和你現在聊的主題接近。"
-        reason = item.get("relevance_reason") or "主題接近"
-        print(f"- {item['title']}：{summary[:90]}")
-        print(f"  為什麼相關：{reason}")
-        if item.get("source_url"):
-            print(f"  原文：{item['source_url']}")
+    if wiki_hits:
+        hit = wiki_hits[0]
+        print(f"[知識庫] {hit['topic_title']}：{hit['excerpt'][:120]}")
+
+    if results:
+        top = results[:2]
+        print("相關書籤：")
+        for item in top:
+            summary = item.get("summary") or "這篇和你現在聊的主題接近。"
+            reason = item.get("relevance_reason") or "主題接近"
+            print(f"- {item['title']}：{summary[:90]}")
+            print(f"  為什麼相關：{reason}")
+            if item.get("source_url"):
+                print(f"  原文：{item['source_url']}")
 
 
 def main() -> int:
@@ -587,6 +687,8 @@ def main() -> int:
                         help="Force keyword search even if vector index exists")
     parser.add_argument("--vector-file", default=str(VECTOR_FILE))
     parser.add_argument("--topic-profile-file", default=str(TOPIC_PROFILE_FILE))
+    parser.add_argument("--no-wiki", action="store_true",
+                        help="Skip wiki layer, search cards only")
     args = parser.parse_args()
 
     query = args.query or ""
@@ -596,10 +698,14 @@ def main() -> int:
         print("請提供 query", file=sys.stderr)
         return 1
 
-    # Auto-detect: use semantic if vector index exists, unless --no-semantic is set
+    # 第一層：wiki 知識層（先查合成知識）
+    wiki_hits: List[Dict[str, Any]] = []
+    if not args.no_wiki:
+        wiki_hits = wiki_recall(query, limit=2)
+
+    # 第二層：cards 細節層（semantic or keyword）
     vector_path = Path(args.vector_file)
     use_semantic = (not args.no_semantic) and (args.semantic or vector_path.exists())
-
     topic_profile_path = Path(args.topic_profile_file)
 
     search_mode = "keyword"
@@ -608,7 +714,6 @@ def main() -> int:
         if results:
             search_mode = "semantic"
         else:
-            # fallback to keyword if semantic returned nothing
             results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
             search_mode = "keyword_fallback"
     else:
@@ -620,16 +725,22 @@ def main() -> int:
         "keyword_fallback": "🔤 關鍵字搜尋（語意降級）",
     }
     if not args.json:
-        print(f"[搜尋模式：{_mode_labels.get(search_mode, search_mode)}]")
+        wiki_label = "" if args.no_wiki else f" + 📖 Wiki({'有' if wiki_hits else '無'}命中)"
+        print(f"[搜尋模式：{_mode_labels.get(search_mode, search_mode)}{wiki_label}]")
 
     if args.json:
-        print(json.dumps({"query": query, "results": results, "search_mode": search_mode}, ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "query": query,
+            "wiki_hits": wiki_hits,
+            "results": results,
+            "search_mode": search_mode,
+        }, ensure_ascii=False, indent=2))
     elif args.format == "prompt":
-        print_prompt(results, query)
+        print_prompt(wiki_hits, results, query)
     elif args.format == "chat":
-        print_chat(results, query)
+        print_chat(wiki_hits, results, query)
     else:
-        print_markdown(results, query)
+        print_markdown(wiki_hits, results, query)
     return 0
 
 
