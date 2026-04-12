@@ -31,8 +31,9 @@ INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
 MEMORY_DIR = WORKSPACE / "memory"
 
-LLM_API_URL = "https://api.openai.com/v1/chat/completions"
-LLM_MODEL = "gpt-4o-mini"
+LLM_API_BASE = os.getenv("LLM_API_URL", "https://api.minimax.io/anthropic")
+LLM_MODEL = os.getenv("LLM_MODEL", "MiniMax-M2.5")
+_USE_ANTHROPIC = "anthropic" in LLM_API_BASE or "minimax" in LLM_API_BASE
 
 
 def load_env_key() -> str:
@@ -45,24 +46,44 @@ def load_env_key() -> str:
 
 
 def llm_call(system: str, user: str, api_key: str) -> str:
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 2000,
-    }).encode()
-    req = urllib.request.Request(
-        LLM_API_URL,
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-    )
+    if _USE_ANTHROPIC:
+        payload = json.dumps({
+            "model": LLM_MODEL,
+            "max_tokens": 2000,
+            "temperature": 0.2,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }).encode()
+        req = urllib.request.Request(
+            f"{LLM_API_BASE}/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+        )
+    else:
+        payload = json.dumps({
+            "model": LLM_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2000,
+        }).encode()
+        req = urllib.request.Request(
+            LLM_API_BASE,
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read())
-    raw = data["choices"][0]["message"]["content"].strip()
-    # Strip <think>...</think> reasoning tokens (gpt-4o-mini / reasoning models)
+    if _USE_ANTHROPIC:
+        raw = data["content"][0]["text"].strip()
+    else:
+        raw = data["choices"][0]["message"]["content"].strip()
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     return raw
 
