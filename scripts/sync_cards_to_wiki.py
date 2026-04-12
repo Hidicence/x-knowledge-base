@@ -34,7 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-WIKI_DIR = WORKSPACE / "wiki"
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
 TOPICS_DIR = WIKI_DIR / "topics"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
