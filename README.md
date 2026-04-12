@@ -1,7 +1,7 @@
-# X Knowledge Base
+# X Knowledge Base (XKB)
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
-> A personal knowledge lifecycle system for AI agents -- from raw bookmarks to structured, reusable wiki.
+> A personal knowledge lifecycle system for AI agents — from raw bookmarks to structured, reusable wiki.
 > Works with any AI agent (Claude Code, OpenClaw, or any agent that can read a system prompt).
 
 [![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
@@ -11,33 +11,21 @@
 
 ## The Problem
 
-Every day we consume dozens of articles, threads, and insights. We bookmark them because they feel important. Six months later -- we cannot find them, cannot recall them, and have no idea what we actually learned.
+Every day we consume dozens of articles, threads, and insights. We bookmark them because they feel important. Six months later — we cannot find them, cannot recall them, and have no idea what we actually learned.
 
 Existing tools all assume you will manually retrieve knowledge when you need it. **But knowledge should know when you need it.**
 
-XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more -- it is to make what you have already consumed *reappear at the right moment* and *gradually sediment into durable understanding*.
+XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more — it is to make what you have already consumed *reappear at the right moment* and *gradually sediment into durable understanding*.
 
 ---
 
 ## How It Works
 
-Every knowledge card -- regardless of source -- uses the same 9-section structure:
-
-1. **核心問題與結論** -- What question does this answer?
-2. **Claim 等級** -- Attested / Scholarship / Inference
-3. **關鍵論點** -- Key arguments
-4. **False Friends** -- Terms with specific technical meaning here
-5. **驚訝點** -- What might surprise the reader?
-6. **與現有知識的關係** -- How does this relate to existing cards?
-7. **雙語摘要** -- ZH + EN bilingual summary (used for search index)
-8. **對使用者的價值** -- Actionable directions
-9. **原始來源** -- Source URL and related links
-
-The pipeline:
+### The Full Pipeline
 
 ```
 Input sources
-├── X/Twitter bookmarks        →  run_scan_worker.py / bookmark_enhancer.py
+├── X/Twitter bookmarks        →  run_scan_worker.py / run_bookmark_worker.py
 ├── YouTube playlists          →  fetch_youtube_playlist.py
 ├── GitHub forks/stars         →  fetch_github_repos.py
 ├── Local notes / markdown     →  local_ingest.py
@@ -47,33 +35,266 @@ Input sources
   scripts/_card_prompt.py   ← shared by ALL ingest scripts
   (unified 9-section card format, same prompt regardless of source)
         │
-        ▼
-knowledge cards + search index + vector index
+        ▼ (all LLM calls go through scripts/_llm.py)
+        │
+knowledge cards (memory/cards/*.md)
+        +
+search index (memory/bookmarks/search_index.json)
+        +
+vector index (memory/bookmarks/vector_index.json)  ← Gemini embeddings
+        │
+        ├── sync_enriched_index.py    backfill summaries from cards → index
+        └── build_vector_index.py     rebuild/update semantic vectors
         │
         ▼
-sync_cards_to_wiki.py + Absorb Gate
+  ┌─────────────────────────────────────────────────────────┐
+  │  Wiki Layer (wiki/topics/*.md)                          │
+  │                                                         │
+  │  sync_cards_to_wiki.py     external bookmark knowledge  │
+  │  distill_memory_to_wiki.py conversation memory insights │
+  │                            (daily cron, auto-staged)    │
+  └─────────────────────────────────────────────────────────┘
         │
         ▼
-wiki/topics/*.md  ←  durable, readable knowledge pages
+xkb_ask.py / Active Recall Layer
+Two-layer recall: wiki topics (synthesized) → cards (raw evidence)
         │
-     ┌──┴───────────────────────────────────────┐
-     │                                           │
-     ▼                                           ▼
-xkb_ask.py                         Active Recall Layer
-natural-language Q&A               knowledge surfaces during conversations
-     │
-     ▼
+        ▼
 demo/xkb-demo-ui/  ← Interactive graph explorer (Next.js)
 Knowledge Graph | Chat | Evidence Panel
 ```
 
+### Every Card Uses the Same 9-Section Structure
+
+| # | Section | Purpose |
+|---|---------|---------|
+| 1 | **核心問題與結論** | What question does this answer? What is the conclusion? |
+| 2 | **Claim 等級** | Attested / Scholarship / Inference — how reliable? |
+| 3 | **關鍵論點** | 3–5 key arguments extracted from the source |
+| 4 | **False Friends** | Terms with specific technical meaning in this context |
+| 5 | **驚訝點** | What might surprise a knowledgeable reader? |
+| 6 | **與現有知識的關係** | How does this relate to existing cards? |
+| 7 | **雙語摘要** | ZH + EN bilingual summary (used for search index) |
+| 8 | **對使用者的價值** | Actionable directions, relevant projects |
+| 9 | **原始來源** | Source URL and related links |
+
+One format, every source. A YouTube video, a GitHub repo, and a PubMed paper all produce the same card structure.
+
 ---
 
-## Demo UI -- Interactive Knowledge Graph
+## LLM Configuration
+
+XKB uses a **single unified LLM config**. All scripts share the same model — no scattered environment variables.
+
+### `config/llm.json` — change this one file to switch all scripts
+
+```json
+{
+  "model": "openai-codex/gpt-5.4"
+}
+```
+
+Available model formats (anything supported by `openclaw capability model run`):
+
+| Value | Provider |
+|-------|----------|
+| `openai-codex/gpt-5.4` | ChatGPT via OpenClaw OAuth |
+| `openai-codex/gpt-5.4-mini` | ChatGPT Mini via OpenClaw OAuth |
+| `MiniMax-M2.7` | MiniMax via API key |
+| `MiniMax-M2.5` | MiniMax M2.5 via API key |
+
+> **How it works:** All scripts call `scripts/_llm.py`, which invokes `openclaw capability model run`. OpenClaw handles all auth (OAuth token refresh, API keys) automatically. Scripts no longer need to manage API keys.
+
+> **Embedding is separate.** Semantic vector search uses Gemini (`GEMINI_API_KEY`) and is not affected by `config/llm.json`.
+
+### Standalone / non-OpenClaw setup
+
+If you are not using OpenClaw, override the model via environment variables:
+
+```bash
+export LLM_MODEL="MiniMax-M2.5"
+export LLM_API_URL="https://api.minimax.io/anthropic"
+export LLM_API_KEY="your-minimax-key"
+```
+
+> `LLM_MODEL` env var takes priority over `config/llm.json`.
+
+---
+
+## Wiki Layer
+
+The wiki is the **distilled output layer** — a readable, long-term knowledge base built from two sources:
+
+| Source | Script | What it adds |
+|--------|--------|--------------|
+| External bookmarks | `sync_cards_to_wiki.py` | Synthesized insights from cards via absorb gate |
+| Conversation memory | `distill_memory_to_wiki.py` | Decisions, workflows, principles from daily memory logs |
+
+### Single Canonical Source
+
+The wiki lives at `wiki/` inside the skill directory. The workspace symlinks to it:
+
+```
+~/.openclaw/workspace/wiki/  →  skills/x-knowledge-base/wiki/  (symlink)
+```
+
+This prevents dual-wiki drift: every tool reads from one place.
+
+### Memory → Wiki Distillation
+
+`distill_memory_to_wiki.py` reads recent `memory/YYYY-MM-DD.md` logs, uses LLM to extract insights worth long-term preservation, and either stages them for review or applies them to wiki topic pages.
+
+```bash
+# Preview what would be extracted from the last 3 days
+python3 scripts/distill_memory_to_wiki.py --dry-run --days 3
+
+# Stage candidates for review
+python3 scripts/distill_memory_to_wiki.py --stage --days 2
+
+# Apply all staged candidates (auto-approve)
+python3 scripts/distill_memory_to_wiki.py --apply \
+  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md \
+  --approve-all
+```
+
+Cron jobs run this automatically at 15:30 and 21:30 TST daily.
+
+### Health Check
+
+```bash
+python3 scripts/health_check_pipeline.py
+```
+
+Checks three things:
+1. `workspace/wiki` is a symlink to the canonical wiki (not a duplicate)
+2. Recall reads from the correct wiki path
+3. `search_index.json` summary coverage ≥ 70%, age < 26h; vector index freshness
+
+---
+
+## Active Recall Layer
+
+When a user sends a message, XKB uses **two-layer recall**:
+
+1. **Layer 1 — Wiki topics** (`wiki/topics/*.md`): synthesized, durable knowledge. Answers conceptual questions.
+2. **Layer 2 — Cards** (`memory/bookmarks/search_index.json` + `vector_index.json`): raw evidence. Provides specific citations and sources.
+
+```bash
+# Ask a question over your knowledge base
+python3 scripts/xkb_ask.py "What are alternatives to RAG?"
+python3 scripts/xkb_ask.py "What is the absorb gate?" --format chat
+python3 scripts/xkb_ask.py "agent memory design" --json
+```
+
+### As an MCP Tool (Claude Code / any MCP client)
+
+Add to `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "xkb-recall": {
+      "command": "python3",
+      "args": ["/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
+      "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
+    }
+  }
+}
+```
+
+---
+
+## Quick Start
+
+### With OpenClaw
+
+```bash
+# 1. Clone into your OpenClaw skills directory
+git clone https://github.com/Hidicence/x-knowledge-base \
+  ~/.openclaw/workspace/skills/x-knowledge-base
+
+# 2. The LLM is pre-configured via config/llm.json
+#    Edit it if you want a different model
+
+# 3. Run the demo
+bash scripts/xkb_demo.sh
+```
+
+### Standalone
+
+```bash
+export LLM_API_KEY="your-minimax-or-openai-key"
+export LLM_API_URL="https://api.minimax.io/anthropic"
+export LLM_MODEL="MiniMax-M2.5"
+export OPENCLAW_WORKSPACE="~/.openclaw/workspace"
+export GEMINI_API_KEY="your-gemini-key"   # optional, enables vector search
+
+bash scripts/xkb_demo.sh
+```
+
+---
+
+## Scripts Reference
+
+### Ingest Pipeline
+
+All scripts share `_card_prompt.py` and `_llm.py` — one prompt, one LLM call, one card format.
+
+| Script | Source | What it does |
+|--------|--------|-------------|
+| `run_scan_worker.py` | X/Twitter | Scans bookmarks for unenriched files → cards |
+| `run_bookmark_worker.py` | X/Twitter queue | Processes tiege-queue.json one item at a time |
+| `fetch_youtube_playlist.py` | YouTube | Playlist subtitles → knowledge cards |
+| `fetch_github_repos.py` | GitHub | Forks/stars → repo-level knowledge cards |
+| `local_ingest.py` | Local / PubMed | Markdown/txt/papers → cards |
+| `fetch_pubmed.py` | PubMed Central | Fetch open-access papers as markdown |
+| `_card_prompt.py` | *(shared)* | Unified prompt, card format, summary extraction |
+| `_llm.py` | *(shared)* | Unified LLM call via `openclaw capability model run` |
+
+### Index & Enrichment
+
+| Script | What it does |
+|--------|-------------|
+| `sync_enriched_index.py` | Backfill summaries/tags from enriched cards into search_index.json |
+| `build_vector_index.py` | Build/update Gemini semantic vector index |
+
+### Wiki Pipeline
+
+| Script | What it does |
+|--------|-------------|
+| `sync_cards_to_wiki.py` | Cards → wiki topic pages via LLM absorb gate |
+| `distill_memory_to_wiki.py` | Daily memory logs → wiki topic insights (stage/apply workflow) |
+| `sync_cards_to_wiki.py --review` | Review pending absorb decisions |
+| `lint_wiki.py` | Validate wiki structure, detect gap topics |
+| `topic_guide_generator.py` | Generate new wiki topic stubs |
+| `suggest_topic_map.py` | Suggest topic map updates from uncovered cards |
+
+### Active Recall Layer
+
+| Script | What it does |
+|--------|-------------|
+| `xkb_ask.py` | Natural-language Q&A: wiki (Layer 1) → cards (Layer 2) |
+| `recall_for_conversation.py` | Conversation-triggered recall (wiki + card search) |
+| `continuity_recall.py` | MEMORY.md + wiki lookup for session continuity |
+| `contrarian_recall.py` | Surfaces warnings, failures, counter-examples |
+| `action_recall.py` | Action-oriented recall (what to do next) |
+| `xkb_recall_server.py` | MCP server exposing recall as a tool |
+
+### Maintenance & Observability
+
+| Script | What it does |
+|--------|-------------|
+| `health_check_pipeline.py` | Wiki symlink integrity, recall source path, index freshness |
+| `status_knowledge_pipeline.py` | Full pipeline status in one view |
+| `health_check.py` | Semantic conflict detection, gap analysis |
+
+---
+
+## Demo UI — Interactive Knowledge Graph
 
 ```
 demo/
-├── xkb-demo-ui/              Next.js app -- three-column explorer
+├── xkb-demo-ui/              Next.js app — three-column explorer
 │   ├── app/page.tsx          Main layout: graph | chat | evidence
 │   ├── components/
 │   │   ├── KnowledgeGraph.tsx    Force-directed graph (react-force-graph-2d)
@@ -96,56 +317,7 @@ cd demo/xkb-demo-ui && npm install && npm run dev
 
 ---
 
-## Quick Start
-
-```bash
-export LLM_API_KEY="your-key"
-export LLM_API_URL="https://api.minimax.io/anthropic"
-export LLM_MODEL="MiniMax-M2.5"
-bash scripts/xkb_demo.sh
-```
-
----
-
-## Scripts Reference
-
-### Unified Ingest Pipeline
-
-All scripts share `_card_prompt.py` -- one prompt, one LLM call, one card format.
-
-| Script | Source | What it does |
-|--------|--------|-------------|
-| `run_scan_worker.py` | X/Twitter | Scans bookmarks for unenriched files → cards |
-| `bookmark_enhancer.py` | X/Twitter inbox | Processes inbox bookmarks |
-| `fetch_youtube_playlist.py` | YouTube | Playlist subtitles → knowledge cards |
-| `fetch_github_repos.py` | GitHub | Forks/stars → repo-level knowledge cards |
-| `local_ingest.py` | Local / PubMed | Markdown/txt/papers → cards |
-| `fetch_pubmed.py` | PubMed Central | Fetch open-access papers as markdown |
-| `_card_prompt.py` | *(shared)* | Unified prompt, LLM call, summary extraction |
-
-### Active Recall Layer
-
-| Script | What it does |
-|--------|-------------|
-| `recall_router.py` | Message → classify → route → structured output |
-| `conversation_state_parser.py` | Trigger classifier (no LLM, <5ms) |
-| `continuity_recall.py` | MEMORY.md + wiki lookup |
-| `contrarian_recall.py` | Surfaces warnings, failures, counter-examples |
-| `xkb_recall_server.py` | MCP server for AI agents |
-
-### Wiki and Knowledge Tools
-
-| Script | What it does |
-|--------|-------------|
-| `xkb_ask.py` | Natural-language Q&A over your knowledge base |
-| `sync_cards_to_wiki.py` | Cards → wiki topic pages (absorb gate) |
-| `build_vector_index.py` | Build/update semantic vector index |
-| `health_check.py` | Semantic conflict detection, gap analysis |
-| `status_knowledge_pipeline.py` | Full pipeline status in one view |
-
----
-
-## Setup Guide
+## Step-by-Step Setup
 
 ### 1. Ingest content
 
@@ -167,18 +339,26 @@ python3 scripts/fetch_pubmed.py "antimicrobial resistance" --limit 20 --out /tmp
 python3 scripts/local_ingest.py /tmp/papers/ --category research --tag pubmed
 ```
 
-### 2. Build and explore
+### 2. Enrich the index
 
 ```bash
+# Backfill summaries from enriched cards into search_index.json
+python3 scripts/sync_enriched_index.py
+
+# Build/update semantic vector index (Gemini)
 python3 scripts/build_vector_index.py --incremental
-python3 demo/generate_graph.py
-cd demo/xkb-demo-ui && npm run dev
 ```
 
 ### 3. Sync to wiki
 
 ```bash
+# Sync external knowledge (bookmark cards → wiki topics)
 python3 scripts/sync_cards_to_wiki.py --apply --limit 20
+
+# Distill conversation memory into wiki topics
+python3 scripts/distill_memory_to_wiki.py --stage --days 3
+python3 scripts/distill_memory_to_wiki.py --apply \
+  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
 ```
 
 ### 4. Ask
@@ -187,22 +367,35 @@ python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 python3 scripts/xkb_ask.py "What are the alternatives to RAG?"
 ```
 
+### 5. Check pipeline health
+
+```bash
+python3 scripts/health_check_pipeline.py
+```
+
+Expected output:
+```
+✅  wiki_canonical      workspace/wiki → skills/x-knowledge-base/wiki (symlink correct)
+✅  recall_wiki_source  Recall reads from canonical wiki
+✅  index_freshness     summary coverage: 212/270 (79%) | enriched: 218 | vectors: 471
+```
+
 ---
 
-## Active Recall as MCP Tool
+## Automated Pipeline (OpenClaw Cron)
 
-**Claude Code** -- add to `.claude/settings.json`:
-```json
-{
-  "mcpServers": {
-    "xkb-recall": {
-      "command": "python3",
-      "args": ["/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
-      "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
-    }
-  }
-}
-```
+When running with OpenClaw, the full pipeline runs automatically:
+
+| Schedule | Job | What it does |
+|----------|-----|-------------|
+| 13:30 TST | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → sync_enriched_index → build_vector_index |
+| 15:30 TST | `daily:wiki-distill-afternoon` | Distill today's memory into wiki candidates |
+| 21:30 TST | `daily:wiki-distill-evening` | Second distillation pass, apply high-confidence candidates |
+
+The pipeline ensures that after each ingestion run:
+1. `sync_enriched_index.py` backfills summaries from new cards
+2. `build_vector_index.py --incremental` updates semantic search
+3. New insights from conversations are automatically staged for wiki inclusion
 
 ---
 
@@ -210,19 +403,8 @@ python3 scripts/xkb_ask.py "What are the alternatives to RAG?"
 
 - Python 3.10+
 - Node.js 18+ (demo UI only)
-
-```bash
-export LLM_API_KEY="your-api-key"
-export LLM_API_URL="https://api.minimax.io/anthropic"
-export LLM_MODEL="MiniMax-M2.5"
-export OPENCLAW_WORKSPACE="~/.openclaw/workspace"
-# optional: GEMINI_API_KEY for semantic vector search
-```
-
-**Local-only mode** (no API calls):
-```bash
-python3 scripts/run_scan_worker.py --local-only
-```
+- OpenClaw (recommended) — handles all LLM auth and cron automation
+- `GEMINI_API_KEY` (optional) — enables semantic vector search
 
 ---
 
@@ -234,11 +416,12 @@ python3 scripts/run_scan_worker.py --local-only
 | v0.2 | ✅ | Multi-layer extraction, enrichment worker, vector index |
 | v0.3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation |
 | v0.4 | ✅ | Local notes ingest, ask layer, demo mode, auto topic-map |
-| v0.5 | ✅ | Absorb gate explainability |
+| v0.5 | ✅ | Absorb gate explainability, review-decisions log |
 | v0.6 | ✅ | Active Recall Layer: proactive recall, MCP server, telemetry |
 | v0.7 | ✅ | Claim levels, False Friends, bilingual summaries, academic PDF pipeline |
-| v0.8 | ✅ | Unified ingest pipeline (_card_prompt.py shared); demo UI (graph + chat) |
-| v0.9 | 🔜 | Proactive cross-linking on ingest, onboarding wizard |
+| v0.8 | ✅ | Unified ingest pipeline (_card_prompt.py); demo UI (graph + chat) |
+| v0.9 | ✅ | Two-layer recall (wiki first); unified LLM config; memory→wiki distillation pipeline; single canonical wiki; pipeline health check |
+| v1.0 | 🔜 | Proactive cross-linking on ingest; onboarding wizard; public release |
 
 ---
 
@@ -248,6 +431,8 @@ python3 scripts/run_scan_worker.py --local-only
 - **Layers, not one database.** Working memory, consolidation, capture, and output are separate problems.
 - **Quality gates over quantity.** The absorb gate keeps the wiki as a distilled output layer.
 - **Understanding over summarization.** Cards answer what question this solves, not what it says.
+- **Single source of truth.** One canonical wiki path, one LLM config file — no scattered settings.
+- **OpenClaw handles auth.** Scripts call `openclaw capability model run`; token management is not their problem.
 - **Personal data stays local.** Graph data, cards, and wiki are gitignored.
 
 ---
