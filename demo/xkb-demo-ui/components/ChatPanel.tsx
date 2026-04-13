@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import ReactMarkdown from 'react-markdown'
 
 interface CardRef { title: string; url: string }
 interface WikiRef  { slug: string; title: string }
@@ -19,8 +20,26 @@ interface Message {
   result?: AskResult
 }
 
+export interface RecallResult {
+  trigger_class: 'hard' | 'soft' | 'suppress'
+  state: string
+  delivery_mode: string
+  confidence: number
+  query: string
+  formatted_text: string
+  results: Array<{
+    source_type: string
+    source_file: string
+    section: string
+    excerpt: string
+    score: number
+    url?: string
+  }>
+}
+
 interface Props {
   onResult: (result: AskResult) => void
+  onRecall: (result: RecallResult) => void
 }
 
 const DEMO_QUESTIONS = [
@@ -35,7 +54,7 @@ const RECALL_PHASES = [
   { label: 'Composing answer…',              icon: '✍️' },
 ]
 
-export default function ChatPanel({ onResult }: Props) {
+export default function ChatPanel({ onResult, onRecall }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -56,6 +75,13 @@ export default function ChatPanel({ onResult }: Props) {
     const phaseDelay = 900
     const t1 = setTimeout(() => setPhase(1), phaseDelay)
     const t2 = setTimeout(() => setPhase(2), phaseDelay * 2)
+
+    // Fire active recall immediately (no LLM, fast) — updates Evidence panel right away
+    fetch('/api/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: query }),
+    }).then(r => r.json()).then(onRecall).catch(() => {})
 
     try {
       const res = await fetch('/api/ask', {
@@ -87,15 +113,21 @@ export default function ChatPanel({ onResult }: Props) {
               <p className="text-slate-400 text-sm mb-1">提問，從知識圖譜中召回答案</p>
               <p className="text-slate-600 text-xs">Try a demo question below</p>
             </div>
-            <div className="flex flex-col gap-2 w-full max-w-sm">
-              {DEMO_QUESTIONS.map(q => (
-                <button
+            <div className="flex flex-col gap-3 w-full max-w-sm">
+              {DEMO_QUESTIONS.map((q, i) => (
+                <motion.button
                   key={q}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.1 }}
+                  whileHover={{ scale: 1.02, x: 2 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => send(q)}
-                  className="text-left text-xs px-3 py-2 rounded-lg border border-slate-700 hover:border-violet-500 hover:bg-violet-950/30 text-slate-400 hover:text-slate-200 transition-all"
+                  className="text-left text-xs px-4 py-3 rounded-xl border border-white/5 bg-slate-900/40 backdrop-blur-sm hover:border-violet-500/50 hover:bg-violet-950/40 text-slate-400 hover:text-slate-200 hover:shadow-[0_0_15px_rgba(124,58,237,0.15)] transition-all flex items-center justify-between group"
                 >
                   {q}
-                </button>
+                  <span className="text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+                </motion.button>
               ))}
             </div>
           </div>
@@ -108,16 +140,32 @@ export default function ChatPanel({ onResult }: Props) {
             animate={{ opacity: 1, y: 0 }}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            <div className={`max-w-[88%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
+            <div className={`max-w-[92%] rounded-2xl px-5 py-3.5 text-[13px] leading-relaxed shadow-lg ${
               msg.role === 'user'
-                ? 'bg-violet-600/80 text-white'
-                : 'bg-slate-800/80 text-slate-200 border border-slate-700'
+                ? 'bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white shadow-violet-500/20 rounded-tr-sm'
+                : 'bg-slate-900/60 backdrop-blur-md text-slate-200 border border-white/5 shadow-black/20 rounded-tl-sm'
             }`}>
-              <p className="whitespace-pre-wrap">{msg.text}</p>
+              {msg.role === 'user' ? (
+                <p className="whitespace-pre-wrap">{msg.text}</p>
+              ) : (
+                <div className="md-body">
+                  <ReactMarkdown
+                    components={{
+                      a: ({ href, children }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 hover:underline transition-colors">
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
+                    {msg.text}
+                  </ReactMarkdown>
+                </div>
+              )}
               {msg.result && (
-                <div className="mt-2 pt-2 border-t border-slate-600 text-xs text-slate-400 flex flex-wrap gap-x-3">
-                  <span>📚 {msg.result.card_refs?.length ?? 0} cards</span>
-                  <span>🗂️ {msg.result.wiki_refs?.length ?? 0} topics</span>
+                <div className="mt-3 pt-3 border-t border-white/10 text-xs text-slate-400 flex flex-wrap gap-x-4">
+                  <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> {msg.result.card_refs?.length ?? 0} cards</span>
+                  <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-violet-500"></span> {msg.result.wiki_refs?.length ?? 0} topics</span>
                 </div>
               )}
             </div>
@@ -166,14 +214,14 @@ export default function ChatPanel({ onResult }: Props) {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-            placeholder="問一個問題…"
+            placeholder="Ask a question..."
             disabled={loading}
-            className="flex-1 bg-slate-800 border border-slate-700 focus:border-violet-500 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors disabled:opacity-50"
+            className="flex-1 bg-slate-900/50 backdrop-blur-sm border border-white/10 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 rounded-xl px-4 py-3 text-[13px] text-slate-200 placeholder-slate-500 outline-none transition-all disabled:opacity-50"
           />
           <button
             onClick={() => send()}
             disabled={loading || !input.trim()}
-            className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium transition-colors"
+            className="px-5 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-[13px] font-medium transition-colors hover:shadow-[0_0_15px_rgba(124,58,237,0.3)]"
           >
             Send
           </button>

@@ -119,14 +119,17 @@ def score_wiki_topic(topic: dict, query_tokens: list[str], query: str) -> float:
     return score
 
 
-def search_wiki_topics(query: str, limit: int = MAX_WIKI_TOPICS) -> list[dict]:
+def search_wiki_topics(query: str, limit: int = MAX_WIKI_TOPICS) -> tuple[list[dict], float]:
+    """Returns (hits, max_score)."""
     topics = load_wiki_topics()
     if not topics:
-        return []
+        return [], 0.0
     tokens = tokenize(query)
     scored = [(t, score_wiki_topic(t, tokens, query)) for t in topics]
     scored.sort(key=lambda x: x[1], reverse=True)
-    return [t for t, s in scored[:limit] if s > 0]
+    hits = [t for t, s in scored[:limit] if s > 0]
+    max_score = scored[0][1] if scored else 0.0
+    return hits, max_score
 
 
 def excerpt_wiki_topic(topic: dict, query_tokens: list[str], max_chars: int = MAX_WIKI_CHARS) -> str:
@@ -216,41 +219,110 @@ def search_cards(query: str, limit: int = MAX_CARDS) -> list[dict]:
 
 # ── Answer generation ─────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
-你是一個直接、有判斷力的助理。你平常會整理筆記和閱讀材料，回答問題時可以參考這些背景資料。
+WIKI_ENTRY_TMPL = "【{title}】\n{excerpt}"
+CARD_ENTRY_TMPL = "【{title}】\n{summary}"
+
+# ── Situation classifier ───────────────────────────────────────────────────────
+
+# Score threshold: below this, wiki content doesn't add enough → go direct
+WIKI_SCORE_THRESHOLD = 8.0
+
+_CONTINUITY_RE = re.compile(
+    r"(我們(之前|上次|說好|討論過|提到)|你(還)?記得|上次(說|講|討論)|之前(說|講|提到|決定)|"
+    r"我們(的系統|做的|設計的|定的)|XKB|recall.router|wiki.pipeline)",
+    re.IGNORECASE,
+)
+
+def classify_query(query: str, wiki_max_score: float, card_hits: list[dict]) -> str:
+    """
+    Classify query into one of three situations:
+    - 'continuity': asking about past discussions / decisions → wiki-primary
+    - 'enrichment': general question + wiki has relevant content → LLM base + wiki supplement
+    - 'direct':     general question, wiki has nothing to add → LLM only
+    """
+    if _CONTINUITY_RE.search(query):
+        return "continuity"
+    if wiki_max_score >= WIKI_SCORE_THRESHOLD or len(card_hits) >= 3:
+        return "enrichment"
+    return "direct"
+
+
+# ── System prompts per situation ───────────────────────────────────────────────
+
+# direct: LLM answers from its own knowledge, no wiki context involved
+PROMPT_DIRECT = """\
+你是一個在 AI、agent 架構、知識管理領域有長期積累的人。
+直接用自己的理解回答，語氣像在跟認識的朋友討論，直接有觀點。
+全程繁體中文，不出現簡體字，不加大標題，長度夠用就好。
+"""
+
+# enrichment: LLM base answer + wiki adds genuinely new angles
+PROMPT_ENRICHMENT = """\
+你是一個在 AI、agent 架構、知識管理領域有長期積累的人，同時有自己的研究積累。
 
 回答方式：
-- 先給結論，再補充細節
-- 語氣自然，像在跟認識的人說話，不要像在念報告
-- 全程用繁體中文，不要出現簡體字
-- 不要在答案裡提「知識庫」「卡片」「wiki」這些系統詞
-- 不要加 [W1]、[C1] 這類引用標記
-- 如果背景資料裡真的沒有相關內容，直接說不確定，不要硬掰
-- 背景資料裡可能有研究分析用的角色標籤（例如「圖書館員」「教練」「主動決策者」「被動記錄者」之類），這些是內部分析用語，不要直接引用，用你自己的話說清楚那個意思就好
-- 長度以夠回答為準，不用湊字數
+先用自己的通識理解回答這個問題，語氣自然，像在跟朋友討論。
+然後，如果下面提供的研究資料裡有你回答中沒有提到的新角度或具體案例，自然地補充進來。
+
+補充時的關鍵要求：
+- 引入研究資料的觀點時，要說明來源背景（「有個做了 100 天實驗的案例...」「某個工具的實測結果...」），不要無頭無尾直接說結論
+- 說完別人的觀點後，加上你自己的詮釋——為什麼這件事重要、背後的邏輯是什麼
+- 格式：「[來源背景]提到/發現 [觀點]。我覺得這背後的原因是...」
+- 研究資料裡的東西，只有在「你通識回答裡沒有的」時候才用，重複的不要再說一遍
+- 如果研究資料沒有真正新的東西，直接用通識回答就好，不要硬湊
+- 有相關連結就在最後附上 2~3 條，沒有就不附
+- 全程繁體中文，不提「知識庫」「卡片」「wiki」「筆記」，不加大標題
+"""
+
+# continuity: wiki is primary, LLM organizes and presents
+PROMPT_CONTINUITY = """\
+你是一個在 AI、agent 架構、知識管理領域有長期積累的人，同時有自己的研究筆記和過往討論記錄。
+
+有人在問你們之前討論過或研究過的東西。
+從你的研究記錄中整理出相關內容，直接回答。
+語氣自然，像在回憶一件你真的做過的事，不要像在朗讀文件。
+
+規則：全程繁體中文，不提「知識庫」「卡片」「wiki」，長度夠用就好。
 """
 
 CONTEXT_TMPL = """\
-以下是我整理過的相關背景資料，可以參考：
+以下是與這個問題相關的研究資料，裡面可能有你通識回答中沒有的新角度或具體案例：
 
 {context}
 
 ---
 
 {query}
-
-（用自己的話回答，不要引用上面的原文措辭）
 """
-
-WIKI_ENTRY_TMPL = "【{title}】\n{excerpt}"
-
-CARD_ENTRY_TMPL = "【{title}】\n{summary}"
 
 # Internal metaphor/role labels that appear in card summaries but shouldn't leak into answers
 _INTERNAL_LABELS = re.compile(
     r"(圖書館管理員|圖書館員|主動決策者|被動記錄者?|被動記錄|知識庫助理|主力維護者|偶爾的閱讀者)",
     re.UNICODE,
 )
+
+# Headings that signal internal system-status sections — strip entire section from wiki excerpts
+_INTERNAL_SECTION_HEADINGS = re.compile(
+    r"^#{1,3}\s*(未解決|待辦|TODO|這頁自身|系統狀態|治理|已知問題|open issue|roadmap 備注)",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _strip_internal_sections(text: str) -> str:
+    """Remove internal status/todo sections from wiki content before sending to LLM."""
+    lines = text.splitlines()
+    result = []
+    skip = False
+    for line in lines:
+        if _INTERNAL_SECTION_HEADINGS.match(line):
+            skip = True
+            continue
+        # Stop skipping when we hit the next same-or-higher heading
+        if skip and re.match(r"^#{1,3} ", line):
+            skip = False
+        if not skip:
+            result.append(line)
+    return "\n".join(result)
 
 
 def _strip_internal_labels(text: str) -> str:
@@ -264,27 +336,58 @@ def _strip_internal_labels(text: str) -> str:
     return text
 
 
+_SIMPLIFIED_TO_TRAD = str.maketrans(
+    "调这条记忆终样对现时间来实际问题后还没说应该因为就已经体验处理决定创建设计发现开始结束",
+    "調這條記憶終樣對現時間來實際問題後還沒說應該因為就已經體驗處理決定創建設計發現開始結束",
+)
+
+def _fix_simplified(text: str) -> str:
+    """Best-effort fix for common simplified Chinese characters that MiniMax M2.7 occasionally outputs."""
+    return text.translate(_SIMPLIFIED_TO_TRAD)
+
+
 def build_answer(query: str, wiki_hits: list[dict], card_hits: list[dict],
-                 query_tokens: list[str], api_key: str) -> str:
+                 query_tokens: list[str], api_key: str,
+                 situation: str = "enrichment") -> str:
+
+    # direct: no wiki context needed
+    if situation == "direct":
+        return _fix_simplified(llm_call(query, api_key, max_tokens=700, system=PROMPT_DIRECT))
+
+    # Build context from hits
     entries = []
+    source_links: list[tuple[str, str]] = []
+
     for t in wiki_hits:
-        excerpt = _strip_internal_labels(excerpt_wiki_topic(t, query_tokens))
+        raw_excerpt = excerpt_wiki_topic(t, query_tokens)
+        excerpt = _strip_internal_labels(_strip_internal_sections(raw_excerpt))
         entries.append(WIKI_ENTRY_TMPL.format(
             title=t["title"], excerpt=excerpt[:MAX_WIKI_CHARS]))
+
     for c in card_hits:
         summary = _strip_internal_labels(c["summary"][:MAX_CARD_CHARS])
         entries.append(CARD_ENTRY_TMPL.format(
             title=c["title"], summary=summary))
+        url = c.get("source_url", "")
+        if url and c.get("title"):
+            source_links.append((c["title"], url))
 
     if not entries:
-        return "這方面我目前沒有足夠的資料，說不準。"
+        return _fix_simplified(llm_call(query, api_key, max_tokens=700, system=PROMPT_DIRECT))
 
+    links_block = ""
+    if source_links and situation == "enrichment":
+        links_block = "\n\n可用連結（只選真正相關的，最多挑 3 條）：\n" + "\n".join(
+            f"- [{t}]({u})" for t, u in source_links[:5]
+        )
+
+    system = PROMPT_CONTINUITY if situation == "continuity" else PROMPT_ENRICHMENT
     prompt = CONTEXT_TMPL.format(
-        context="\n\n".join(entries),
+        context="\n\n".join(entries) + links_block,
         query=query,
     )
-    answer = llm_call(prompt, api_key, max_tokens=900, system=SYSTEM_PROMPT)
-    return _strip_internal_labels(answer)
+    answer = llm_call(prompt, api_key, max_tokens=900, system=system)
+    return _fix_simplified(_strip_internal_labels(answer))
 
 
 # ── Output formatting ─────────────────────────────────────────────────────────
@@ -350,12 +453,13 @@ def main() -> int:
     api_key = ""  # auth handled by _llm.py
     query_tokens = tokenize(query)
 
-    wiki_hits = [] if args.no_wiki  else search_wiki_topics(query, args.max_wiki)
+    wiki_hits, wiki_max_score = ([], 0.0) if args.no_wiki else search_wiki_topics(query, args.max_wiki)
     card_hits = [] if args.no_cards else search_cards(query, args.max_cards)
 
-    print(f"[搜尋結果] wiki topics: {len(wiki_hits)}, cards: {len(card_hits)}", file=sys.stderr)
+    situation = classify_query(query, wiki_max_score, card_hits)
+    print(f"[搜尋結果] wiki topics: {len(wiki_hits)}, cards: {len(card_hits)}, situation: {situation}", file=sys.stderr)
 
-    answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key)
+    answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key, situation)
 
     if args.json:
         output = {

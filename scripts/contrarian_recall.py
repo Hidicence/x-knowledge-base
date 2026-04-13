@@ -123,7 +123,10 @@ def _search_file(
 
     # Remove frontmatter
     content = re.sub(r"^---\n.*?\n---\n", "", content, flags=re.DOTALL).strip()
-    rel_path = str(path.relative_to(rel_base))
+    try:
+        rel_path = str(path.relative_to(rel_base))
+    except ValueError:
+        rel_path = str(path)
     results = []
 
     for title, body in _split_sections(content):
