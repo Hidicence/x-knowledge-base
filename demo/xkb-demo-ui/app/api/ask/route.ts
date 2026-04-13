@@ -1,32 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { spawn } from 'child_process'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import { join } from 'path'
 
-const XKB_DIR = '/root/.openclaw/workspace/skills/x-knowledge-base'
-
-function runAsk(query: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('python3', ['scripts/xkb_ask.py', query, '--json'], {
-      cwd: XKB_DIR,
-      env: {
-        ...process.env,
-        OPENCLAW_WORKSPACE: '/root/.openclaw/workspace',
-        PATH: process.env.PATH || '/usr/bin:/bin',
-      },
-    })
-
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => (stdout += d))
-    child.stderr.on('data', (d) => (stderr += d))
-    child.on('close', (code) => {
-      // xkb_ask prints "[搜尋結果]..." to stderr or stdout before JSON
-      // extract the JSON block
-      const jsonMatch = stdout.match(/(\{[\s\S]*\})\s*$/)
-      if (jsonMatch) resolve(jsonMatch[1])
-      else reject(new Error(`xkb_ask failed (code ${code}): ${stderr}`))
-    })
-  })
-}
+const execAsync = promisify(exec)
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,12 +11,49 @@ export async function POST(req: NextRequest) {
     if (!query || typeof query !== 'string') {
       return NextResponse.json({ error: 'query required' }, { status: 400 })
     }
-    // Basic sanitization — strip shell metacharacters for safety
-    const safeQuery = query.replace(/[`$\\|;&><]/g, '').slice(0, 300)
-    const raw = await runAsk(safeQuery)
-    const result = JSON.parse(raw)
-    return NextResponse.json(result)
+
+    // Default to workspace root assuming we run NPM from demo/xkb-demo-ui
+    const workspaceDir = process.env.OPENCLAW_WORKSPACE || join(process.cwd(), '..', '..')
+    const pythonScript = join(workspaceDir, 'scripts', 'xkb_ask.py')
+
+    console.log(`Executing: python ${pythonScript} "${query}" --json`)
+
+    // We pass any LLM API keys via environment variables
+    const env = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', OPENCLAW_WORKSPACE: workspaceDir }
+    
+    const { stdout, stderr } = await execAsync(`python "${pythonScript}" "${query}" --json`, {
+      env,
+      cwd: workspaceDir,
+    })
+
+    if (stderr) {
+      console.warn('xkb_ask.py stderr:', stderr)
+    }
+
+    // Try to parse the JSON output from the python script
+    try {
+      // Find where the JSON starts in case of debug outputs
+      const jsonStart = stdout.indexOf('{')
+      const jsonEnd = stdout.lastIndexOf('}')
+      if (jsonStart >= 0 && jsonEnd >= 0) {
+        const jsonStr = stdout.slice(jsonStart, jsonEnd + 1)
+        const result = JSON.parse(jsonStr)
+        return NextResponse.json(result)
+      } else {
+        throw new Error("No JSON found in output")
+      }
+    } catch (parseError) {
+      console.error("Python script output was not valid JSON:", stdout)
+      return NextResponse.json({ 
+        query, 
+        answer: '⚠️ Error parsing backend response. Please check terminal logs.',
+        card_refs: [],
+        wiki_refs: []
+      }, { status: 500 })
+    }
+
   } catch (err: any) {
+    console.error("Ask API error:", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
