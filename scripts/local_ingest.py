@@ -31,6 +31,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from _card_prompt import gbrain_put as _gbrain_put
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
     os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
@@ -324,6 +327,7 @@ def process_file(
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     card_path = CARDS_DIR / f"{card_id}.md"
     card_path.write_text(card_content, encoding="utf-8")
+    _gbrain_put(card_path, card_id)
     print(f"     💾 cards/{card_id}.md")
 
     # Build index item

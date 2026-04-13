@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import os
@@ -22,9 +23,29 @@ import re
 import sys
 from pathlib import Path
 
+# Ensure UTF-8 output on Windows (prevents cp950 encoding errors)
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_backend
+
+# ── gbrain bridge (optional) ──────────────────────────────────────────────────
+_GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
+_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+if not _GEMINI_KEY:
+    try:
+        import json as _j
+        _cfg = Path.home() / ".openclaw" / "openclaw.json"
+        if _cfg.exists():
+            _GEMINI_KEY = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
+    except Exception:
+        pass
+
+_GBRAIN_AVAILABLE = _GBRAIN_DIR.exists() and bool(_GEMINI_KEY)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
@@ -190,6 +211,58 @@ def score_card(item: dict, tokens: list[str], query: str) -> float:
     if query.lower() in blob: score += 8
     if item.get("summary"): score += 2
     return score
+
+
+def search_cards_gbrain(query: str, limit: int = MAX_CARDS) -> list[dict]:
+    """Use gbrain hybrid search (RRF + Gemini) instead of keyword index."""
+    try:
+        from gbrain_recall import gbrain_query
+    except ImportError:
+        return []
+
+    try:
+        raw = gbrain_query(query, limit=limit)
+    except Exception:
+        return []
+
+    results = []
+    for r in raw:
+        title = r.get("title", "").strip()
+        chunk = r.get("chunk_text", "")
+
+        # If title is just a numeric slug (tweet ID), extract from chunk heading
+        if not title or re.fullmatch(r"\d{10,}", title):
+            m = re.search(r"^#\s+(.+)$", chunk, re.MULTILINE)
+            if m:
+                title = m.group(1).strip()
+            else:
+                # Try 雙語摘要 first sentence as fallback title
+                m2 = re.search(r"雙語摘要[^:：]*[：:]\s*\n[中英En][^：:]+[：:]?\s*(.+)", chunk)
+                if m2:
+                    title = m2.group(1).strip()[:60]
+                else:
+                    continue  # no usable title, skip
+
+        # Extract 雙語摘要 section as summary, fall back to first 300 chars
+        summary = ""
+        m = re.search(r"雙語摘要[：:]\s*\n(.*?)(?=\n##|\Z)", chunk, re.DOTALL)
+        if m:
+            summary = m.group(1).strip()[:300]
+        if not summary:
+            # Strip frontmatter/heading
+            body = re.sub(r"^---\n.*?\n---\n", "", chunk, flags=re.DOTALL)
+            body = re.sub(r"^#.*\n", "", body).strip()
+            summary = body[:300]
+
+        results.append({
+            "title": title,
+            "summary": clean_summary(summary),
+            "category": r.get("type", ""),
+            "tags": [],
+            "source_url": r.get("source_url", ""),
+            "relative_path": "",
+        })
+    return results
 
 
 def search_cards(query: str, limit: int = MAX_CARDS) -> list[dict]:
@@ -437,11 +510,12 @@ def main() -> int:
     parser.add_argument("query", nargs="?", help="問題")
     parser.add_argument("--format", choices=["full", "chat"], default="full",
                         help="輸出格式（full=詳細, chat=簡潔）")
-    parser.add_argument("--no-wiki",  action="store_true", help="不搜 wiki topics")
-    parser.add_argument("--no-cards", action="store_true", help="不搜知識卡片")
-    parser.add_argument("--json",     action="store_true", help="輸出 JSON")
-    parser.add_argument("--max-wiki",  type=int, default=MAX_WIKI_TOPICS)
-    parser.add_argument("--max-cards", type=int, default=MAX_CARDS)
+    parser.add_argument("--no-wiki",    action="store_true", help="不搜 wiki topics")
+    parser.add_argument("--no-cards",   action="store_true", help="不搜知識卡片")
+    parser.add_argument("--no-gbrain",  action="store_true", help="強制使用 keyword 搜尋，不用 gbrain")
+    parser.add_argument("--json",       action="store_true", help="輸出 JSON")
+    parser.add_argument("--max-wiki",   type=int, default=MAX_WIKI_TOPICS)
+    parser.add_argument("--max-cards",  type=int, default=MAX_CARDS)
     args = parser.parse_args()
 
     query = (args.query or "").strip()
@@ -453,11 +527,15 @@ def main() -> int:
     api_key = ""  # auth handled by _llm.py
     query_tokens = tokenize(query)
 
+    use_gbrain = _GBRAIN_AVAILABLE and not args.no_gbrain
+    card_search_fn = search_cards_gbrain if use_gbrain else search_cards
+    card_backend = "gbrain⚡" if use_gbrain else "keyword"
+
     wiki_hits, wiki_max_score = ([], 0.0) if args.no_wiki else search_wiki_topics(query, args.max_wiki)
-    card_hits = [] if args.no_cards else search_cards(query, args.max_cards)
+    card_hits = [] if args.no_cards else card_search_fn(query, args.max_cards)
 
     situation = classify_query(query, wiki_max_score, card_hits)
-    print(f"[搜尋結果] wiki topics: {len(wiki_hits)}, cards: {len(card_hits)}, situation: {situation}", file=sys.stderr)
+    print(f"[搜尋結果] wiki topics: {len(wiki_hits)}, cards: {len(card_hits)}, cards_backend: {card_backend}, situation: {situation}", file=sys.stderr)
 
     answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key, situation)
 

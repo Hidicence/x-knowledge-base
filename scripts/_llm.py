@@ -30,6 +30,27 @@ _ENV_MODEL = os.getenv("LLM_MODEL", "")
 _DIRECT_API_URL = os.getenv("LLM_API_URL", "")
 _DIRECT_API_KEY = os.getenv("LLM_API_KEY", "")
 
+# Fallback: read LLM config from ~/.openclaw/openclaw.json
+# Priority: env vars > openclaw.json (MiniMax) > Gemini
+if not _DIRECT_API_URL or not _DIRECT_API_KEY:
+    try:
+        _oclaw_cfg = Path.home() / ".openclaw" / "openclaw.json"
+        if _oclaw_cfg.exists():
+            import json as _j
+            _oclaw_env = _j.loads(_oclaw_cfg.read_text(encoding="utf-8")).get("env", {})
+            _DIRECT_API_URL = _DIRECT_API_URL or _oclaw_env.get("LLM_API_URL", "")
+            _DIRECT_API_KEY = _DIRECT_API_KEY or _oclaw_env.get("LLM_API_KEY", "")
+            _ENV_MODEL = _ENV_MODEL or _oclaw_env.get("LLM_MODEL", "")
+            # Gemini last-resort fallback
+            if not _DIRECT_API_URL or not _DIRECT_API_KEY:
+                _gk = _oclaw_env.get("GEMINI_API_KEY", "")
+                if _gk:
+                    _DIRECT_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+                    _DIRECT_API_KEY = _gk
+                    _ENV_MODEL = _ENV_MODEL or "gemini-2.5-pro"
+    except Exception:
+        pass
+
 
 def _load_model() -> str:
     if _ENV_MODEL:
@@ -60,8 +81,37 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
     url = _DIRECT_API_URL.rstrip("/")
     # Use Anthropic format only when URL explicitly contains "/anthropic"
     is_anthropic = "/anthropic" in url
+    is_gemini = "generativelanguage.googleapis.com" in url
 
-    if is_anthropic:
+    if is_gemini:
+        # Gemini native generateContent format
+        if ":generateContent" not in url:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        # model var not used for URL when generateContent already in URL
+        url = f"{url}?key={_DIRECT_API_KEY}"
+        parts_text = (f"{system.strip()}\n\n" if system else "") + user.strip()
+        payload = {"contents": [{"parts": [{"text": parts_text}]}]}
+        headers = {"Content-Type": "application/json"}
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        import time as _time
+        _last_err = None
+        for _attempt in range(5):
+            if _attempt:
+                _time.sleep(8 * _attempt)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except urllib.error.HTTPError as _he:
+                _body = _he.read().decode()[:200]
+                _last_err = RuntimeError(f"Direct API call failed: {_he!r} body={_body}")
+                if _he.code not in (429, 503):
+                    raise _last_err
+            except Exception as _e:
+                raise RuntimeError(f"Direct API call failed: {_e!r}")
+        raise _last_err  # type: ignore
+    elif is_anthropic:
         # Anthropic messages format
         if not url.endswith("/messages"):
             url = url + "/messages"

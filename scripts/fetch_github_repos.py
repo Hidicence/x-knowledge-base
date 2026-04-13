@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
-    llm_call as _llm_call, SOURCE_LABELS,
+    llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
 )
 SOURCE_LABELS["github_fork"] = "GitHub 倉庫（Fork）"
 SOURCE_LABELS["github_star"] = "GitHub 倉庫（Star）"
@@ -237,6 +237,7 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
         # Save LLM card to memory/cards/
         card_path = CARDS_DIR / f"{card_id}.md"
         card_path.write_text(card_content, encoding="utf-8")
+        _gbrain_put(card_path, card_id)
         print(f"     💾 memory/cards/{card_id}.md")
 
         # Build index item
