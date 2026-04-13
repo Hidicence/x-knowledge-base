@@ -8,6 +8,7 @@ One unified 9-section format, source_type adapts per script.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -16,6 +17,47 @@ from typing import Any
 # ── Unified LLM helper (config/llm.json → single model setting) ──────────────
 sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_call
+
+# ── gbrain integration ────────────────────────────────────────────────────────
+_GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
+_GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts")
+_GBRAIN_AVAILABLE = (_GBRAIN_DIR / "src" / "cli.ts").exists()
+
+_GBRAIN_ENV: dict[str, str] = {**os.environ}
+if not _GBRAIN_ENV.get("GEMINI_API_KEY"):
+    try:
+        import json as _j
+        _cfg = Path.home() / ".openclaw" / "openclaw.json"
+        if _cfg.exists():
+            _k = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
+            if _k:
+                _GBRAIN_ENV["GEMINI_API_KEY"] = _k
+    except Exception:
+        pass
+
+
+def gbrain_put(card_path: Path, slug: str) -> bool:
+    """Push a card to gbrain and trigger embedding. Returns True on success."""
+    if not _GBRAIN_AVAILABLE:
+        return False
+    try:
+        import subprocess as _sp
+        content = card_path.read_text(encoding="utf-8")
+        r = _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "put", slug],
+            input=content, capture_output=True, text=True,
+            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=30,
+        )
+        if r.returncode != 0:
+            return False
+        _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "embed", slug],
+            capture_output=True, text=True,
+            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=60,
+        )
+        return True
+    except Exception:
+        return False
 
 # ── Shared system prompt ──────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
@@ -158,7 +200,24 @@ def extract_summary(card: str) -> str:
 # ── Related context search ────────────────────────────────────────────────────
 
 def find_related_context(content: str, existing_items: list[dict], top_k: int = 3) -> str:
-    """Keyword search against existing index items; returns formatted string for section 6."""
+    """Find related cards for context injection.
+    Uses gbrain hybrid search if available, falls back to keyword search against existing_items."""
+    if _GBRAIN_AVAILABLE:
+        try:
+            from gbrain_recall import gbrain_query
+            query = content[:300].replace("\n", " ").strip()
+            results = gbrain_query(query, limit=top_k, no_expand=True)
+            if results:
+                lines = []
+                for r in results:
+                    title = r.get("title", r.get("slug", ""))[:60]
+                    chunk = r.get("chunk_text", "")[:100].replace("\n", " ")
+                    lines.append(f"- **{title}**：{chunk}")
+                return "\n".join(lines)
+        except Exception:
+            pass
+
+    # Keyword fallback
     stopwords = {
         "的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
         "this", "that", "with", "from", "have", "will", "for", "and", "the", "a",

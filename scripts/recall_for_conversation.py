@@ -337,6 +337,55 @@ def _display_title(item: dict) -> str:
             return first + "…"
     return title or "(untitled)"
 
+def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Recall via gbrain hybrid search (pgvector RRF + Gemini).
+    Returns same format as semantic_recall() for drop-in replacement.
+    Falls back silently if gbrain is not available.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from gbrain_recall import gbrain_query
+    except ImportError:
+        return []
+
+    try:
+        raw = gbrain_query(query, limit=limit)
+    except RuntimeError:
+        return []
+
+    results = []
+    for item in raw:
+        chunk = item.get("chunk_text", "")
+        # Extract title from first markdown heading
+        title_m = re.search(r"^#\s+(.+)$", chunk, re.MULTILINE)
+        title = title_m.group(1).strip() if title_m else item.get("title") or item.get("slug", "")
+
+        # Extract summary from 雙語摘要 ZH line
+        zh_m = re.search(r"ZH[:\s]+(.+?)(?:\n|EN:|$)", chunk, re.IGNORECASE)
+        summary = zh_m.group(1).strip() if zh_m else chunk[:120].replace("\n", " ").strip()
+
+        source_url = item.get("source_url") or ""
+        score = item.get("score", 0.0)
+        slug = item.get("slug", "")
+
+        results.append({
+            "title": title,
+            "summary": summary,
+            "category": item.get("type", "knowledge-card"),
+            "tags": [],
+            "relative_path": f"cards/{slug}.md",
+            "source_url": source_url,
+            "score": round(score, 4),
+            "topic_boost": 0.0,
+            "matched_categories": [],
+            "matched_tags": [],
+            "ranking_adjustments": {},
+            "relevance_reason": f"gbrain 語意+關鍵字混合 RRF ({score:.4f})",
+        })
+    return results
+
+
 def wiki_recall(query: str, limit: int = 2) -> List[Dict[str, Any]]:
     """第一層召回：從 wiki/topics/*.md 找合成知識段落。"""
     if not WIKI_TOPICS_DIR.exists():
@@ -685,6 +734,8 @@ def main() -> int:
                         help="Force semantic search (default: auto-detect)")
     parser.add_argument("--no-semantic", action="store_true",
                         help="Force keyword search even if vector index exists")
+    parser.add_argument("--gbrain", action="store_true",
+                        help="Use gbrain hybrid search backend (pgvector + RRF + Gemini)")
     parser.add_argument("--vector-file", default=str(VECTOR_FILE))
     parser.add_argument("--topic-profile-file", default=str(TOPIC_PROFILE_FILE))
     parser.add_argument("--no-wiki", action="store_true",
@@ -703,13 +754,24 @@ def main() -> int:
     if not args.no_wiki:
         wiki_hits = wiki_recall(query, limit=2)
 
-    # 第二層：cards 細節層（semantic or keyword）
+    # 第二層：cards 細節層（gbrain > semantic > keyword）
     vector_path = Path(args.vector_file)
-    use_semantic = (not args.no_semantic) and (args.semantic or vector_path.exists())
     topic_profile_path = Path(args.topic_profile_file)
 
+    # Auto-detect gbrain: use if GBRAIN_DIR exists + GEMINI_API_KEY available, or --gbrain flag
+    _gbrain_dir = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
+    _gemini_key = os.getenv("GEMINI_API_KEY")
+    use_gbrain = args.gbrain or (not args.no_semantic and _gbrain_dir.exists() and bool(_gemini_key))
+
     search_mode = "keyword"
-    if use_semantic:
+    if use_gbrain:
+        results = gbrain_semantic_recall(query, args.limit)
+        if results:
+            search_mode = "gbrain"
+        else:
+            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
+            search_mode = "keyword_fallback"
+    elif (not args.no_semantic) and (args.semantic or vector_path.exists()):
         results = semantic_recall(query, args.limit, vector_path, Path(args.index_file), topic_profile_path)
         if results:
             search_mode = "semantic"
@@ -720,6 +782,7 @@ def main() -> int:
         results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
 
     _mode_labels = {
+        "gbrain": "⚡ gbrain 混合搜尋（RRF + Gemini）",
         "semantic": "🔍 語意向量搜尋",
         "keyword": "🔤 關鍵字搜尋",
         "keyword_fallback": "🔤 關鍵字搜尋（語意降級）",

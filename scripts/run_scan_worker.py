@@ -28,7 +28,7 @@ from pathlib import Path
 
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
-from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call
+from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
@@ -226,6 +226,7 @@ def main() -> None:
 
             card_path = CARDS_DIR / f"{card_id}.md"
             card_path.write_text(text, encoding="utf-8")
+            _gbrain_put(card_path, card_id)
             results["done"] += 1
             print("✓ done")
         except Exception as exc:
