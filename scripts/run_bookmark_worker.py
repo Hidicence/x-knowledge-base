@@ -173,7 +173,7 @@ def _find_related_context_gbrain(bookmark_content: str, top_k: int = 3) -> str:
     """Use gbrain hybrid search (RRF + Gemini) to find related cards."""
     try:
         sys.path.insert(0, str(Path(__file__).parent))
-        from gbrain_recall import gbrain_query
+        from xbrain_recall import xbrain_query as gbrain_query
         # Use first 300 chars of content as query
         query = bookmark_content[:300].replace("\n", " ").strip()
         results = gbrain_query(query, limit=top_k, no_expand=True)
