@@ -18,27 +18,27 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_call
 
-# ── gbrain integration ────────────────────────────────────────────────────────
-_GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
-_GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts")
-_GBRAIN_AVAILABLE = (_GBRAIN_DIR / "src" / "cli.ts").exists()
-
-_GBRAIN_ENV: dict[str, str] = {**os.environ}
-if not _GBRAIN_ENV.get("GEMINI_API_KEY"):
-    try:
-        import json as _j
-        _cfg = Path.home() / ".openclaw" / "openclaw.json"
-        if _cfg.exists():
-            _k = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
-            if _k:
-                _GBRAIN_ENV["GEMINI_API_KEY"] = _k
-    except Exception:
-        pass
+# ── XBrain integration (path resolved by xbrain_recall, never hardcoded) ────
+try:
+    from xbrain_recall import (
+        GBRAIN_DIR as _GBRAIN_DIR_OR_NONE,
+        GBRAIN_AVAILABLE as _GBRAIN_AVAILABLE,
+        GEMINI_API_KEY as _GEMINI_API_KEY,
+        _make_subprocess_env,
+    )
+    _GBRAIN_DIR = _GBRAIN_DIR_OR_NONE
+    _GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts") if _GBRAIN_DIR else ""
+    _GBRAIN_ENV = _make_subprocess_env(semantic=True)
+except ImportError:
+    _GBRAIN_DIR = None
+    _GBRAIN_CLI = ""
+    _GBRAIN_AVAILABLE = False
+    _GBRAIN_ENV = {**os.environ}
 
 
 def gbrain_put(card_path: Path, slug: str) -> bool:
     """Push a card to gbrain and trigger embedding. Returns True on success."""
-    if not _GBRAIN_AVAILABLE:
+    if not _GBRAIN_AVAILABLE or not _GBRAIN_DIR or not _GBRAIN_CLI:
         return False
     try:
         import subprocess as _sp
@@ -204,7 +204,7 @@ def find_related_context(content: str, existing_items: list[dict], top_k: int = 
     Uses gbrain hybrid search if available, falls back to keyword search against existing_items."""
     if _GBRAIN_AVAILABLE:
         try:
-            from gbrain_recall import gbrain_query
+            from xbrain_recall import xbrain_query as gbrain_query
             query = content[:300].replace("\n", " ").strip()
             results = gbrain_query(query, limit=top_k, no_expand=True)
             if results:

@@ -345,7 +345,7 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     """
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from gbrain_recall import gbrain_query
+        from xbrain_recall import xbrain_query as gbrain_query
     except ImportError:
         return []
 

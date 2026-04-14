@@ -216,7 +216,7 @@ def score_card(item: dict, tokens: list[str], query: str) -> float:
 def search_cards_gbrain(query: str, limit: int = MAX_CARDS) -> list[dict]:
     """Use gbrain hybrid search (RRF + Gemini) instead of keyword index."""
     try:
-        from gbrain_recall import gbrain_query
+        from xbrain_recall import xbrain_query as gbrain_query
     except ImportError:
         return []
 

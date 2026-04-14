@@ -40,13 +40,23 @@ GENERIC_CATEGORIES = {
     "general", "99-general", "other", "misc", "uncategorized"
 }
 
-CATEGORY_ALIASES = {
-    "01-openclaw-workflows": "openclaw-workflows",
-    "02-seo-geo": "seo-geo",
-    "03-video-prompts": "video-prompts",
-    "04-ai-tools-agents": "ai-tools-agents",
-    "05-startup-business": "startup-business",
-}
+def _build_category_aliases(bookmarks_dir: Path) -> dict[str, str]:
+    """Dynamically build aliases by stripping NN- prefix from bookmark subdirs.
+    E.g. '01-openclaw-workflows' → 'openclaw-workflows'
+    Falls back to empty dict if directory doesn't exist yet.
+    """
+    aliases: dict[str, str] = {}
+    if not bookmarks_dir.is_dir():
+        return aliases
+    for d in bookmarks_dir.iterdir():
+        if d.is_dir() and re.match(r"^\d{2,3}-", d.name):
+            clean = re.sub(r"^\d{2,3}-", "", d.name)
+            if clean:
+                aliases[d.name] = clean
+    return aliases
+
+
+CATEGORY_ALIASES = _build_category_aliases(BOOKMARKS_DIR)
 
 
 def load_items(index_path: Path) -> list[dict]:
