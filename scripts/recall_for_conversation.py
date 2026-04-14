@@ -758,10 +758,14 @@ def main() -> int:
     vector_path = Path(args.vector_file)
     topic_profile_path = Path(args.topic_profile_file)
 
-    # Auto-detect gbrain: use if GBRAIN_DIR exists + GEMINI_API_KEY available, or --gbrain flag
-    _gbrain_dir = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
-    _gemini_key = os.getenv("GEMINI_API_KEY")
-    use_gbrain = args.gbrain or (not args.no_semantic and _gbrain_dir.exists() and bool(_gemini_key))
+    # Auto-detect gbrain: read config from xbrain_recall (openclaw.json + env vars)
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xbrain_recall import GBRAIN_AVAILABLE as _gbrain_available, GEMINI_API_KEY as _gemini_key
+    except ImportError:
+        _gbrain_available = False
+        _gemini_key = ""
+    use_gbrain = args.gbrain or (not args.no_semantic and _gbrain_available and bool(_gemini_key))
 
     search_mode = "keyword"
     if use_gbrain:
