@@ -37,23 +37,32 @@ Input sources
         │
         ▼ (all LLM calls go through scripts/_llm.py)
         │
-knowledge cards (memory/cards/*.md)
-        +
-search index (memory/bookmarks/search_index.json)
+┌─────────────────────────────────────────────────────────────┐
+│  Knowledge Artifacts (permanent, gitignored)                │
+│                                                             │
+│  memory/cards/*.md          structured 9-section cards      │
+│  wiki/topics/*.md           distilled long-term knowledge   │
+└─────────────────────────────────────────────────────────────┘
         │
-        │  every card write auto-triggers ──────────────────────────────┐
-        ├── sync_enriched_index.py    backfill summaries from cards      │
-        └── build_vector_index.py     rebuild flat JSON vectors          │
-                                                                         ▼
-                                                          ┌──────────────────────────┐
-                                                          │  XBrain Vector Store     │
-                                                          │  (pgvector + PGLite)     │
-                                                          │                          │
-                                                          │  • Gemini embeddings     │
-                                                          │  • RRF hybrid search     │
-                                                          │    (vector + keyword)    │
-                                                          │  • xbrain_recall.py      │
-                                                          └──────────────────────────┘
+        ▼ on every card write (auto)
+┌─────────────────────────────────────────────────────────────┐
+│  Primary Retrieval — XBrain                                 │
+│  (XKB's semantic search layer, powered by GBrain)           │
+│                                                             │
+│  • pgvector + PGLite embedded DB                            │
+│  • Gemini embeddings                                        │
+│  • RRF hybrid search (vector + keyword)                     │
+│  • xbrain_recall.py  ← used automatically by all scripts   │
+└─────────────────────────────────────────────────────────────┘
+        │  falls back to when XBrain unavailable
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Fallback Retrieval                                         │
+│                                                             │
+│  search_index.json          keyword + summary search        │
+│  vector_index.json          flat Gemini vector index        │
+│  build_vector_index.py      rebuilds flat index on demand   │
+└─────────────────────────────────────────────────────────────┘
         │
         ▼
   ┌─────────────────────────────────────────────────────────┐
@@ -186,7 +195,7 @@ Checks three things:
 When a user sends a message, XKB uses **two-layer recall**:
 
 1. **Layer 1 — Wiki topics** (`wiki/topics/*.md`): synthesized, durable knowledge. Answers conceptual questions.
-2. **Layer 2 — Cards** (`memory/bookmarks/search_index.json` + `vector_index.json`): raw evidence. Provides specific citations and sources.
+2. **Layer 2 — Cards** (XBrain hybrid search, falls back to `search_index.json`): raw evidence. Provides specific citations and sources.
 
 ```bash
 # Ask a question over your knowledge base
@@ -352,16 +361,18 @@ python3 scripts/local_ingest.py /tmp/papers/ --category research --tag pubmed
 ### 2. Enrich the index
 
 ```bash
-# Backfill summaries from enriched cards into search_index.json
+# Backfill summaries from enriched cards into search_index.json (always run this)
 python3 scripts/sync_enriched_index.py
 
-# (Optional) Build flat JSON vector index — only needed if XBrain is not available
+# Only needed if XBrain is not configured (fallback mode)
 python3 scripts/build_vector_index.py --incremental
 ```
 
-> **With XBrain:** every ingest script auto-pushes cards to the XBrain vector store on write.
-> No extra step needed — `xbrain_recall.py` is used automatically by all recall scripts.
-> Configure `gbrain_dir` in `~/.openclaw/openclaw.json` to point at your XBrain runtime.
+> **XBrain (primary):** every ingest script auto-pushes cards to XBrain on write.
+> `xbrain_recall.py` is used automatically by all recall scripts — no extra steps.
+> Set `gbrain_dir` in `~/.openclaw/openclaw.json` to point at your GBrain runtime directory.
+>
+> **Fallback:** if XBrain is unavailable, recall falls back to `search_index.json` keyword search automatically.
 
 ### 3. Sync to wiki
 
@@ -402,15 +413,14 @@ When running with OpenClaw, the full pipeline runs automatically:
 
 | Schedule | Job | What it does |
 |----------|-----|-------------|
-| 13:30 TST | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → sync_enriched_index → build_vector_index |
+| 13:30 TST | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → auto-push to XBrain → sync_enriched_index |
 | 15:30 TST | `daily:wiki-distill-afternoon` | Distill today's memory into wiki candidates |
 | 21:30 TST | `daily:wiki-distill-evening` | Second distillation pass, apply high-confidence candidates |
 
 The pipeline ensures that after each ingestion run:
-1. `sync_enriched_index.py` backfills summaries from new cards
-2. Each card is auto-pushed to XBrain vector store on write (hybrid RRF search immediately available)
-3. `build_vector_index.py --incremental` updates the flat JSON fallback index
-4. New insights from conversations are automatically staged for wiki inclusion
+1. Each card is auto-pushed to XBrain on write — hybrid RRF search immediately available
+2. `sync_enriched_index.py` backfills summaries into the fallback search index
+3. New insights from conversations are automatically staged for wiki inclusion
 
 ---
 
@@ -420,7 +430,7 @@ The pipeline ensures that after each ingestion run:
 - Node.js 18+ (demo UI only)
 - OpenClaw (recommended) — handles all LLM auth and cron automation
 - `GEMINI_API_KEY` — required for XBrain semantic embeddings; set in `~/.openclaw/openclaw.json`
-- [Bun](https://bun.sh) + XBrain runtime (optional) — enables hybrid RRF vector search via pgvector/PGLite; falls back to keyword search if unavailable
+- [Bun](https://bun.sh) + [GBrain](https://github.com/garrytan/gbrain) runtime (optional) — powers XBrain hybrid search (pgvector/PGLite + RRF); set `gbrain_dir` in `openclaw.json` to activate. Falls back to keyword search if not configured.
 
 ---
 
@@ -449,6 +459,7 @@ The pipeline ensures that after each ingestion run:
 - **Understanding over summarization.** Cards answer what question this solves, not what it says.
 - **Single source of truth.** One canonical wiki path, one LLM config file — no scattered settings.
 - **OpenClaw handles auth.** Scripts call `openclaw capability model run`; token management is not their problem.
+- **Graceful degradation.** XBrain hybrid search is the primary retrieval path; keyword fallback activates automatically when XBrain is unavailable. Nothing breaks.
 - **Personal data stays local.** Graph data, cards, and wiki are gitignored.
 
 ---
