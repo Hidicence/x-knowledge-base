@@ -231,10 +231,13 @@ Add to `.claude/settings.json`:
 git clone https://github.com/Hidicence/x-knowledge-base \
   ~/.openclaw/workspace/skills/x-knowledge-base
 
-# 2. The LLM is pre-configured via config/llm.json
-#    Edit it if you want a different model
+# 2. Install XBrain (hybrid search engine) — one-time setup
+bash ~/.openclaw/workspace/skills/x-knowledge-base/scripts/setup_xbrain.sh
 
-# 3. Run the demo
+# 3. Add API keys to ~/.openclaw/openclaw.json
+#    { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
+
+# 4. Run the demo
 bash scripts/xkb_demo.sh
 ```
 
@@ -242,12 +245,36 @@ bash scripts/xkb_demo.sh
 
 ```bash
 export LLM_API_KEY="your-minimax-or-openai-key"
-export LLM_API_URL="https://api.minimax.io/anthropic"
-export LLM_MODEL="MiniMax-M2.5"
+export LLM_API_URL="https://api.minimax.io/anthropic/v1"
+export LLM_MODEL="MiniMax-M2.7"
 export OPENCLAW_WORKSPACE="~/.openclaw/workspace"
-export GEMINI_API_KEY="your-gemini-key"   # optional, enables vector search
+export GEMINI_API_KEY="your-gemini-key"
+
+# Install XBrain (one-time)
+bash scripts/setup_xbrain.sh
 
 bash scripts/xkb_demo.sh
+```
+
+### XBrain Setup (manual)
+
+If you prefer not to use the setup script:
+
+```bash
+# 1. Install Bun  https://bun.sh
+curl -fsSL https://bun.sh/install | bash
+
+# 2. Clone GBrain runtime
+git clone https://github.com/garrytan/gbrain ~/gbrain
+cd ~/gbrain && bun install && bun run src/cli.ts init
+
+# 3. Tell XKB where to find it
+# Add to ~/.openclaw/openclaw.json → "env":
+#   "gbrain_dir": "/absolute/path/to/gbrain"
+#   "GEMINI_API_KEY": "your-key"   ← required for embeddings
+
+# 4. Verify
+python3 scripts/xbrain_recall.py "test query"
 ```
 
 ---
