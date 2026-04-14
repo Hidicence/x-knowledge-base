@@ -60,7 +60,24 @@ def _resolve_gbrain_dir() -> Path | None:
 
 GBRAIN_DIR = _resolve_gbrain_dir()
 GBRAIN_AVAILABLE = GBRAIN_DIR is not None
-BUN = "bun"
+
+
+def _resolve_bun() -> str:
+    """Find bun executable — checks PATH first, then common install locations."""
+    import shutil
+    if shutil.which("bun"):
+        return "bun"
+    for candidate in [
+        str(Path.home() / ".bun" / "bin" / "bun"),
+        "/usr/local/bin/bun",
+        "/opt/homebrew/bin/bun",
+    ]:
+        if Path(candidate).exists():
+            return candidate
+    return "bun"  # let subprocess give the real error
+
+
+BUN = _resolve_bun()
 
 GEMINI_API_KEY = (
     os.getenv("GEMINI_API_KEY")
