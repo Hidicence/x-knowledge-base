@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
-    llm_call as _llm_call, SOURCE_LABELS,
+    llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
 )
 SOURCE_LABELS["youtube"] = "YouTube 影片"   # ensure registered
 
@@ -262,6 +262,7 @@ def main():
             # Save .md
             md_path = YOUTUBE_DIR / f"{vid_id}.md"
             md_path.write_text(card_content, encoding="utf-8")
+            _gbrain_put(md_path, f"youtube-{vid_id}")
             print(f"   💾 儲存：youtube/{vid_id}.md")
 
             # Parse and add to index

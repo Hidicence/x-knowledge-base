@@ -25,6 +25,24 @@ BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "book
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
+# ── gbrain integration ────────────────────────────────────────────────────────
+_GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
+_GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts")
+_GBRAIN_AVAILABLE = (_GBRAIN_DIR / "src" / "cli.ts").exists()
+
+# Load GEMINI_API_KEY for gbrain embed
+_GBRAIN_ENV: dict[str, str] = {**os.environ}
+if not _GBRAIN_ENV.get("GEMINI_API_KEY"):
+    try:
+        import json as _j
+        _cfg = Path.home() / ".openclaw" / "openclaw.json"
+        if _cfg.exists():
+            _k = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
+            if _k:
+                _GBRAIN_ENV["GEMINI_API_KEY"] = _k
+    except Exception:
+        pass
+
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))
@@ -107,8 +125,73 @@ EN: <15-30 word English summary of the core finding>
 Quality principles: conservative > hallucination, understanding > summary, structured > verbose"""
 
 
+def _gbrain_put(card_path: Path, slug: str) -> bool:
+    """Push a card to gbrain database and trigger embedding. Returns True on success."""
+    if not _GBRAIN_AVAILABLE:
+        return False
+    try:
+        import subprocess as _sp
+        content = card_path.read_text(encoding="utf-8")
+        result = _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "put", slug],
+            input=content,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_GBRAIN_ENV,
+            cwd=str(_GBRAIN_DIR),
+            timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"    [gbrain] put failed: {result.stderr.strip()[:120]}", flush=True)
+            return False
+        # Trigger embedding for this card
+        _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "embed", slug],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=_GBRAIN_ENV,
+            cwd=str(_GBRAIN_DIR),
+            timeout=60,
+        )
+        return True
+    except Exception as e:
+        print(f"    [gbrain] error: {e}", flush=True)
+        return False
+
+
 def _find_related_context(bookmark_content: str, top_k: int = 3) -> str:
-    """Quick keyword search to find related existing cards for context injection."""
+    """Find related existing cards for context injection.
+    Uses gbrain hybrid search if available, falls back to keyword search."""
+    if _GBRAIN_AVAILABLE:
+        return _find_related_context_gbrain(bookmark_content, top_k)
+    return _find_related_context_keyword(bookmark_content, top_k)
+
+
+def _find_related_context_gbrain(bookmark_content: str, top_k: int = 3) -> str:
+    """Use gbrain hybrid search (RRF + Gemini) to find related cards."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from xbrain_recall import xbrain_query as gbrain_query
+        # Use first 300 chars of content as query
+        query = bookmark_content[:300].replace("\n", " ").strip()
+        results = gbrain_query(query, limit=top_k, no_expand=True)
+        if not results:
+            return "（知識庫中尚無明顯相關的已存 card）"
+        lines = ["根據知識庫搜尋，以下是最相關的現有 cards，請分析這篇與它們的關係（補充/衝突/重複/延伸）："]
+        for r in results:
+            title = r.get("title", r.get("slug", ""))[:60]
+            chunk = r.get("chunk_text", "")[:120].replace("\n", " ")
+            lines.append(f"- **{title}**：{chunk}")
+        lines.append("\n請分析：這篇和以上 cards 的關係是什麼？（補充新面向 / 與某篇結論衝突 / 與某篇重複 / 帶入新概念）")
+        return "\n".join(lines)
+    except Exception:
+        return _find_related_context_keyword(bookmark_content, top_k)
+
+
+def _find_related_context_keyword(bookmark_content: str, top_k: int = 3) -> str:
+    """Fallback: keyword search using search_index.json."""
     index_path = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
     if not index_path.exists():
         return ""
@@ -141,7 +224,7 @@ def _find_related_context(bookmark_content: str, top_k: int = 3) -> str:
             " ".join(item.get("tags") or []).lower(),
         ])
         score = sum(1 for t in query_tokens if t in combined)
-        if score > 1:  # require at least 2 token matches
+        if score > 1:
             scored.append((score, item))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -218,6 +301,13 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     card_path = CARDS_DIR / f"{item['id']}.md"
     card_path.write_text(text, encoding="utf-8")
+
+    # Sync to gbrain (non-blocking: failure doesn't abort the queue item)
+    if _GBRAIN_AVAILABLE:
+        ok = _gbrain_put(card_path, item["id"])
+        if ok:
+            print("    [gbrain] ✓ synced", end="", flush=True)
+
     return "done", ""
 
 

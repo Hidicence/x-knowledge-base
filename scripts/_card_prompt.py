@@ -8,6 +8,7 @@ One unified 9-section format, source_type adapts per script.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -16,6 +17,47 @@ from typing import Any
 # ── Unified LLM helper (config/llm.json → single model setting) ──────────────
 sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_call
+
+# ── XBrain integration (path resolved by xbrain_recall, never hardcoded) ────
+try:
+    from xbrain_recall import (
+        GBRAIN_DIR as _GBRAIN_DIR_OR_NONE,
+        GBRAIN_AVAILABLE as _GBRAIN_AVAILABLE,
+        GEMINI_API_KEY as _GEMINI_API_KEY,
+        _make_subprocess_env,
+    )
+    _GBRAIN_DIR = _GBRAIN_DIR_OR_NONE
+    _GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts") if _GBRAIN_DIR else ""
+    _GBRAIN_ENV = _make_subprocess_env(semantic=True)
+except ImportError:
+    _GBRAIN_DIR = None
+    _GBRAIN_CLI = ""
+    _GBRAIN_AVAILABLE = False
+    _GBRAIN_ENV = {**os.environ}
+
+
+def gbrain_put(card_path: Path, slug: str) -> bool:
+    """Push a card to gbrain and trigger embedding. Returns True on success."""
+    if not _GBRAIN_AVAILABLE or not _GBRAIN_DIR or not _GBRAIN_CLI:
+        return False
+    try:
+        import subprocess as _sp
+        content = card_path.read_text(encoding="utf-8")
+        r = _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "put", slug],
+            input=content, capture_output=True, text=True,
+            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=30,
+        )
+        if r.returncode != 0:
+            return False
+        _sp.run(
+            ["bun", "run", _GBRAIN_CLI, "embed", slug],
+            capture_output=True, text=True,
+            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=60,
+        )
+        return True
+    except Exception:
+        return False
 
 # ── Shared system prompt ──────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
@@ -158,7 +200,24 @@ def extract_summary(card: str) -> str:
 # ── Related context search ────────────────────────────────────────────────────
 
 def find_related_context(content: str, existing_items: list[dict], top_k: int = 3) -> str:
-    """Keyword search against existing index items; returns formatted string for section 6."""
+    """Find related cards for context injection.
+    Uses gbrain hybrid search if available, falls back to keyword search against existing_items."""
+    if _GBRAIN_AVAILABLE:
+        try:
+            from xbrain_recall import xbrain_query as gbrain_query
+            query = content[:300].replace("\n", " ").strip()
+            results = gbrain_query(query, limit=top_k, no_expand=True)
+            if results:
+                lines = []
+                for r in results:
+                    title = r.get("title", r.get("slug", ""))[:60]
+                    chunk = r.get("chunk_text", "")[:100].replace("\n", " ")
+                    lines.append(f"- **{title}**：{chunk}")
+                return "\n".join(lines)
+        except Exception:
+            pass
+
+    # Keyword fallback
     stopwords = {
         "的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
         "this", "that", "with", "from", "have", "will", "for", "and", "the", "a",
