@@ -40,11 +40,20 @@ Input sources
 knowledge cards (memory/cards/*.md)
         +
 search index (memory/bookmarks/search_index.json)
-        +
-vector index (memory/bookmarks/vector_index.json)  ← Gemini embeddings
         │
-        ├── sync_enriched_index.py    backfill summaries from cards → index
-        └── build_vector_index.py     rebuild/update semantic vectors
+        │  every card write auto-triggers ──────────────────────────────┐
+        ├── sync_enriched_index.py    backfill summaries from cards      │
+        └── build_vector_index.py     rebuild flat JSON vectors          │
+                                                                         ▼
+                                                          ┌──────────────────────────┐
+                                                          │  XBrain Vector Store     │
+                                                          │  (pgvector + PGLite)     │
+                                                          │                          │
+                                                          │  • Gemini embeddings     │
+                                                          │  • RRF hybrid search     │
+                                                          │    (vector + keyword)    │
+                                                          │  • xbrain_recall.py      │
+                                                          └──────────────────────────┘
         │
         ▼
   ┌─────────────────────────────────────────────────────────┐
@@ -57,7 +66,7 @@ vector index (memory/bookmarks/vector_index.json)  ← Gemini embeddings
         │
         ▼
 xkb_ask.py / Active Recall Layer
-Two-layer recall: wiki topics (synthesized) → cards (raw evidence)
+Two-layer recall: wiki topics (synthesized) → cards (XBrain hybrid search)
         │
         ▼
 demo/xkb-demo-ui/  ← Interactive graph explorer (Next.js)
@@ -256,7 +265,8 @@ All scripts share `_card_prompt.py` and `_llm.py` — one prompt, one LLM call, 
 | Script | What it does |
 |--------|-------------|
 | `sync_enriched_index.py` | Backfill summaries/tags from enriched cards into search_index.json |
-| `build_vector_index.py` | Build/update Gemini semantic vector index |
+| `build_vector_index.py` | Build/update flat JSON vector index (fallback when XBrain unavailable) |
+| `xbrain_recall.py` | XBrain search bridge — hybrid RRF (pgvector + keyword); auto-used by all recall scripts |
 
 ### Wiki Pipeline
 
@@ -273,8 +283,8 @@ All scripts share `_card_prompt.py` and `_llm.py` — one prompt, one LLM call, 
 
 | Script | What it does |
 |--------|-------------|
-| `xkb_ask.py` | Natural-language Q&A: wiki (Layer 1) → cards (Layer 2) |
-| `recall_for_conversation.py` | Conversation-triggered recall (wiki + card search) |
+| `xkb_ask.py` | Natural-language Q&A: wiki (Layer 1) → cards via XBrain hybrid search (Layer 2) |
+| `recall_for_conversation.py` | Conversation-triggered recall (wiki + XBrain card search) |
 | `continuity_recall.py` | MEMORY.md + wiki lookup for session continuity |
 | `contrarian_recall.py` | Surfaces warnings, failures, counter-examples |
 | `action_recall.py` | Action-oriented recall (what to do next) |
@@ -345,9 +355,13 @@ python3 scripts/local_ingest.py /tmp/papers/ --category research --tag pubmed
 # Backfill summaries from enriched cards into search_index.json
 python3 scripts/sync_enriched_index.py
 
-# Build/update semantic vector index (Gemini)
+# (Optional) Build flat JSON vector index — only needed if XBrain is not available
 python3 scripts/build_vector_index.py --incremental
 ```
+
+> **With XBrain:** every ingest script auto-pushes cards to the XBrain vector store on write.
+> No extra step needed — `xbrain_recall.py` is used automatically by all recall scripts.
+> Configure `gbrain_dir` in `~/.openclaw/openclaw.json` to point at your XBrain runtime.
 
 ### 3. Sync to wiki
 
@@ -394,8 +408,9 @@ When running with OpenClaw, the full pipeline runs automatically:
 
 The pipeline ensures that after each ingestion run:
 1. `sync_enriched_index.py` backfills summaries from new cards
-2. `build_vector_index.py --incremental` updates semantic search
-3. New insights from conversations are automatically staged for wiki inclusion
+2. Each card is auto-pushed to XBrain vector store on write (hybrid RRF search immediately available)
+3. `build_vector_index.py --incremental` updates the flat JSON fallback index
+4. New insights from conversations are automatically staged for wiki inclusion
 
 ---
 
@@ -404,7 +419,8 @@ The pipeline ensures that after each ingestion run:
 - Python 3.10+
 - Node.js 18+ (demo UI only)
 - OpenClaw (recommended) — handles all LLM auth and cron automation
-- `GEMINI_API_KEY` (optional) — enables semantic vector search
+- `GEMINI_API_KEY` — required for XBrain semantic embeddings; set in `~/.openclaw/openclaw.json`
+- [Bun](https://bun.sh) + XBrain runtime (optional) — enables hybrid RRF vector search via pgvector/PGLite; falls back to keyword search if unavailable
 
 ---
 
@@ -421,7 +437,7 @@ The pipeline ensures that after each ingestion run:
 | v0.7 | ✅ | Claim levels, False Friends, bilingual summaries, academic PDF pipeline |
 | v0.8 | ✅ | Unified ingest pipeline (_card_prompt.py); demo UI (graph + chat) |
 | v0.9 | ✅ | Two-layer recall (wiki first); unified LLM config; memory→wiki distillation pipeline; single canonical wiki; pipeline health check |
-| v1.0 | 🔜 | Proactive cross-linking on ingest; onboarding wizard; public release |
+| v1.0 | 🔜 | XBrain hybrid search (pgvector + RRF) fully integrated; proactive cross-linking on ingest; onboarding wizard; public release |
 
 ---
 
