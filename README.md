@@ -447,7 +447,9 @@ The pipeline ensures that after each ingestion run:
 | v0.7 | ✅ | Claim levels, False Friends, bilingual summaries, academic PDF pipeline |
 | v0.8 | ✅ | Unified ingest pipeline (_card_prompt.py); demo UI (graph + chat) |
 | v0.9 | ✅ | Two-layer recall (wiki first); unified LLM config; memory→wiki distillation pipeline; single canonical wiki; pipeline health check |
-| v1.0 | 🔜 | XBrain hybrid search (pgvector + RRF) fully integrated; proactive cross-linking on ingest; onboarding wizard; public release |
+| v1.0 | ✅ | XBrain hybrid search (pgvector + RRF) fully integrated across all ingest scripts; unified path resolution; graceful fallback to keyword search |
+| v1.1 | 🔜 | **Active Recall quality upgrade** — soft-trigger re-ranking; Claim level surfaced in recall output; trigger strategy expansion beyond rule-based regex |
+| v1.2 | 🔜 | **Agent-to-Agent knowledge exchange** — standardized card format (9-section + Claim level) as exchange unit over A2A protocol; `receive_card` MCP tool; XBrain as local digestion layer for received cards |
 
 ---
 
