@@ -130,6 +130,52 @@ def load_todays_staged_content(date_str: str) -> str:
     return "\n".join(parts)
 
 
+def extract_conversation_content(content: str) -> str:
+    """
+    Strip dreaming metadata from memory files, keeping only the actual conversation
+    content lines (Candidate: User/Assistant) plus any non-dreaming plain text.
+
+    Removes: confidence, evidence, recalls, status lines after each Candidate entry.
+    """
+    lines = content.splitlines()
+    result = []
+    skip_next_metadata = False
+
+    for line in lines:
+        stripped = line.strip()
+        # Skip dreaming metadata lines that follow a Candidate entry
+        if skip_next_metadata:
+            if stripped.startswith("- confidence:") or \
+               stripped.startswith("- evidence:") or \
+               stripped.startswith("- recalls:") or \
+               stripped.startswith("- status:") or \
+               stripped.startswith("- note:"):
+                continue
+            else:
+                skip_next_metadata = False
+
+        # Keep Candidate lines but strip the "- Candidate: " prefix
+        if stripped.startswith("- Candidate:"):
+            text = stripped[len("- Candidate:"):].strip()
+            if text:
+                result.append(text)
+            skip_next_metadata = True
+            continue
+
+        # Skip dreaming block markers and low-value headers
+        if stripped.startswith("<!-- openclaw:dreaming") or \
+           stripped in ("## Light Sleep", "## REM Sleep", "### Reflections", "### Possible Lasting Truths"):
+            continue
+
+        # Keep everything else (plain text sections, non-dreaming headers)
+        result.append(line)
+
+    return "\n".join(result).strip()
+
+
+CHUNK_SIZE = 8000  # chars per LLM call
+
+
 def extract_insights(entries: list[tuple[str, str]], api_key: str, verbose: bool = False,
                      already_staged: str = "") -> list[dict]:
     existing_topics = load_topic_slugs()
@@ -137,22 +183,35 @@ def extract_insights(entries: list[tuple[str, str]], api_key: str, verbose: bool
 
     all_insights = []
     for date, content in entries:
-        trimmed = content[:6000] if len(content) > 6000 else content
-        user_prompt = EXTRACT_USER_TMPL.format(date=date, content=trimmed, topics=topics_str)
-        if already_staged:
-            user_prompt += f"\n\nAlready staged today (SKIP these, do not re-surface):\n{already_staged[:800]}"
+        cleaned = extract_conversation_content(content)
         if verbose:
-            print(f"  [LLM] scanning {date} ({len(content)} chars)...")
-        try:
-            raw = llm_call(EXTRACT_SYSTEM, user_prompt, api_key)
-            raw = re.sub(r"^```(?:json)?\s*", "", raw).rstrip("` \n")
-            parsed = json.loads(raw)
-            insights = parsed.get("insights", [])
-            if verbose:
-                print(f"  [LLM] {date}: {len(insights)} insight(s)")
-            all_insights.extend(insights)
-        except Exception as e:
-            print(f"  [WARN] LLM failed for {date}: {e}")
+            print(f"  [LLM] scanning {date} ({len(content)} chars raw → {len(cleaned)} chars cleaned)...")
+
+        # Chunk into CHUNK_SIZE segments so the full file is always processed
+        chunks = [cleaned[i:i + CHUNK_SIZE] for i in range(0, max(len(cleaned), 1), CHUNK_SIZE)]
+        seen_contents: set[str] = set()
+
+        for chunk_i, chunk in enumerate(chunks):
+            if not chunk.strip():
+                continue
+            user_prompt = EXTRACT_USER_TMPL.format(date=date, content=chunk, topics=topics_str)
+            if already_staged:
+                user_prompt += f"\n\nAlready staged today (SKIP these, do not re-surface):\n{already_staged[:800]}"
+            try:
+                raw = llm_call(EXTRACT_SYSTEM, user_prompt, api_key)
+                raw = re.sub(r"^```(?:json)?\s*", "", raw).rstrip("` \n")
+                parsed = json.loads(raw)
+                insights = parsed.get("insights", [])
+                # Dedup by content to avoid the same insight surfacing across chunks
+                for ins in insights:
+                    key = ins.get("content", "")[:120]
+                    if key and key not in seen_contents:
+                        seen_contents.add(key)
+                        all_insights.append(ins)
+                if verbose:
+                    print(f"  [LLM] {date} chunk {chunk_i + 1}/{len(chunks)}: {len(insights)} insight(s)")
+            except Exception as e:
+                print(f"  [WARN] LLM failed for {date} chunk {chunk_i + 1}: {e}")
 
     return all_insights
 
