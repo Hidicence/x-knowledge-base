@@ -256,11 +256,17 @@ def write_staging(insights: list[dict], date_str: str, label: str = "") -> Path:
     return out_path
 
 
-def apply_staging_file(staging_path: Path, approve_all: bool = False) -> tuple[int, int, list[str]]:
+def apply_staging_file(
+    staging_path: Path,
+    approve_all: bool = False,
+    auto_approve_high: bool = False,
+) -> tuple[int, int, list[str]]:
     """
     Apply approved candidates from staging file to wiki topics.
     Returns (applied, skipped, updated_slugs).
-    If approve_all=True, treat all candidates as approved.
+    - approve_all: treat every candidate as approved regardless of status/confidence
+    - auto_approve_high: automatically approve candidates with confidence=high;
+      others still require manual [x] approve in the staging file
     """
     content = staging_path.read_text()
     blocks = re.split(r"\n## Candidate \d+\n", content)[1:]
@@ -273,8 +279,11 @@ def apply_staging_file(staging_path: Path, approve_all: bool = False) -> tuple[i
         section_m = re.search(r"\*\*Section:\*\* (.+)", block)
         status_m = re.search(r"\*\*Status:\*\* \[x\] approve", block, re.IGNORECASE)
         source_m = re.search(r"\*\*Source date:\*\* (.+)", block)
+        conf_m = re.search(r"\*\*Confidence:\*\* (\w+)", block)
+        confidence = conf_m.group(1).strip() if conf_m else "medium"
 
-        if not status_m and not approve_all:
+        is_auto_approved = auto_approve_high and confidence == "high"
+        if not status_m and not approve_all and not is_auto_approved:
             skipped += 1
             continue
 
@@ -356,6 +365,9 @@ def main() -> None:
     parser.add_argument("--staging-file")
     parser.add_argument("--approve-all", action="store_true",
                         help="Approve all candidates without checking [x] marks")
+    parser.add_argument("--auto-apply-high", action="store_true",
+                        help="After --stage, automatically apply high-confidence candidates to wiki "
+                             "without manual review. Low/medium candidates remain in staging.")
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -364,7 +376,11 @@ def main() -> None:
         if not args.staging_file:
             parser.error("--apply requires --staging-file")
         staging_path = Path(args.staging_file)
-        applied, skipped, slugs = apply_staging_file(staging_path, approve_all=args.approve_all)
+        applied, skipped, slugs = apply_staging_file(
+            staging_path,
+            approve_all=args.approve_all,
+            auto_approve_high=getattr(args, 'auto_approve_high', False),
+        )
         print(f"\nApply results:")
         print(f"  Applied : {applied}")
         print(f"  Skipped : {skipped}")
@@ -433,10 +449,26 @@ def main() -> None:
             label = "input"
         out = write_staging(insights, today_str, label=label)
         print(f"\nStaged to: {out}")
-        print(f"Run: python3 distill_memory_to_wiki.py --apply --staging-file {out}")
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         source_desc = "inline input" if (args.input or args.input_file) else f"last {args.days}d"
         append_log(f"\n## [{now}] ingest-memory | staged {len(insights)} candidates from {source_desc} → {out.name}")
+
+        # Auto-apply high-confidence candidates immediately after staging
+        if getattr(args, 'auto_apply_high', False):
+            high_count = sum(1 for ins in insights if ins.get("confidence") == "high")
+            print(f"\nAuto-applying {high_count} high-confidence candidate(s)...")
+            applied, skipped, slugs = apply_staging_file(out, auto_approve_high=True)
+            print(f"  Applied : {applied}")
+            print(f"  Skipped : {skipped} (medium/low — review manually)")
+            if slugs:
+                print(f"  Topics updated: {', '.join(slugs)}")
+            if applied > 0:
+                append_log(
+                    f"\n## [{now}] auto-apply-high | {applied} high-confidence candidate(s) "
+                    f"applied from {out.name} → {', '.join(slugs)}"
+                )
+        else:
+            print(f"Run: python3 distill_memory_to_wiki.py --apply --staging-file {out}")
 
 
 if __name__ == "__main__":

@@ -224,16 +224,79 @@ def parse(text: str) -> ParseResult:
     )
 
 
+def explain(text: str) -> None:
+    """Print a full rule-by-rule explanation of why a message triggers or not."""
+    print(f"Input: {text!r}\n")
+
+    # 1. Suppress check
+    stripped = text.strip().lower()
+    suppress_exact = stripped in SUPPRESS_EXACT and len(stripped) <= 4
+    suppress_short = len(stripped) <= 8 and not any(d in stripped for d in HIGH_FREQ_DOMAINS)
+    suppress_pattern = next((p for p in SUPPRESS_PATTERNS if re.search(p, text, re.IGNORECASE)), None)
+    print("-- Suppress Check ------------------------------------------")
+    print(f"  exact match (<=4 chars): {'HIT' if suppress_exact else '----'}")
+    print(f"  short msg no domain:     {'HIT' if suppress_short else '----'}")
+    print(f"  pattern match:           {'HIT → ' + suppress_pattern[:60] if suppress_pattern else '----'}")
+
+    if suppress_exact or suppress_short or suppress_pattern:
+        print("\n[RESULT] SUPPRESS (message will not trigger recall)\n")
+        return
+
+    # 2. Hard trigger
+    print("\n-- Hard Trigger Rules --------------------------------------")
+    hard_hits = []
+    for p in HARD_TRIGGER_PATTERNS:
+        if re.search(p, text, re.IGNORECASE):
+            hard_hits.append(p)
+            print(f"  HIT  → {p[:70]}")
+        else:
+            print(f"  ---- → {p[:70]}")
+    if hard_hits:
+        conf = min(0.6 + 0.1 * len(hard_hits), 0.95)
+        print(f"\n[RESULT] HARD TRIGGER (continuity recall, confidence={conf:.2f})\n")
+        return
+
+    # 3. Soft trigger
+    print("\n-- Soft Trigger Rules --------------------------------------")
+    soft_hits = []
+    for p in SOFT_TRIGGER_PATTERNS:
+        if re.search(p, text, re.IGNORECASE):
+            soft_hits.append(p)
+            print(f"  HIT  → {p[:70]}")
+        else:
+            print(f"  ---- → {p[:70]}")
+    if soft_hits:
+        conf = min(0.5 + 0.08 * len(soft_hits), 0.9)
+        print(f"\n[RESULT] SOFT TRIGGER (brainstorming recall, confidence={conf:.2f})\n")
+        return
+
+    # 4. Domain keyword fallback
+    domain_hits = [d for d in HIGH_FREQ_DOMAINS if d in text.lower()]
+    print(f"\n-- Domain Keyword Fallback ---------------------------------")
+    if domain_hits and len(text.strip()) > 10:
+        print(f"  HIT  → domains: {domain_hits}")
+        print(f"\n[RESULT] DOMAIN FALLBACK (soft trigger, confidence=0.45)\n")
+    else:
+        print(f"  ---- → no domain keywords matched (or message too short)")
+        print(f"\n[RESULT] SUPPRESS (no trigger matched)\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Conversation state parser for Active Recall Layer")
     parser.add_argument("message", nargs="?", help="User message to classify")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--explain", action="store_true",
+                        help="Show rule-by-rule explanation of why this message triggers or not")
     args = parser.parse_args()
 
     text = args.message or sys.stdin.read().strip()
     if not text:
         print("Usage: conversation_state_parser.py <message>")
         return 1
+
+    if args.explain:
+        explain(text)
+        return 0
 
     result = parse(text)
 
