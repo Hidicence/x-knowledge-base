@@ -1,4 +1,7 @@
 # X Knowledge Base (XKB)
+
+[**繁體中文**](./README.zh.md) · English
+
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
 > A personal knowledge lifecycle system with semantic active recall — bookmarks, conversations, and notes flow through a two-layer retrieval engine (XBrain hybrid search + wiki distillation) into durable, reusable knowledge. Ships with an interactive graph UI.
