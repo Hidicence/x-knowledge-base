@@ -88,15 +88,15 @@ Knowledge Graph | Chat | Evidence Panel
 
 | # | Section | Purpose |
 |---|---------|---------|
-| 1 | **核心問題與結論** | What question does this answer? What is the conclusion? |
-| 2 | **Claim 等級** | Attested / Scholarship / Inference — how reliable? |
-| 3 | **關鍵論點** | 3–5 key arguments extracted from the source |
+| 1 | **Core Question & Conclusion** | What question does this answer? What is the conclusion? |
+| 2 | **Claim Level** | Attested / Scholarship / Inference — how reliable? |
+| 3 | **Key Arguments** | 3–5 key arguments extracted from the source |
 | 4 | **False Friends** | Terms with specific technical meaning in this context |
-| 5 | **驚訝點** | What might surprise a knowledgeable reader? |
-| 6 | **與現有知識的關係** | How does this relate to existing cards? |
-| 7 | **雙語摘要** | ZH + EN bilingual summary (used for search index) |
-| 8 | **對使用者的價值** | Actionable directions, relevant projects |
-| 9 | **原始來源** | Source URL and related links |
+| 5 | **Surprises** | What might surprise a knowledgeable reader? |
+| 6 | **Relation to Existing Knowledge** | How does this relate to existing cards? |
+| 7 | **Bilingual Summary** | ZH + EN (used for search index) |
+| 8 | **Value to User** | Actionable directions, relevant projects |
+| 9 | **Source** | Source URL and related links |
 
 One format, every source. A YouTube video, a GitHub repo, and a PubMed paper all produce the same card structure.
 
@@ -177,7 +177,7 @@ python3 scripts/distill_memory_to_wiki.py --apply \
   --approve-all
 ```
 
-Cron jobs run this automatically at 15:30 and 21:30 TST daily.
+Cron jobs run this automatically at 15:30 and 21:30 UTC+8 daily.
 
 ### Health Check
 
@@ -442,9 +442,9 @@ When running with OpenClaw, the full pipeline runs automatically:
 
 | Schedule | Job | What it does |
 |----------|-----|-------------|
-| 13:30 TST | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → auto-push to XBrain → sync_enriched_index |
-| 15:30 TST | `daily:wiki-distill-afternoon` | Distill today's memory into wiki candidates |
-| 21:30 TST | `daily:wiki-distill-evening` | Second distillation pass, apply high-confidence candidates |
+| 13:30 UTC+8 | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → auto-push to XBrain → sync_enriched_index |
+| 15:30 UTC+8 | `daily:wiki-distill-afternoon` | Distill today's memory into wiki candidates |
+| 21:30 UTC+8 | `daily:wiki-distill-evening` | Second distillation pass, apply high-confidence candidates |
 
 The pipeline ensures that after each ingestion run:
 1. Each card is auto-pushed to XBrain on write — hybrid RRF search immediately available
