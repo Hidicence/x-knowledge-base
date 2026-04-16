@@ -1,8 +1,7 @@
 # X Knowledge Base (XKB)
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
-> A personal knowledge lifecycle system for AI agents — from raw bookmarks to structured, reusable wiki.
-> Works with any AI agent (Claude Code, OpenClaw, or any agent that can read a system prompt).
+> A personal knowledge lifecycle system with semantic active recall — bookmarks, conversations, and notes flow through a two-layer retrieval engine (XBrain hybrid search + wiki distillation) into durable, reusable knowledge. Ships with an interactive graph UI.
 
 [![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
 *(Click to watch the concept presentation)*
