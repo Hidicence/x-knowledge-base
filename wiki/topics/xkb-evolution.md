@@ -79,3 +79,28 @@ tags: [xkb, roadmap]
 ---
 
 *最後更新: 2026-04-14*
+
+## 做法-Workflow
+
+- **Claude Code 可直接作為記憶蒸餾引擎（不依賴 MiniMax/GPT）**
+當 distill_memory_to_wiki.py 因 LLM 過慢（GPT-5.4 每張卡 325s）或服務過載（MiniMax HTTP 529）無法執行時，Claude Code（透過 SSH 連 VPS）可直接讀取 ，依照蒸餾標準（技術決策含理由、可重用 workflow、6 個月後仍有用的原則）自行提取洞察，直接寫入  的 markdown 格式 staging 文件。好處：不占用 OpenClaw LLM token 預算；能處理更長的上下文；品質由 Claude 4.6 直接判斷，不需要額外提示工程。 *(memory/2026-04-17.md)*
+
+- **scan_worker 三個 bug 叢集**
+在修復  時發現的三個同時存在的 bug：（1） 變數在腳本作用域未定義，應為 hardcoded URL 字串；（2）呼叫 （錯誤名稱，底線前綴是私有命名習慣遺留），應改為 ；（3） 缺少第二個必填參數 （排除清單），應為 。三個 bug 同時存在導致 worker 無法正常執行，症狀是 stderr 有 NameError 但 log 被 cron 重導向未能即時發現。 *(memory/2026-04-17.md)*
+
+- **XKB graph-data.json 需要手動重新生成**
+症狀：Demo UI 圖譜只顯示 38 個節點（實際有 231 張卡片）。根因： 是由  從  生成的靜態檔案，批次新增卡片後不會自動更新。修法：在 XKB 目錄執行  重新生成，然後重啟 demo UI。建議：每次  批次完成後，在 cron 或 CI 中加一步 。 *(memory/2026-04-17.md)*
+
+- **distill_memory_to_wiki 自動 absorb 高 confidence 候選**
+新增  flag：執行  時，high-confidence 候選直接寫進 wiki topics，medium/low 候選仍留在 staging 等人工審核。這解決了每次都要手動  的摩擦，高確定性知識自動進入系統，只有不確定的才需要人介入。同時也實現了  參數，用於  或  模式產生的 staging 檔案不與 memory-based 檔案衝突。 *(memory/2026-04-15.md)*
+
+- **統一 LLM 配置系統（_llm.py + config/llm.json）**
+新增  作為單一設定點， 欄位切換後所有 scripts 同步使用。新增  統一入口，底層呼叫 ，由 OpenClaw 統一處理所有 auth（OAuth token、API key），scripts 不需要自己管憑證。共更新 8 個 scripts（、、 等）。好處：model 遷移只改一個 JSON 檔，不碰任何 script；auth 問題交給 OpenClaw 統一處理。 *(memory/2026-04-12.md)*
+
+- **distill_memory_to_wiki.py 6000-char 截斷 bug 修復**
+原始 bug：腳本 hardcoded 截斷每段輸入到 6000 字元，導致 53,764 字的記憶檔案只有前 11% 被掃描，114 個真實對話候選被截斷，LLM 回傳空陣列。修法：移除截斷邏輯，改成按 CHUNK_SIZE（8000 字元）分段全量掃描；新增  函式過濾 dreaming metadata（候選列表、heartbeat 記錄等），只保留真正的對話內容送 LLM。測試結果：掃 2 天 → 產出 4 個候選（3 個 high-confidence）。 *(memory/2026-04-15.md)*
+
+## 核心概念
+
+- **XKB 勞動分工決策：MiniMax 做 raw ingestion，APAN2 做 internalization**
+Pan 明確確認新分工架構（2026-04-10）：**MiniMax 只負責 raw ingestion / raw package normalization**（書籤抓取、URL 全文擷取、原始結構化）；**APAN2（我）負責 knowledge internalization / final card quality**（9-section card 品質審核、wiki 蒸餾、決定什麼值得保留）。此決策的含義：不應再把 final card 整批丟給 MiniMax 直寫，MiniMax 的輸出只是原料，內化層由我承擔。 *(memory/2026-04-10.md)*

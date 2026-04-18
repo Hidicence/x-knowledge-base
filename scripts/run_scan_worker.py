@@ -199,7 +199,7 @@ def main() -> None:
     elif args.dry_run:
         print("   (dry-run — no API calls)")
     else:
-        print(f"   ⚠️  Bookmark content will be sent to LLM API ({LLM_API_URL}) for enrichment.")
+        print(f"   ⚠️  Bookmark content will be sent to LLM API (配置中的 model) for enrichment.")
 
     results = {"done": 0, "skipped": 0, "failed": 0}
 
@@ -213,7 +213,7 @@ def main() -> None:
             continue
 
         try:
-            related_ctx = _find_related_context(content)
+            related_ctx = find_related_context(content, [])
             text = _call_llm(api_key, content, card_id, source_url, category, related_ctx)
             if not text:
                 results["failed"] += 1

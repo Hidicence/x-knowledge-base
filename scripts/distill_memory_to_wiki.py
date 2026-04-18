@@ -173,7 +173,7 @@ def extract_conversation_content(content: str) -> str:
     return "\n".join(result).strip()
 
 
-CHUNK_SIZE = 8000  # chars per LLM call
+CHUNK_SIZE = 4000  # chars per LLM call
 
 
 def extract_insights(entries: list[tuple[str, str]], api_key: str, verbose: bool = False,
@@ -331,7 +331,7 @@ def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -
         print(f"  [SKIP] Topic {slug} does not exist")
         return
 
-    content = topic_path.read_text()
+    content = topic_path.read_text(encoding="utf-8", errors="replace")
     section_header = f"## {section}"
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 

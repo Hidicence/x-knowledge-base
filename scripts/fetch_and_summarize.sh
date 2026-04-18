@@ -2,6 +2,8 @@
 # 完整流程 v2.3：抓書籤 → bird/curl/Jina/回退 → Agent Reach 補完 thread/外鏈 → AI 濃縮 → 分類儲存
 
 set -euo pipefail
+#  腳本結束或被 signal 中斷時，清理本次產生的 openclaw-infer 進程
+trap 'pkill -f openclaw-infer 2>/dev/null || true' EXIT TERM INT
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}}"
 SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
@@ -285,7 +287,7 @@ while true; do
     bash "$SKILL_DIR/scripts/auto_categorize.sh"
 
     TOTAL_PROCESSED=$((TOTAL_PROCESSED + BATCH_SIZE))
-    if [[ $TOTAL_PROCESSED -ge 60 ]]; then
+    if [[ $TOTAL_PROCESSED -ge 20 ]]; then
         echo "⚠️ 已達最大處理數量 (60)，強制停止"
         break
     fi
@@ -312,7 +314,7 @@ print(len([i for i in d['items'] if i['status']=='todo']))
 
 if [[ "$NEW_TODO" -gt 0 ]]; then
     echo "  📋 enrichment queue todo=$NEW_TODO（工單狀態，不等於缺少知識卡），開始處理（最多 15 條）..."
-    python3 "$SKILL_DIR/scripts/run_bookmark_worker.py" --limit 15 --worker "pipeline" || true
+    python3 "$SKILL_DIR/scripts/run_bookmark_worker.py" --limit 5 --worker "pipeline" || true
     echo "  🔄 同步強化索引..."
     python3 "$SKILL_DIR/scripts/sync_enriched_index.py" || true
 else
@@ -352,3 +354,4 @@ if [ "${SKIP_WIKI_SYNC:-0}" != "1" ]; then
 else
     echo "  ⏭️ SKIP_WIKI_SYNC=1，略過"
 fi
+

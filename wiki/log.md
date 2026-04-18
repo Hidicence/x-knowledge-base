@@ -94,3 +94,5 @@ action 建議值：
 ## [2026-04-14 07:32] ingest-memory | staged 2 candidates from last 1d → 2026-04-14-afternoon-candidates.md
 
 ## [2026-04-14 11:56] ingest-memory | updated xkb-evolution with XBrain integration completion: Gemini-enabled fork, recall auto-detect fix, schema cleanup, production-ready status
+
+## [2026-04-18 10:17] apply-staging | 12 candidate(s) applied from 2026-04-17-cc-distill-candidates.md → openclaw-agent-workflows, xkb-evolution, ai-agent-memory-systems
