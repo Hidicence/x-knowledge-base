@@ -137,6 +137,26 @@ def _get_category(filepath: Path) -> str:
     return ""
 
 
+
+# Known markers that indicate the page failed to load (X login wall, etc.)
+_JUNK_PATTERNS = [
+    "Don't miss what's happening",
+    "People on X are the first to know",
+    "Log in to X",
+    "Sign in to X",
+    "JavaScript is not available",
+]
+# junk detection uses pattern matching only (no length threshold)
+
+def _is_junk_content(content: str) -> bool:
+    """Return True if bookmark content is too thin or is a known empty page."""
+    # Strip frontmatter
+    body = content.split("---", 2)[-1].strip() if content.startswith("---") else content.strip()
+    for pat in _JUNK_PATTERNS:
+        if pat in body:
+            return True
+    return False
+
 def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str, str, str, str]]:
     """Return list of (filepath, content, card_id, source_url, category) for unenriched files."""
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -160,6 +180,10 @@ def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str,
             continue
 
         if card_id in existing_card_ids:
+            continue
+        if _is_junk_content(content):
+            print(f"  🗑️  Junk (no card, empty content): {md_file.name}, deleting")
+            md_file.unlink()
             continue
 
         results.append((md_file, content, card_id, source_url, category))
