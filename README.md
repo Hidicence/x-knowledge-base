@@ -27,7 +27,7 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 
 ```
 Input sources
-├── X/Twitter bookmarks        →  run_scan_worker.py / run_bookmark_worker.py
+├── X/Twitter bookmarks        →  xkb_minion_submit.py / xkb_minion_worker.py
 ├── YouTube playlists          →  fetch_youtube_playlist.py
 ├── GitHub forks/stars         →  fetch_github_repos.py
 ├── Local notes / markdown     →  local_ingest.py
@@ -51,9 +51,10 @@ Input sources
 │  Primary Retrieval — XBrain                                 │
 │  (XKB's semantic search layer, powered by GBrain)           │
 │                                                             │
-│  • pgvector + PGLite embedded DB                            │
+│  • pgvector + Postgres-backed GBrain                        │
 │  • Gemini embeddings                                        │
 │  • RRF hybrid search (vector + keyword)                     │
+│  • Minions job runtime for durable internal pipelines       │
 │  • xbrain_recall.py  ← used automatically by all scripts   │
 └─────────────────────────────────────────────────────────────┘
         │  falls back to when XBrain unavailable
@@ -141,6 +142,52 @@ export LLM_API_KEY="your-minimax-key"
 
 ---
 
+## Minions Pipeline
+
+**X/Twitter bookmark enrichment now runs on a Minions-native queue pipeline by default** on top of Postgres-backed GBrain. This replaces the old cron-spawn scan-worker pattern for the main bookmark enrichment path.
+
+### Deployed components
+- `scripts/xkb_minion_submit.py`
+  - scans unenriched bookmarks
+  - submits one idempotent Minion job per bookmark
+  - intended to run from cron (for example, hourly)
+- `scripts/xkb_minion_worker.py`
+  - long-lived worker daemon
+  - claims jobs from `minion_jobs`
+  - runs LLM enrichment
+  - writes final cards and updates job state
+
+### Why this replaced the old cron scan-worker pattern
+Old pattern:
+- spawned a fresh Python process every 10 minutes
+- produced zombie `openclaw-infer` subprocesses under load
+- was harder to observe, retry, and recover safely
+
+Current Minions-native pattern:
+- one long-lived worker daemon
+- sequential processing by default (one job at a time)
+- built-in timeout
+- retry + exponential backoff
+- idempotent submissions keyed by bookmark/card id
+- observable via `gbrain jobs list`
+
+### Smoke-tested behavior
+Validated in this environment:
+- worker successfully claims jobs
+- LLM inference starts correctly
+- jobs move through expected states
+- active → dead flow was observed under intentionally short timeout in test mode
+- production timeout can be set to 300s per job
+
+### Monitoring
+```bash
+# see job states
+gbrain jobs list
+
+# verify Minions health
+gbrain jobs smoke
+```
+
 ## Wiki Layer
 
 The wiki is the **distilled output layer** — a readable, long-term knowledge base built from two sources:
@@ -223,6 +270,17 @@ Add to `.claude/settings.json`:
 ```
 
 ---
+
+## vNext Direction
+
+A draft roadmap for the next phase lives here:
+- `docs/xkb-vnext-roadmap-draft.md`
+
+Short version:
+- keep wiki as the human-readable product layer
+- place graph/relations in the structured knowledge layer below wiki
+- treat Minions as the default execution substrate for large-scale internal workflows
+- now that bookmark enrichment is already Minions-native, focus next on knowledge governance: confidence, staleness, supersession, typed relationships
 
 ## Quick Start
 

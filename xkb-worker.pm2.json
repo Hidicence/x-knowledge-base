@@ -1,0 +1,14 @@
+{
+  "name": "xkb-minion-worker",
+  "script": "python3",
+  "args": "scripts/xkb_minion_worker.py --poll-interval 15",
+  "cwd": "/root/.openclaw/workspace/skills/x-knowledge-base",
+  "autorestart": true,
+  "restart_delay": 10000,
+  "max_restarts": 10,
+  "env": {
+    "GBRAIN_DATABASE_URL": "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain"
+  },
+  "log_file": "/tmp/xkb-minion-worker.log",
+  "error_file": "/tmp/xkb-minion-worker-err.log"
+}
