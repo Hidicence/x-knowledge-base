@@ -49,6 +49,16 @@ from continuity_recall import recall as continuity_recall, recall_from_wiki, for
 from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
 from action_recall import recall as action_recall, format_hint as format_action_hint
 
+try:
+    from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
+    _DEDUP_AVAILABLE = True
+except ImportError:
+    _DEDUP_AVAILABLE = False
+    def _dedup_filter_new(results):  # type: ignore[misc]
+        return results, []
+    def _dedup_mark_shown(_results) -> None:  # type: ignore[misc]
+        pass
+
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 SCRIPTS = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
 TELEMETRY_PATH = WORKSPACE / "memory" / "x-knowledge-base" / "recall-telemetry.jsonl"
@@ -215,6 +225,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # Continuity recall (primary)
         raw_results = continuity_recall(query, source="both", top_k=4)
         filtered = _filter_results(raw_results, MIN_SCORE_HARD)
+        filtered, _ = _dedup_filter_new(filtered)
         result_dicts = _results_to_dicts(filtered[:3])
 
         text_parts: list[str] = []
@@ -233,6 +244,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
         delivery_mode = "inline_injection" if text_parts else "none"
         formatted_text = "\n\n".join(text_parts) if text_parts else ""
+        _dedup_mark_shown(filtered[:3])
         duration_ms = int((time.monotonic() - t0) * 1000)
         _write_telemetry(_build_telemetry(message, parsed, len(result_dicts), delivery_mode, duration_ms))
 
@@ -250,6 +262,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # Wiki recall (highest priority — synthesized knowledge)
         wiki_results = recall_from_wiki(query, top_k=2)
         wiki_results_filtered = [r for r in wiki_results if r.score >= 0.4]
+        wiki_results_filtered, _ = _dedup_filter_new(wiki_results_filtered)
         wiki_text = format_continuity_chat(wiki_results_filtered) if wiki_results_filtered else ""
         wiki_result_dicts = [{"source_type": "wiki", "source_file": r.source_file,
                                "section": r.section, "excerpt": r.excerpt,
@@ -257,12 +270,14 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
         # Associative recall (bookmark/card supplement)
         assoc_text, assoc_results = run_associative_recall(query, limit=2)
+        assoc_results, _ = _dedup_filter_new(assoc_results)
 
         # Contrarian recall (supplement — max 1 result, only on high-confidence soft)
         contrarian_text = ""
         contrarian_results = []
         if parsed.confidence >= 0.55:
             c_raw = contrarian_recall(query, top_k=1)
+            c_raw, _ = _dedup_filter_new(c_raw)
             if c_raw:
                 contrarian_text = format_contrarian_hint(c_raw)
                 contrarian_results = [{"source_type": "contrarian", "source_file": r.source_file,
@@ -270,6 +285,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                        "score": r.score, "url": ""} for r in c_raw]
 
         all_results = wiki_result_dicts + assoc_results + contrarian_results
+        _dedup_mark_shown(all_results)
         has_wiki = bool(wiki_text)
         has_assoc = bool(assoc_text and len(assoc_text) >= 20)
         has_content = has_wiki or has_assoc
