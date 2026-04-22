@@ -24,6 +24,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
 from _llm import call as llm_call
+from xkb_adapter_minimax import MiniMaxAPIAdapter
 
 
 def load_config() -> dict:
@@ -56,8 +57,13 @@ def main():
     results_dir = runtime_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    task = request.get("task", "")
+    card_id = request.get("card_id") or request.get("meta", {}).get("card_id") or ""
     chunk_index = request.get("chunk_index", 0)
-    out_path = results_dir / f"chunk-{chunk_index:04d}.json"
+    if task == "bookmark_enrich_card" and card_id:
+        out_path = results_dir / f"bookmark-{card_id}.json"
+    else:
+        out_path = results_dir / f"chunk-{chunk_index:04d}.json"
 
     model = args.model or request.get("meta", {}).get("model") or load_config().get("model", "MiniMax-M2.7")
     system = request.get("input", {}).get("system", "")
@@ -66,13 +72,23 @@ def main():
     print(f"[runner] model={model} timeout={args.timeout}s request={request_path}", file=sys.stderr)
     start = time.time()
 
+    task = request.get("task", "")
     ok = False
     raw_text = ""
     error_info = None
 
     try:
-        raw_text = llm_call(system, user, model=model, timeout=args.timeout)
-        ok = True
+        if model.lower().startswith("minimax"):
+            adapter = MiniMaxAPIAdapter()
+            adapter_result = adapter.run(str(request_path))
+            ok = adapter_result.get("ok", False)
+            if ok:
+                raw_text = adapter_result.get("raw_text", "")
+            else:
+                error_info = adapter_result.get("error") or {"type": "adapter_error", "message": "unknown adapter failure"}
+        else:
+            raw_text = llm_call(system, user, model=model, timeout=args.timeout)
+            ok = True
     except Exception as e:
         error_info = {"type": type(e).__name__, "message": str(e)[:500]}
         print(f"[runner] ERROR: {error_info}", file=sys.stderr)
@@ -84,6 +100,7 @@ def main():
         "ok": ok,
         "backend": "llm-call",
         "model": model,
+        "task": task,
         "source_date": request.get("source_date"),
         "chunk_index": chunk_index,
         "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -92,16 +109,23 @@ def main():
 
     if ok:
         output["raw_text"] = raw_text
-        # Parse insights from raw_text
-        try:
-            cleaned = raw_text.strip()
-            cleaned = cleaned.removeprefix("```json").removeprefix("```").rstrip("` \n")
-            parsed = json.loads(cleaned)
-            output["output"] = {"insights": parsed.get("insights", [])}
-            print(f"[runner] insights_count={len(output['output']['insights'])}", file=sys.stderr)
-        except Exception as parse_err:
-            output["output"] = {"insights": [], "_parse_error": str(parse_err), "_raw_text": raw_text[:300]}
-            print(f"[runner] WARNING: JSON parse failed: {parse_err}", file=sys.stderr)
+        if task == "bookmark_enrich_card":
+            output["output"] = {
+                "card_markdown": raw_text,
+                "card_id": request.get("card_id"),
+                "bookmark_file": request.get("bookmark_file"),
+            }
+            print(f"[runner] bookmark card generated for {request.get('card_id')}", file=sys.stderr)
+        else:
+            try:
+                cleaned = raw_text.strip()
+                cleaned = cleaned.removeprefix("```json").removeprefix("```").rstrip("` \n")
+                parsed = json.loads(cleaned)
+                output["output"] = {"insights": parsed.get("insights", [])}
+                print(f"[runner] insights_count={len(output['output']['insights'])}", file=sys.stderr)
+            except Exception as parse_err:
+                output["output"] = {"insights": [], "_parse_error": str(parse_err), "_raw_text": raw_text[:300]}
+                print(f"[runner] WARNING: JSON parse failed: {parse_err}", file=sys.stderr)
     else:
         output["error"] = error_info
         output["output"] = {"insights": []}

@@ -158,15 +158,19 @@ def call(system: str, user: str, *, model: str | None = None, timeout: int = 600
             stderr=subprocess.PIPE,
             text=True,
         )
-        while True:
-            if proc.poll() is not None:
-                break
-            if time.time() - start > timeout:
-                proc.kill()
-                raise RuntimeError(f"openclaw model run timed out after {timeout}s")
-            time.sleep(0.2)
 
-        stdout, stderr = proc.communicate(timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise RuntimeError(
+                f"openclaw model run timed out after {timeout}s. "
+                f"stderr: {(stderr or '').strip()[:500]} stdout: {(stdout or '').strip()[:500]}"
+            )
+
+        raw_out = (stdout or "").strip()
+        stderr = (stderr or "").strip()
         raw_out = (stdout or "").strip()
         stderr = (stderr or "").strip()
 

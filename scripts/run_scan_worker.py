@@ -5,16 +5,9 @@ Scan-mode bookmark enrichment worker.
 Instead of reading from tiege-queue.json, directly scans memory/bookmarks/
 for files that don't yet have a corresponding enriched card in memory/cards/.
 
-Handles:
-  - Named files (01-clawpal.md) that have tweet_id inside frontmatter
-  - Files with truncated/non-standard tweet IDs
-  - Any bookmark without a matching memory/cards/ entry
-
-Usage:
-    python3 scripts/run_scan_worker.py --limit 20
-    python3 scripts/run_scan_worker.py --dry-run
-    python3 scripts/run_scan_worker.py --limit 50 --worker pipeline
-    python3 scripts/run_scan_worker.py --category 01-openclaw-workflows --limit 5
+Now uses XKB request/result inference queue instead of synchronous in-process
+LLM calls, so bookmark enrichment follows the same non-blocking adapter path
+as memory distill.
 """
 
 from __future__ import annotations
@@ -23,60 +16,19 @@ import argparse
 import json
 import os
 import re
-import sys
+import subprocess
+import time
 from pathlib import Path
 
-# ── Shared card prompt module ─────────────────────────────────────────────────
-sys.path.insert(0, str(Path(__file__).parent))
-from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
+from _card_prompt import gbrain_put as _gbrain_put
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
+RUNTIME_DIR = Path(os.getenv("RUNTIME_DIR", str(WORKSPACE / "memory" / "x-knowledge-base")))
+ENQUEUE_SCRIPT = Path(__file__).resolve().parent / "bookmark_infer_enqueue.py"
+RESULTS_DIR = RUNTIME_DIR / "bookmark-infer" / "results"
 
-
-def _get_api_key() -> str:
-    for env_key in ("LLM_API_KEY", "MINIMAX_API_KEY"):
-        key = os.environ.get(env_key, "")
-        if key:
-            return key
-    config_path = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            env = config.get("env", {})
-            return env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or ""
-        except Exception:
-            pass
-    return ""
-
-
-def _get_index_items() -> list[dict]:
-    index_path = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
-    if not index_path.exists():
-        return []
-    try:
-        data = json.loads(index_path.read_text(encoding="utf-8"))
-        return data.get("items", []) if isinstance(data, dict) else []
-    except Exception:
-        return []
-
-
-def _call_llm(api_key: str, content: str, card_id: str, source_url: str, category: str,
-              related_context: str = "") -> str:
-    prompt = build_prompt(
-        content=f"Please process this bookmark. If content is low-value (login page/404/noise), output only: SKIPPED\n\n"
-                f"--- Raw content ---\n{content[:4000]}\n---",
-        card_id=card_id,
-        source_type="x-bookmark",
-        source_url=source_url,
-        category=category,
-        related_context=related_context or "（知識庫中尚無明顯相關的已存 card）",
-    )
-    return _llm_call(prompt, api_key, max_tokens=2500)
-
-
-# ── Scan-specific helpers ──────────────────────────────────────────────────────
 
 def _extract_frontmatter_value(text: str, key: str) -> str:
     m = re.search(rf'^{re.escape(key)}:\s*"?([^"\n]+)"?\s*$', text, re.MULTILINE)
@@ -96,7 +48,6 @@ def _build_legacy_card_id(filepath: Path) -> str:
 
 
 def _get_card_id(filepath: Path, content: str) -> str:
-    """Determine a stable card ID for this bookmark file."""
     tweet_id = _extract_frontmatter_value(content, "tweet_id")
     if tweet_id and re.fullmatch(r"\d{15,20}", tweet_id):
         return tweet_id
@@ -137,8 +88,6 @@ def _get_category(filepath: Path) -> str:
     return ""
 
 
-
-# Known markers that indicate the page failed to load (X login wall, etc.)
 _JUNK_PATTERNS = [
     "Don't miss what's happening",
     "People on X are the first to know",
@@ -146,19 +95,43 @@ _JUNK_PATTERNS = [
     "Sign in to X",
     "JavaScript is not available",
 ]
-# junk detection uses pattern matching only (no length threshold)
+QUARANTINE_DIR = BOOKMARKS_DIR / "junk-review"
 
-def _is_junk_content(content: str) -> bool:
-    """Return True if bookmark content is too thin or is a known empty page."""
-    # Strip frontmatter
+
+def _content_signals_value(body: str) -> bool:
+    lower = body.lower()
+    return any([
+        'http://' in lower,
+        'https://' in lower,
+        't.co/' in lower,
+        '## 🧵 thread 全文' in lower,
+        '## 🔗 外部連結摘錄' in body,
+        len(body.strip()) >= 120,
+    ])
+
+
+def _junk_reason(content: str) -> str | None:
     body = content.split("---", 2)[-1].strip() if content.startswith("---") else content.strip()
     for pat in _JUNK_PATTERNS:
         if pat in body:
-            return True
-    return False
+            return "login_wall"
+    if not _content_signals_value(body):
+        return "thin_content"
+    return None
+
+
+def _quarantine_file(md_file: Path, reason: str) -> None:
+    QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
+    target = QUARANTINE_DIR / md_file.name
+    if md_file.resolve() == target.resolve():
+        return
+    if target.exists():
+        target.unlink()
+    md_file.rename(target)
+    print(f"  📦 Quarantine ({reason}): {md_file.name} -> {target}")
+
 
 def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str, str, str, str]]:
-    """Return list of (filepath, content, card_id, source_url, category) for unenriched files."""
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     existing_card_ids = {f.stem for f in CARDS_DIR.glob("*.md")}
 
@@ -181,9 +154,9 @@ def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str,
 
         if card_id in existing_card_ids:
             continue
-        if _is_junk_content(content):
-            print(f"  🗑️  Junk (no card, empty content): {md_file.name}, deleting")
-            md_file.unlink()
+        junk_reason = _junk_reason(content)
+        if junk_reason == "login_wall":
+            _quarantine_file(md_file, junk_reason)
             continue
 
         results.append((md_file, content, card_id, source_url, category))
@@ -193,22 +166,53 @@ def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str,
     return results
 
 
+def _enqueue_bookmark(filepath: Path, card_id: str, source_url: str, category: str) -> str:
+    cmd = [
+        "python3",
+        str(ENQUEUE_SCRIPT),
+        "--bookmark-file",
+        str(filepath),
+        "--card-id",
+        card_id,
+        "--source-url",
+        source_url,
+        "--category",
+        category,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(f"enqueue failed: {(proc.stderr or proc.stdout).strip()[:300]}")
+    return (proc.stdout or "").strip()
+
+
+def _result_path(card_id: str) -> Path:
+    return RESULTS_DIR / f"bookmark-{card_id}.json"
+
+
+def _wait_for_result(card_id: str, timeout_s: int = 240) -> dict:
+    path = _result_path(card_id)
+    start = time.time()
+    while time.time() - start < timeout_s:
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        time.sleep(2)
+    raise TimeoutError(f"bookmark infer timed out after {timeout_s}s for {card_id}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan-mode bookmark enrichment worker")
-    parser.add_argument("--limit",      type=int, default=20,    help="Max items to process (default: 20)")
-    parser.add_argument("--worker",     default="scan-worker",   help="Worker name")
-    parser.add_argument("--dry-run",    action="store_true",     help="Simulate without API calls")
-    parser.add_argument("--local-only", action="store_true",     help="Skip LLM enrichment — scan and list unenriched bookmarks without sending content to any API")
-    parser.add_argument("--category",   default="",              help="Filter by category slug")
+    parser.add_argument("--limit", type=int, default=20, help="Max items to process (default: 20)")
+    parser.add_argument("--worker", default="scan-worker", help="Worker name")
+    parser.add_argument("--dry-run", action="store_true", help="Simulate without API calls")
+    parser.add_argument("--local-only", action="store_true", help="Skip LLM enrichment — scan and list unenriched bookmarks without sending content to any API")
+    parser.add_argument("--category", default="", help="Filter by category slug")
     args = parser.parse_args()
 
     if args.local_only:
-        args.dry_run = True  # local-only implies dry-run (no API calls)
-
-    api_key = "" if args.dry_run else _get_api_key()
-    if not api_key and not args.dry_run:
-        print("❌ LLM_API_KEY not found. Set env var or add to openclaw.json.")
-        sys.exit(1)
+        args.dry_run = True
 
     missing = scan_missing(args.limit, args.category)
     total_missing = len(scan_missing(9999, args.category))
@@ -223,7 +227,7 @@ def main() -> None:
     elif args.dry_run:
         print("   (dry-run — no API calls)")
     else:
-        print(f"   ⚠️  Bookmark content will be sent to LLM API (配置中的 model) for enrichment.")
+        print("   ⚠️  Bookmark content will be sent to LLM inference queue for enrichment.")
 
     results = {"done": 0, "skipped": 0, "failed": 0}
 
@@ -237,22 +241,25 @@ def main() -> None:
             continue
 
         try:
-            related_ctx = find_related_context(content, [])
-            text = _call_llm(api_key, content, card_id, source_url, category, related_ctx)
+            enqueue_status = _enqueue_bookmark(filepath, card_id, source_url, category)
+            result = _wait_for_result(card_id)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", {}).get("message") or "inference failed")
+            text = (result.get("output", {}) or {}).get("card_markdown", "")
             if not text:
                 results["failed"] += 1
                 print("✗ empty response")
                 continue
             if re.match(r"^SKIPPED", text.strip(), re.IGNORECASE):
                 results["skipped"] += 1
-                print("⏭ skipped")
+                print(f"⏭ skipped [{enqueue_status}]")
                 continue
 
             card_path = CARDS_DIR / f"{card_id}.md"
             card_path.write_text(text, encoding="utf-8")
             _gbrain_put(card_path, card_id)
             results["done"] += 1
-            print("✓ done")
+            print(f"✓ done [{enqueue_status}]")
         except Exception as exc:
             results["failed"] += 1
             print(f"✗ {exc}")
