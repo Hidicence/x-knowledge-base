@@ -24,7 +24,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
 from _llm import call as llm_call
-from xkb_adapter_minimax import MiniMaxAPIAdapter
+from xkb_adapter_http import GenericHTTPAdapter
 
 
 def load_config() -> dict:
@@ -79,7 +79,7 @@ def main():
 
     try:
         if model.lower().startswith("minimax"):
-            adapter = MiniMaxAPIAdapter()
+            adapter = GenericHTTPAdapter()
             adapter_result = adapter.run(str(request_path))
             ok = adapter_result.get("ok", False)
             if ok:

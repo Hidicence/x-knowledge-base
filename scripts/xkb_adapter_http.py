@@ -9,8 +9,14 @@ from typing import Any
 from xkb_adapter_base import XKBInferenceAdapter
 
 
-class MiniMaxAPIAdapter(XKBInferenceAdapter):
-    name = "minimax-api"
+class GenericHTTPAdapter(XKBInferenceAdapter):
+    """Generic HTTP API adapter for OpenAI-compatible endpoints.
+
+    Reads LLM_API_URL / LLM_API_KEY from environment or ~/.openclaw/openclaw.json.
+    Works with any OpenAI-compatible endpoint (MiniMax, Groq, local models, etc.).
+    """
+
+    name = "http-api"
 
     def run(self, request_path: str) -> dict[str, Any]:
         request = json.loads(Path(request_path).read_text(encoding="utf-8"))
@@ -39,7 +45,7 @@ class MiniMaxAPIAdapter(XKBInferenceAdapter):
                 "chunk_index": request.get("chunk_index"),
                 "error": {
                     "type": "config_error",
-                    "message": "LLM_API_URL / LLM_API_KEY not configured for MiniMax adapter.",
+                    "message": "LLM_API_URL / LLM_API_KEY not configured for GenericHTTPAdapter.",
                 },
             }
 
