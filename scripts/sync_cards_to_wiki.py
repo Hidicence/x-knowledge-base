@@ -1,0 +1,801 @@
+#!/usr/bin/env python3
+"""
+Sync x-knowledge-base cards into wiki topic pages.
+
+v3: LLM absorb gate + persistent decision log + per-run report.
+v4: P2 absorb gate explainability — --review-rejects, --explain, --force-absorb.
+
+Each candidate card is evaluated against the existing wiki page content
+using the Policy 6 quality gate: "What new dimension does this card add?"
+Decisions are persisted to review-decisions.json["decisions"] for status tracking.
+
+Usage:
+  python3 sync_cards_to_wiki.py --review [--topic SLUG] [--no-llm]
+  python3 sync_cards_to_wiki.py --apply  [--topic SLUG] [--no-llm] [--limit N]
+  python3 sync_cards_to_wiki.py --apply --topic ai-seo-and-geo
+
+  # P2: explainability
+  python3 sync_cards_to_wiki.py --review-rejects [--topic SLUG] [--since YYYY-MM-DD]
+  python3 sync_cards_to_wiki.py --explain URL
+  python3 sync_cards_to_wiki.py --force-absorb URL [--topic SLUG]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+
+# ── Unified LLM helper ────────────────────────────────────────────────────────
+sys.path.insert(0, str(_SKILL_DIR / "scripts"))
+from _llm import call as _llm_backend
+TOPICS_DIR = WIKI_DIR / "topics"
+INDEX_PATH = WIKI_DIR / "index.md"
+LOG_PATH = WIKI_DIR / "log.md"
+TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"
+REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
+SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
+
+_llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
+
+
+@dataclass
+class Card:
+    title: str
+    url: str
+    category: str
+    tags: list
+    date: str
+    path: str = ""
+    summary: str = ""
+
+
+FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+SOURCES_SECTION_RE = re.compile(r"\n## 來源\n(.*)$", re.DOTALL)
+
+
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
+
+def _call_minimax(api_key: str, system: str, user: str) -> str:
+    return _llm_backend(system, user)
+
+
+def llm_absorb_judgment(
+    card: Card, topic: str, wiki_content: str, card_full_content: str, api_key: str
+) -> tuple[bool, str, str]:
+    """
+    Ask LLM: does this card add a new dimension to the wiki page?
+    Returns (should_include, dimension, reason).
+    dimension: new_case | new_concept | contradiction | none
+    """
+    cache_key = (card.url, topic)
+    if cache_key in _llm_cache:
+        return _llm_cache[cache_key]
+
+    wiki_excerpt = wiki_content[:2000]
+    if card_full_content:
+        card_excerpt = card_full_content[:800]
+    else:
+        tag_str = ", ".join(str(t) for t in card.tags)
+        card_excerpt = f"{card.title}\nTags: {tag_str}\nSummary: {card.summary}"
+
+    system = (
+        "You are a wiki quality gate. You must output ONLY a JSON object. "
+        "No reasoning, no explanation, no markdown. Just the JSON."
+    )
+
+    user = (
+        f"Wiki topic: {topic}\n"
+        f"Wiki excerpt: {wiki_excerpt[:1200]}\n\n"
+        f"Card title: {card.title}\n"
+        f"Card tags: {', '.join(str(t) for t in card.tags[:6])}\n"
+        f"Card content: {card_excerpt[:500]}\n\n"
+        "Does this card add new value to the wiki?\n"
+        "Gates: (1) new dimension not in wiki (2) actionable/multi-source (3) relevant 6mo+\n"
+        "Dimension: new_case|new_concept|contradiction|none\n\n"
+        'Output JSON only: {"include": true/false, "dimension": "...", "reason": "one sentence"}'
+    )
+
+    try:
+        response = _call_minimax(api_key, system, user)
+        # Strip <think>...</think> blocks if present
+        response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+        # Extract JSON with greedy match (handles full object)
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            parsed = json.loads(json_match.group())
+        else:
+            # Fallback: infer from plain-text keywords in response
+            text_lower = response.lower()
+            include_fallback = "include: true" in text_lower or '"include": true' in text_lower
+            dimension_fallback = "none"
+            for dim in ("new_concept", "new_case", "contradiction"):
+                if dim in text_lower:
+                    dimension_fallback = dim
+                    break
+            parsed = {"include": include_fallback, "dimension": dimension_fallback, "reason": "text-parsed fallback"}
+        include = bool(parsed.get("include", False))
+        dimension = str(parsed.get("dimension", "none"))
+        reason = str(parsed.get("reason", ""))
+        result = (include, dimension, reason)
+    except Exception as e:
+        result = (True, "new_case", f"[llm_error: {e}] fallback include")
+
+    _llm_cache[cache_key] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def load_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_search_items() -> list[dict]:
+    raw = load_json(SEARCH_INDEX_PATH)
+    if isinstance(raw, dict):
+        return raw.get("items", [])
+    return raw  # type: ignore
+
+
+def load_topic_map() -> dict:
+    raw = load_json(TOPIC_MAP_PATH)
+    return raw.get("mapping", {})  # type: ignore
+
+
+def load_review_file() -> dict:
+    """Load the full review-decisions.json, initializing missing keys."""
+    if not REVIEW_DECISIONS_PATH.exists():
+        return {"decisions": {}, "topics": {}}
+    try:
+        data = load_json(REVIEW_DECISIONS_PATH)
+        if not isinstance(data, dict):
+            data = {}
+        if "decisions" not in data:
+            data["decisions"] = {}
+        if "topics" not in data:
+            data["topics"] = {}
+        return data
+    except Exception:
+        return {"decisions": {}, "topics": {}}
+
+
+def load_review_decisions() -> dict:
+    return load_review_file().get("topics", {})
+
+
+def save_absorb_decisions(records: list[dict]) -> None:
+    """Persist LLM absorb decisions to review-decisions.json["decisions"]."""
+    if not records:
+        return
+    data = load_review_file()
+    today = datetime.now(timezone.utc).date().isoformat()
+    for rec in records:
+        key = rec["url"]
+        data["decisions"][key] = {
+            "decision": rec["decision"],          # approve | skip | manual-allow | manual-skip | duplicate
+            "dimension": rec.get("dimension", ""),
+            "reason": rec.get("reason", ""),
+            "topic": rec.get("topic", ""),
+            "evaluated_at": today,
+        }
+    REVIEW_DECISIONS_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_card_content(path: str) -> str:
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.exists():
+        return ""
+    try:
+        return p.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def normalize_date(item: dict) -> str:
+    for key in ("created_at", "date", "published_at"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value[:10]
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def make_card(item: dict) -> Card | None:
+    if item.get("excluded"):
+        return None
+    url = (item.get("source_url") or item.get("url") or "").strip()
+    title = (item.get("title") or item.get("tweet_title") or "").strip()
+    category = (item.get("category") or "").strip()
+    if not url or not title or not category:
+        return None
+    return Card(
+        title=title, url=url, category=category,
+        tags=[str(t) for t in (item.get("tags") or [])],
+        date=normalize_date(item),
+        path=item.get("path", ""),
+        summary=item.get("summary", ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Manual review decision gate (hard gate: overrides LLM)
+# ---------------------------------------------------------------------------
+
+def check_manual_decision(
+    card: Card, topic: str, review_decisions: dict
+) -> tuple[str, str | None]:
+    decision = review_decisions.get(topic, {})
+    allow = set(decision.get("allow") or [])
+    skip = set(decision.get("skip") or [])
+    move = decision.get("move") or {}
+    if card.url in move:
+        return "move", move[card.url]
+    if card.url in skip:
+        return "skip", None
+    if card.url in allow:
+        return "allow", None
+    return "auto", None
+
+
+# ---------------------------------------------------------------------------
+# Card grouping
+# ---------------------------------------------------------------------------
+
+def collect_topic_existing_urls() -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for path in TOPICS_DIR.glob("*.md"):
+        result[path.stem] = parse_existing_sources(path.read_text(encoding="utf-8"))
+    return result
+
+
+def iter_mapped_cards(
+    items: list[dict],
+    topic_map: dict,
+    topic_filter: str | None,
+    existing_urls_by_topic: dict[str, set[str]],
+    review_decisions: dict,
+) -> dict[str, list[Card]]:
+    grouped: dict[str, list[Card]] = defaultdict(list)
+    for item in items:
+        card = make_card(item)
+        if not card:
+            continue
+        mapping = topic_map.get(card.category)
+        if not mapping:
+            continue
+        topics = mapping.get("topics")
+        if not topics:
+            continue
+        for topic in topics:
+            if topic_filter and topic != topic_filter:
+                continue
+            if card.url in existing_urls_by_topic.get(topic, set()):
+                continue
+            decision, moved_topic = check_manual_decision(card, topic, review_decisions)
+            if decision == "skip":
+                continue
+            if decision == "move" and moved_topic:
+                if not topic_filter or moved_topic == topic_filter:
+                    if card.url not in existing_urls_by_topic.get(moved_topic, set()):
+                        grouped[moved_topic].append(card)
+                continue
+            grouped[topic].append(card)
+
+    for topic, cards in list(grouped.items()):
+        seen: set[str] = set()
+        deduped: list[Card] = []
+        cards.sort(key=lambda c: (c.date, c.title), reverse=True)
+        for card in cards:
+            if card.url in seen:
+                continue
+            seen.add(card.url)
+            deduped.append(card)
+        grouped[topic] = deduped
+
+    return grouped
+
+
+# ---------------------------------------------------------------------------
+# Wiki file manipulation
+# ---------------------------------------------------------------------------
+
+def parse_existing_sources(content: str) -> set[str]:
+    section = SOURCES_SECTION_RE.search(content)
+    if not section:
+        return set()
+    return set(re.findall(r"\((https?://[^)]+)\)", section.group(1)))
+
+
+def parse_frontmatter(content: str) -> tuple[dict[str, str], str]:
+    match = FRONTMATTER_RE.match(content)
+    if not match:
+        raise ValueError("missing frontmatter")
+    data: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        data[key.strip()] = value.strip()
+    return data, content[match.end():]
+
+
+def render_frontmatter(data: dict[str, str]) -> str:
+    ordered_keys = ["title", "tags", "sources", "last_updated", "status"]
+    lines = ["---"]
+    for key in ordered_keys:
+        if key in data:
+            lines.append(f"{key}: {data[key]}")
+    for key, value in data.items():
+        if key not in ordered_keys:
+            lines.append(f"{key}: {value}")
+    lines.append("---")
+    return "\n".join(lines)
+
+
+def format_source_line(card: Card) -> str:
+    return f"- [{card.title}]({card.url}) — {card.date}，xkb"
+
+
+def update_topic_file(
+    topic: str, approved_cards: list[Card], apply: bool
+) -> tuple[bool, str]:
+    path = TOPICS_DIR / f"{topic}.md"
+    if not path.exists():
+        return False, f"skip {topic}: not seeded yet"
+
+    content = path.read_text(encoding="utf-8")
+    frontmatter, body = parse_frontmatter(content)
+    existing_urls = parse_existing_sources(content)
+    new_cards = [c for c in approved_cards if c.url not in existing_urls]
+    if not new_cards:
+        return False, f"no new sources for {topic}"
+
+    source_match = SOURCES_SECTION_RE.search(content)
+    if not source_match:
+        return False, f"skip {topic}: missing sources section"
+
+    source_block = source_match.group(1).rstrip()
+    appended = "\n".join(format_source_line(c) for c in new_cards)
+    new_source_block = source_block + "\n" + appended + "\n"
+
+    frontmatter["sources"] = str(len(existing_urls) + len(new_cards))
+    frontmatter["last_updated"] = datetime.now(timezone.utc).date().isoformat()
+    rebuilt = render_frontmatter(frontmatter) + "\n\n" + body.lstrip("\n")
+    rebuilt = SOURCES_SECTION_RE.sub(
+        "\n## 來源\n" + new_source_block.rstrip() + "\n", rebuilt
+    )
+
+    if apply:
+        path.write_text(rebuilt, encoding="utf-8")
+    label = "updated" if apply else "[dry-run] would update"
+    return True, f"{label} {topic}: +{len(new_cards)} sources"
+
+
+def update_index(apply: bool) -> None:
+    lines = [
+        "# Wiki Index", "",
+        "> Topic registry for the derived knowledge layer.", "",
+        "## Status legend",
+        "- `draft` — 已註冊，但尚未形成穩定頁面",
+        "- `seeded` — 已建立第一版內容，但仍在驗證",
+        "- `active` — 持續更新中的主題頁",
+        "- `stale` — 長時間未更新，或內容需要檢查",
+        "", "## Topics",
+    ]
+    for path in sorted(TOPICS_DIR.glob("*.md")):
+        content = path.read_text(encoding="utf-8")
+        try:
+            fm, _ = parse_frontmatter(content)
+        except ValueError:
+            continue
+        title = fm.get("title", path.stem)
+        status = fm.get("status", "draft")
+        sources = fm.get("sources", "0")
+        updated = fm.get("last_updated", "unknown")
+        lines.append(
+            f"- [{title}](topics/{path.name}) — | status: {status} | sources: {sources} | last_updated: {updated}"
+        )
+    lines += ["", "## Meta", "- [Wiki Schema](WIKI-SCHEMA.md)", "- [Wiki Log](log.md)", ""]
+    if apply:
+        INDEX_PATH.write_text("\n".join(lines), encoding="utf-8")
+
+
+def append_log(messages: list[str], apply: bool) -> None:
+    if not messages:
+        return
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    block = "\n".join(
+        f"## [{timestamp}] ingest-xkb | {msg}" for msg in messages
+    ) + "\n"
+    if apply:
+        existing = LOG_PATH.read_text(encoding="utf-8")
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
+            if not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(block)
+
+
+# ---------------------------------------------------------------------------
+# P2: Absorb gate explainability helpers
+# ---------------------------------------------------------------------------
+
+def _url_title_map() -> dict[str, str]:
+    """Build url→title lookup from search index (for reject display)."""
+    try:
+        items = load_search_items()
+        return {
+            (item.get("source_url") or item.get("url") or ""): (item.get("title") or item.get("tweet_title") or "")
+            for item in items
+        }
+    except Exception:
+        return {}
+
+
+def cmd_review_rejects(topic_filter: str | None, since: str | None) -> int:
+    """Show all rejected cards from review-decisions.json with reasons."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    url_titles = _url_title_map()
+
+    skipped = [
+        (url, rec)
+        for url, rec in decisions.items()
+        if rec.get("decision") == "skip"
+    ]
+
+    if topic_filter:
+        skipped = [(u, r) for u, r in skipped if r.get("topic") == topic_filter]
+
+    if since:
+        skipped = [(u, r) for u, r in skipped if r.get("evaluated_at", "") >= since]
+
+    if not skipped:
+        print("No rejected cards found" + (f" for topic '{topic_filter}'" if topic_filter else "") + ".")
+        return 0
+
+    # Group by topic
+    by_topic: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for url, rec in skipped:
+        by_topic[rec.get("topic", "(unknown)")].append((url, rec))
+
+    total = len(skipped)
+    print(f"\n{'─' * 55}")
+    print(f"  Reject Log — {total} rejected card(s)")
+    if topic_filter:
+        print(f"  Topic filter: {topic_filter}")
+    if since:
+        print(f"  Since: {since}")
+    print(f"{'─' * 55}")
+
+    for topic in sorted(by_topic):
+        entries = by_topic[topic]
+        print(f"\n  [{topic}] — {len(entries)} rejected")
+        for url, rec in sorted(entries, key=lambda x: x[1].get("evaluated_at", ""), reverse=True):
+            title = url_titles.get(url, "")
+            display_title = (title[:55] + "…") if len(title) > 55 else title
+            dim = rec.get("dimension", "none")
+            reason = rec.get("reason", "")
+            evaluated = rec.get("evaluated_at", "")
+            print(f"    • {display_title or url[:55]}")
+            print(f"      dim: {dim}  |  {evaluated}")
+            print(f"      reason: {reason}")
+            print(f"      url: {url}")
+
+    print(f"\n{'─' * 55}")
+    print("  To override a rejection:")
+    print("  python3 sync_cards_to_wiki.py --force-absorb <url>")
+    print(f"{'─' * 55}\n")
+    return 0
+
+
+def cmd_explain(url: str) -> int:
+    """Show full absorb gate decision for a specific URL."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    rec = decisions.get(url)
+    if not rec:
+        # Try prefix match
+        matches = [(u, r) for u, r in decisions.items() if url in u]
+        if len(matches) == 1:
+            url, rec = matches[0]
+        elif len(matches) > 1:
+            print(f"Multiple matches for '{url}':")
+            for u, _ in matches:
+                print(f"  {u}")
+            return 1
+        else:
+            print(f"No decision record found for: {url}")
+            return 1
+
+    url_titles = _url_title_map()
+    title = url_titles.get(url, "")
+
+    print(f"\n{'─' * 55}")
+    print("  Absorb Gate Decision")
+    print(f"{'─' * 55}")
+    if title:
+        print(f"  Title   : {title}")
+    print(f"  URL     : {url}")
+    print(f"  Topic   : {rec.get('topic', '(unknown)')}")
+    print(f"  Decision: {rec.get('decision', '?')}")
+    print(f"  Dimension: {rec.get('dimension', 'none')}")
+    print(f"  Reason  : {rec.get('reason', '(none)')}")
+    print(f"  Date    : {rec.get('evaluated_at', '?')}")
+    print(f"{'─' * 55}")
+
+    if rec.get("decision") == "skip":
+        print(f"\n  To override this rejection:")
+        print(f"  python3 sync_cards_to_wiki.py --force-absorb '{url}'")
+        if rec.get("topic"):
+            print(f"  (will add to manual allow list for topic: {rec['topic']})")
+    print()
+    return 0
+
+
+def cmd_force_absorb(url: str, topic_override: str | None) -> int:
+    """Add a URL to the manual allow list, overriding the gate rejection."""
+    data = load_review_file()
+    decisions = data.get("decisions", {})
+
+    # Resolve topic
+    topic = topic_override
+    if not topic:
+        rec = decisions.get(url)
+        if rec:
+            topic = rec.get("topic", "")
+        if not topic:
+            # Try prefix match
+            matches = [(u, r) for u, r in decisions.items() if url in u]
+            if len(matches) == 1:
+                url, rec = matches[0]
+                topic = rec.get("topic", "")
+
+    if not topic:
+        print(f"Cannot determine topic for '{url}'.")
+        print("Use --topic SLUG to specify the target topic.")
+        return 1
+
+    # Add to topics[topic]["allow"]
+    topics = data.setdefault("topics", {})
+    topic_entry = topics.setdefault(topic, {})
+    allow_list: list[str] = topic_entry.setdefault("allow", [])
+    if url in allow_list:
+        print(f"Already in allow list for topic '{topic}': {url}")
+        return 0
+
+    allow_list.append(url)
+
+    # Update decision record to reflect manual override
+    today = datetime.now(timezone.utc).date().isoformat()
+    if url in decisions:
+        decisions[url]["decision"] = "manual-allow"
+        decisions[url]["evaluated_at"] = today
+        decisions[url]["reason"] = decisions[url].get("reason", "") + " [human override]"
+    else:
+        decisions[url] = {
+            "decision": "manual-allow",
+            "dimension": "manual",
+            "reason": "forced by --force-absorb",
+            "topic": topic,
+            "evaluated_at": today,
+        }
+
+    data["decisions"] = decisions
+    data["topics"] = topics
+    REVIEW_DECISIONS_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    url_titles = _url_title_map()
+    title = url_titles.get(url, url[:60])
+    print(f"✅ Force-absorb registered:")
+    print(f"   Title : {title}")
+    print(f"   Topic : {topic}")
+    print(f"   URL   : {url}")
+    print(f"\nNext run of --apply will include this card.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Sync x-knowledge-base cards into wiki (v4: LLM absorb gate + explainability)"
+    )
+    parser.add_argument("--topic", help="only sync one topic slug")
+    parser.add_argument("--limit", type=int, default=15, help="max cards per topic per run")
+    parser.add_argument("--review", action="store_true", help="show LLM judgment without writing")
+    parser.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
+    parser.add_argument("--no-llm", action="store_true", help="skip LLM, list all candidates")
+
+    # P2: explainability flags
+    parser.add_argument("--review-rejects", action="store_true",
+                        help="show all rejected cards with reasons (from review-decisions.json)")
+    parser.add_argument("--since", metavar="YYYY-MM-DD",
+                        help="filter --review-rejects to decisions on or after this date")
+    parser.add_argument("--explain", metavar="URL",
+                        help="show full absorb gate decision for a specific URL")
+    parser.add_argument("--force-absorb", metavar="URL",
+                        help="override gate rejection: add URL to manual allow list")
+
+    args = parser.parse_args()
+
+    # ── P2 commands (early exit) ──────────────────────────────────────────────
+    if args.review_rejects:
+        return cmd_review_rejects(args.topic, args.since)
+
+    if args.explain:
+        return cmd_explain(args.explain)
+
+    if args.force_absorb:
+        return cmd_force_absorb(args.force_absorb, args.topic)
+
+    # ── Standard sync flow ────────────────────────────────────────────────────
+    api_key = ""  # auth handled by _llm.py via openclaw CLI
+    use_llm = not args.no_llm
+
+    topic_map = load_topic_map()
+    review_decisions = load_review_decisions()
+    items = load_search_items()
+    existing_urls_by_topic = collect_topic_existing_urls()
+    grouped = iter_mapped_cards(
+        items, topic_map, args.topic, existing_urls_by_topic, review_decisions
+    )
+
+    if not grouped:
+        print("No mapped cards found for requested scope.")
+        return 0
+
+    messages: list[str] = []
+    decision_records: list[dict] = []
+
+    # Stats for absorb report
+    stats = {
+        "candidates": 0,
+        "approved": 0,
+        "skipped_llm": 0,
+        "skipped_manual": 0,
+        "manual_allow": 0,
+        "no_llm_passthrough": 0,
+    }
+
+    for topic, cards in sorted(grouped.items()):
+        topic_path = TOPICS_DIR / f"{topic}.md"
+        if not topic_path.exists():
+            print(f"skip {topic}: not seeded yet")
+            continue
+
+        wiki_content = topic_path.read_text(encoding="utf-8")
+        print(f"\n--- {topic}: {len(cards)} candidates ---")
+
+        if args.review:
+            for card in cards[:args.limit + 5]:
+                if use_llm:
+                    card_content = load_card_content(card.path)
+                    include, dimension, reason = llm_absorb_judgment(
+                        card, topic, wiki_content, card_content, api_key
+                    )
+                    verdict = "INCLUDE" if (include and dimension != "none") else "SKIP"
+                    print(f"  [{verdict}] {card.title[:60]}")
+                    print(f"    dim: {dimension} | {reason}")
+                    print(f"    url: {card.url}")
+                else:
+                    print(f"  [?] {card.title[:60]}")
+                    print(f"    tags: {', '.join(card.tags[:5])}")
+                    print(f"    url: {card.url}")
+            continue
+
+        # Apply / dry-run: run LLM absorb filter
+        approved: list[Card] = []
+        hard_allow = set((review_decisions.get(topic) or {}).get("allow") or [])
+
+        for card in cards[:args.limit]:
+            stats["candidates"] += 1
+            if card.url in hard_allow:
+                approved.append(card)
+                stats["manual_allow"] += 1
+                print(f"  ALLOW (manual) {card.title[:60]}")
+                decision_records.append({
+                    "url": card.url, "topic": topic,
+                    "decision": "manual-allow", "dimension": "", "reason": "manual allow list",
+                })
+                continue
+            if use_llm:
+                card_content = load_card_content(card.path)
+                include, dimension, reason = llm_absorb_judgment(
+                    card, topic, wiki_content, card_content, api_key
+                )
+                if include and dimension != "none":
+                    print(f"  PASS [{dimension}] {card.title[:55]} — {reason}")
+                    approved.append(card)
+                    stats["approved"] += 1
+                    decision_records.append({
+                        "url": card.url, "topic": topic,
+                        "decision": "approve", "dimension": dimension, "reason": reason,
+                    })
+                else:
+                    lbl = "low-value" if dimension == "none" else "skip"
+                    print(f"  {lbl} [{dimension}] {card.title[:55]}")
+                    stats["skipped_llm"] += 1
+                    decision_records.append({
+                        "url": card.url, "topic": topic,
+                        "decision": "skip", "dimension": dimension, "reason": reason,
+                    })
+            else:
+                approved.append(card)
+                stats["no_llm_passthrough"] += 1
+
+        if not approved:
+            print(f"  no cards passed absorb gate")
+            continue
+
+        changed, message = update_topic_file(topic, approved, apply=args.apply)
+        print(f"  {message}")
+        if changed:
+            messages.append(message)
+
+    # --- Absorb Report ---
+    print("\n" + "─" * 50)
+    print("  Absorb Report")
+    print("─" * 50)
+    print(f"  Candidates evaluated : {stats['candidates']}")
+    print(f"  Approved (LLM)       : {stats['approved']}")
+    print(f"  Manual allow         : {stats['manual_allow']}")
+    print(f"  Skipped (LLM gate)   : {stats['skipped_llm']}")
+    if stats["no_llm_passthrough"]:
+        print(f"  Pass-through (no-LLM): {stats['no_llm_passthrough']}")
+    total_approved = stats["approved"] + stats["manual_allow"] + stats["no_llm_passthrough"]
+    if stats["candidates"]:
+        rate = 100 * total_approved // stats["candidates"]
+        print(f"  Approval rate        : {rate}%")
+    if decision_records:
+        skip_reasons: dict[str, int] = {}
+        for r in decision_records:
+            if r["decision"] == "skip":
+                dim = r.get("dimension") or "none"
+                skip_reasons[dim] = skip_reasons.get(dim, 0) + 1
+        if skip_reasons:
+            print("  Skip breakdown:")
+            for dim, cnt in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+                print(f"    {cnt:3d}  {dim}")
+    print("─" * 50)
+
+    if messages and args.apply:
+        update_index(apply=True)
+        append_log(messages, apply=True)
+        save_absorb_decisions(decision_records)
+        print(f"\nApplied: {len(messages)} topic(s) updated. Decisions saved.")
+    elif messages:
+        print(f"\n[dry-run] would update {len(messages)} topic(s). Use --apply to write.")
+    else:
+        if args.apply and decision_records:
+            save_absorb_decisions(decision_records)
+        print("\nNo topics needed updates.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

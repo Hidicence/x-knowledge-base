@@ -1,0 +1,815 @@
+#!/usr/bin/env python3
+"""對話主動召回：根據當前對話 query，從 keyword index、vector index、wiki topics、gbrain pgvector 多層來源召回最相關知識。"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import os
+import sys
+from pathlib import Path
+from typing import List, Dict, Any
+
+WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
+_index_default = BOOKMARKS_DIR / "search_index.json"
+_vector_default = BOOKMARKS_DIR / "vector_index.json"
+INDEX_FILE = Path(os.getenv("INDEX_FILE", str(_index_default)))
+VECTOR_FILE = Path(os.getenv("VECTOR_INDEX_PATH", os.getenv("VECTOR_FILE", str(_vector_default))))
+TOPIC_PROFILE_FILE = Path(
+    os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
+)
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki"))) / "topics"
+GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
+LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
+LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}
+LOW_SIGNAL_SOURCES = {"x", "twitter"}
+
+STOPWORDS = {
+    "的", "了", "是", "我", "你", "他", "她", "它", "在", "有", "和", "與", "就", "也", "都", "很",
+    "想", "要", "用", "讓", "把", "跟", "對", "中", "上", "下", "嗎", "呢", "啊", "吧", "這", "那",
+    "this", "that", "with", "from", "have", "will", "about", "into", "your", "their", "they", "them",
+    "what", "when", "where", "which", "how", "why", "for", "and", "the", "are", "was", "were", "been",
+}
+
+
+def load_index(index_file: Path) -> Dict[str, Any]:
+    if not index_file.exists():
+        raise FileNotFoundError(f"search index not found: {index_file}")
+    return json.loads(index_file.read_text(encoding="utf-8"))
+
+
+def tokenize(text: str) -> List[str]:
+    raw = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", text.lower())
+    return [t for t in raw if t not in STOPWORDS]
+
+
+def clean_summary(text: str) -> str:
+    text = (text or "").strip()
+    text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"^一句話摘要\s*", "", text)
+    text = re.sub(r"^[-•]\s*", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def load_topic_profile(topic_profile_file: Path = TOPIC_PROFILE_FILE) -> Dict[str, Any]:
+    if not topic_profile_file.exists():
+        return {}
+    try:
+        return json.loads(topic_profile_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def get_topic_profile_matches(query_tokens: List[str], topic_profile: Dict[str, Any]) -> Dict[str, Any]:
+    categories = {item.get("name", ""): item.get("weight", 0.0) for item in topic_profile.get("top_categories", [])}
+    tags = {item.get("name", ""): item.get("weight", 0.0) for item in topic_profile.get("top_tags", [])}
+
+    matched_categories = [name for name in categories if name and any(token in name or name in token for token in query_tokens)]
+    matched_tags = [name for name in tags if name and any(token == name or token in name or name in token for token in query_tokens)]
+
+    cat_boost = max((categories[name] for name in matched_categories), default=0.0)
+    tag_boost = max((tags[name] for name in matched_tags), default=0.0)
+    combined = max(cat_boost, tag_boost)
+
+    return {
+        "matched_categories": matched_categories[:3],
+        "matched_tags": matched_tags[:5],
+        "topic_boost": round(combined, 4),
+    }
+
+
+def _is_valid_source_url(url: str) -> bool:
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return False
+    x_status = re.search(r"https?://(?:x|twitter)\.com/[^\s/]+/status/(\d{15,20})(?:\b|/|\?)", url)
+    x_i_status = re.search(r"https?://x\.com/i/status/(\d{15,20})(?:\b|/|\?)", url)
+    if ("x.com" in url or "twitter.com" in url) and not (x_status or x_i_status):
+        return False
+    return True
+
+
+def _normalize_source_url(url: str) -> str:
+    url = (url or "").strip().strip('"')
+    if not _is_valid_source_url(url):
+        return ""
+    return url
+
+
+def extract_source_url(md_path: Path) -> str:
+    if not md_path.exists():
+        return ""
+    text = md_path.read_text(encoding="utf-8", errors="ignore")
+    patterns = [
+        r"^source_url:\s*\"?([^\"\n]+)\"?\s*$",
+        r"^original_url:\s*\"?([^\"\n]+)\"?\s*$",
+        r"\*\*原始連結\*\*：\s*(\S+)",
+        r"https://x\.com/\S+",
+        r"https://twitter\.com/\S+",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, re.MULTILINE)
+        if m:
+            url = m.group(1).strip() if m.groups() else m.group(0).strip()
+            normalized = _normalize_source_url(url)
+            if normalized:
+                return normalized
+    return ""
+
+
+def build_relevance_reason(item: Dict[str, Any], query_tokens: List[str], topic_matches: Dict[str, Any] | None = None) -> str:
+    title = (item.get("title") or "").lower()
+    category = (item.get("category") or "").lower()
+    tags = " ".join(item.get("tags") or []).lower()
+    summary = (item.get("summary") or "").lower()
+
+    reasons = []
+    title_hits = [t for t in query_tokens if t in title]
+    tag_hits = [t for t in query_tokens if t in tags]
+    category_hits = [t for t in query_tokens if t in category]
+    summary_hits = [t for t in query_tokens if t in summary]
+
+    if title_hits:
+        reasons.append(f"標題命中：{'、'.join(title_hits[:3])}")
+    if tag_hits:
+        reasons.append(f"標籤接近：{'、'.join(tag_hits[:3])}")
+    if category_hits:
+        reasons.append(f"分類相關：{'、'.join(category_hits[:3])}")
+    if summary_hits and not reasons:
+        reasons.append(f"摘要語意接近：{'、'.join(summary_hits[:3])}")
+
+    if topic_matches:
+        if topic_matches.get("matched_categories"):
+            reasons.append(f"命中使用者高頻分類：{'、'.join(topic_matches['matched_categories'][:2])}")
+        elif topic_matches.get("matched_tags"):
+            reasons.append(f"命中使用者高頻標籤：{'、'.join(topic_matches['matched_tags'][:3])}")
+
+    return "；".join(reasons[:2]) or "主題與當前對話高度相關"
+
+
+def score_item(item: Dict[str, Any], query_tokens: List[str], query_text: str) -> int:
+    title = (item.get("title") or "").lower()
+    category = (item.get("category") or "").lower()
+    tags = " ".join(item.get("tags") or []).lower()
+    summary = (item.get("summary") or "").lower()
+    blob = (item.get("searchable") or "").lower()
+
+    score = 0
+    for token in query_tokens:
+        if token in title:
+            score += 8
+        if token in tags:
+            score += 6
+        if token in category:
+            score += 4
+        if token in summary:
+            score += 3
+        if token in blob:
+            score += 1
+
+    if query_text and query_text in blob:
+        score += 8
+
+    # 偏好有摘要、有 tags 的卡片，較適合直接對話回用
+    if item.get("summary"):
+        score += 2
+    if item.get("tags"):
+        score += 1
+
+    return score
+
+
+
+def _keyword_score(query: str, item: dict) -> float:
+    """Fraction of query tokens found in title + tags + summary."""
+    import re as _re
+    tokens = set(_re.findall(r'[\w\u4e00-\u9fff]+', query.lower()))
+    if not tokens:
+        return 0.0
+    text = " ".join([
+        (item.get("title") or "").lower(),
+        " ".join(item.get("tags") or []).lower(),
+        (item.get("summary") or "").lower(),
+    ])
+    return sum(1 for t in tokens if t in text) / len(tokens)
+
+
+def _cosine_similarity(a: list, b: list) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    denom = norm_a * norm_b
+    return dot / denom if denom > 1e-9 else 0.0
+
+
+def _normalize_vector(vec: Any) -> list[float] | None:
+    if not isinstance(vec, list) or not vec:
+        return None
+    normalized = []
+    for value in vec:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        normalized.append(float(value))
+    return normalized
+
+
+def _source_quality(item: Dict[str, Any]) -> float:
+    source = (item.get("source") or "").strip().lower()
+    source_url = (item.get("source_url") or "").strip().lower()
+    title = (item.get("title") or "").strip().lower()
+
+    score = 0.0
+    if source == "youtube":
+        score += 0.05
+    if source_url.startswith("https://"):
+        score += 0.05
+    if "github.com" in source_url:
+        score += 0.05
+    if any(host in source_url for host in ["x.com/", "twitter.com/"]):
+        score += 0.02
+    if re.match(r"^\d{4}-\d{2}-\d{2}-", title):
+        score -= 0.08
+    if source in LOW_SIGNAL_SOURCES and not source_url:
+        score -= 0.03
+    return score
+
+
+def _summary_quality(summary: str) -> float:
+    summary = clean_summary(summary)
+    if not summary:
+        return -0.08
+    if summary in LOW_SIGNAL_SUMMARIES:
+        return -0.12
+    if len(summary) < 12:
+        return -0.05
+    if len(summary) >= 40:
+        return 0.05
+    return 0.02
+
+
+def _title_quality(title: str) -> float:
+    title = (title or "").strip()
+    lowered = title.lower()
+    if not title:
+        return -0.12
+    if lowered in LOW_SIGNAL_TITLES:
+        return -0.15
+    if re.fullmatch(r"tweet\s+\d{15,20}", lowered):
+        return -0.14
+    if re.fullmatch(r"\d{15,20}", title):
+        return -0.16
+    if re.match(r"^\d{4}-\d{2}-\d{2}-", title) and len(title) < 42:
+        return -0.08
+    if len(title) < 8:
+        return -0.05
+    return 0.03
+
+
+def _category_penalty(item: Dict[str, Any]) -> float:
+    category = (item.get("category") or "").strip().lower()
+    return -0.08 if category in GENERIC_CATEGORIES else 0.0
+
+
+def _should_filter_result(item: Dict[str, Any], source_url: str) -> bool:
+    title = (item.get("title") or "").strip()
+    summary = clean_summary(item.get("summary") or "")
+    category = (item.get("category") or "").strip().lower()
+
+    if item.get("excluded"):
+        return True
+    if summary in LOW_SIGNAL_SUMMARIES and not source_url:
+        return True
+    if re.fullmatch(r"\d{15,20}", title):
+        return True
+    if re.fullmatch(r"tweet\s+\d{15,20}", title.lower()) and summary in LOW_SIGNAL_SUMMARIES:
+        return True
+    if category in GENERIC_CATEGORIES and summary in LOW_SIGNAL_SUMMARIES:
+        return True
+    return False
+
+
+def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) -> Dict[str, float]:
+    topic_boost = topic_matches.get("topic_boost", 0.0)
+    matched_categories = set(topic_matches.get("matched_categories", []))
+    matched_tags = set(topic_matches.get("matched_tags", []))
+
+    item_category = (item.get("category") or "").lower()
+    item_tags = {str(tag).lower() for tag in (item.get("tags") or [])}
+
+    topic_bonus = 0.0
+    if topic_boost > 0:
+        if item_category in matched_categories:
+            topic_bonus += round(topic_boost * 0.12, 4)
+        elif item_tags & matched_tags:
+            topic_bonus += round(topic_boost * 0.08, 4)
+
+    summary_bonus = _summary_quality(item.get("summary") or "")
+    title_bonus = _title_quality(item.get("title") or "")
+    source_bonus = _source_quality(item)
+    category_penalty = _category_penalty(item)
+
+    return {
+        "topic_bonus": topic_bonus,
+        "summary_bonus": summary_bonus,
+        "title_bonus": title_bonus,
+        "source_bonus": source_bonus,
+        "category_penalty": category_penalty,
+        "total_adjustment": round(topic_bonus + summary_bonus + title_bonus + source_bonus + category_penalty, 4),
+    }
+
+
+
+def _display_title(item: dict) -> str:
+    """Return a human-readable title. If title is just a tweet ID, use summary snippet."""
+    import re as _re
+    title = (item.get("title") or "").strip()
+    if title and not _re.match(r"^\d{10,}$", title):
+        return title
+    summary = (item.get("summary") or "").strip()
+    if summary and summary not in ("待整理", "待補充") and not summary.startswith("###"):
+        first = summary.split("。")[0].split(".")[0][:60].strip()
+        if first:
+            return first + "…"
+    return title or "(untitled)"
+
+def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Recall via gbrain hybrid search (pgvector RRF + Gemini).
+    Returns same format as semantic_recall() for drop-in replacement.
+    Falls back silently if gbrain is not available.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xbrain_recall import xbrain_query as gbrain_query
+    except ImportError:
+        return []
+
+    try:
+        raw = gbrain_query(query, limit=limit)
+    except RuntimeError:
+        return []
+
+    results = []
+    for item in raw:
+        chunk = item.get("chunk_text", "")
+        # Extract title from first markdown heading
+        title_m = re.search(r"^#\s+(.+)$", chunk, re.MULTILINE)
+        title = title_m.group(1).strip() if title_m else item.get("title") or item.get("slug", "")
+
+        # Extract summary from 雙語摘要 ZH line
+        zh_m = re.search(r"ZH[:\s]+(.+?)(?:\n|EN:|$)", chunk, re.IGNORECASE)
+        summary = zh_m.group(1).strip() if zh_m else chunk[:120].replace("\n", " ").strip()
+
+        source_url = item.get("source_url") or ""
+        score = item.get("score", 0.0)
+        slug = item.get("slug", "")
+
+        results.append({
+            "title": title,
+            "summary": summary,
+            "category": item.get("type", "knowledge-card"),
+            "tags": [],
+            "relative_path": f"cards/{slug}.md",
+            "source_url": source_url,
+            "score": round(score, 4),
+            "topic_boost": 0.0,
+            "matched_categories": [],
+            "matched_tags": [],
+            "ranking_adjustments": {},
+            "relevance_reason": f"gbrain 語意+關鍵字混合 RRF ({score:.4f})",
+        })
+    return results
+
+
+def wiki_recall(query: str, limit: int = 2) -> List[Dict[str, Any]]:
+    """第一層召回：從 wiki/topics/*.md 找合成知識段落。"""
+    if not WIKI_TOPICS_DIR.exists():
+        return []
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return []
+
+    results = []
+    for path in WIKI_TOPICS_DIR.glob("*.md"):
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        # 從 frontmatter 取 title
+        fm_match = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
+        topic_title = path.stem
+        if fm_match:
+            title_m = re.search(r"^title:\s*(.+)$", fm_match.group(1), re.MULTILINE)
+            if title_m:
+                topic_title = title_m.group(1).strip().strip('"')
+
+        # 移除 frontmatter，切成 ## 段落
+        body = re.sub(r"^---\n.*?\n---\n", "", content, flags=re.DOTALL).strip()
+        sections = re.split(r"\n(?=##+ )", body)
+
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+            first_line = section.split("\n")[0]
+            section_title = re.sub(r"^#+\s*", "", first_line).strip()
+            section_body = "\n".join(section.split("\n")[1:]).strip()
+            if not section_body:
+                continue
+
+            text_lower = (section_title + " " + section_body).lower()
+            score = 0
+            for token in query_tokens:
+                if token in section_title.lower():
+                    score += 6
+                elif token in text_lower:
+                    score += 2
+
+            if score < 4:
+                continue
+
+            # 擷取有意義的摘錄（跳過純分隔線）
+            excerpt_lines = [l for l in section_body.split("\n")
+                             if l.strip() and not re.fullmatch(r"-{3,}", l.strip())]
+            excerpt = " ".join(excerpt_lines)[:240].strip()
+            if len(excerpt) >= 240:
+                excerpt = excerpt.rsplit(" ", 1)[0] + "…"
+
+            results.append({
+                "topic_title": topic_title,
+                "section_title": section_title,
+                "excerpt": excerpt,
+                "path": f"wiki/topics/{path.name}",
+                "score": score,
+            })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+
+    # 每個 topic 最多保留最高分的一個段落
+    seen: set = set()
+    deduped = []
+    for r in results:
+        if r["topic_title"] not in seen:
+            seen.add(r["topic_title"])
+            deduped.append(r)
+
+    return deduped[:limit]
+
+
+def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
+                    index_file: Path = INDEX_FILE,
+                    topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
+    """Semantic recall using vector similarity. Falls back to keyword if index missing."""
+    if not vector_file.exists():
+        print(f"⚠️  Vector index not found: {vector_file}", file=sys.stderr)
+        print("   Falling back to keyword search. Run: python3 scripts/build_vector_index.py", file=sys.stderr)
+        return []
+
+    # Load vector index
+    import json as _json
+    vdata = _json.loads(vector_file.read_text(encoding="utf-8"))
+    vectors = vdata.get("vectors", {})
+    if not vectors:
+        return []
+
+    normalized_vectors: dict[str, list[float]] = {}
+    expected_dim = None
+    for rel_path, raw_vec in vectors.items():
+        norm_vec = _normalize_vector(raw_vec)
+        if norm_vec is None:
+            print(f"⚠️  Invalid vector payload for: {rel_path}", file=sys.stderr)
+            continue
+        if expected_dim is None:
+            expected_dim = len(norm_vec)
+        elif len(norm_vec) != expected_dim:
+            print(
+                f"⚠️  Vector dimension mismatch for: {rel_path} "
+                f"(expected {expected_dim}, got {len(norm_vec)})",
+                file=sys.stderr,
+            )
+            continue
+        normalized_vectors[rel_path] = norm_vec
+
+    if not normalized_vectors:
+        print("⚠️  No valid vectors found in vector index. Falling back to keyword search.", file=sys.stderr)
+        return []
+
+    # Embed the query
+    try:
+        import sys as _sys, os as _os
+        _skill_dir = Path(__file__).resolve().parent.parent
+        if str(_skill_dir) not in _sys.path:
+            _sys.path.insert(0, str(_skill_dir))
+        from tools.embedding_providers import get_provider
+        provider = get_provider()
+        query_vec = provider.embed(query)
+        query_vec = _normalize_vector(query_vec)
+        if query_vec is None:
+            print("⚠️  Query embedding payload is invalid. Falling back to keyword search.", file=sys.stderr)
+            return []
+        if expected_dim is not None and len(query_vec) != expected_dim:
+            print(
+                f"⚠️  Query embedding dimension mismatch (expected {expected_dim}, got {len(query_vec)}). "
+                "Falling back to keyword search.",
+                file=sys.stderr,
+            )
+            return []
+    except EnvironmentError as e:
+        print(f"⚠️  {e}", file=sys.stderr)
+        print("   Falling back to keyword search.", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"⚠️  Embedding failed: {e}", file=sys.stderr)
+        return []
+
+    # Compute cosine similarity for all cards
+    scored = []
+    for rel_path, vec in normalized_vectors.items():
+        sim = _cosine_similarity(query_vec, vec)
+        scored.append((rel_path, sim))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top = scored[:limit * 2]  # fetch extra to allow filtering
+
+    # Load search index for metadata
+    data = load_index(index_file)
+    items = data.get("items", [])
+    index_by_path = {
+        (item.get("relative_path") or item.get("path") or ""): item
+        for item in items
+    }
+    query_tokens = tokenize(query)
+    topic_profile = load_topic_profile(topic_profile_file)
+    topic_matches = get_topic_profile_matches(query_tokens, topic_profile) if topic_profile else {}
+
+    results = []
+    for rel_path, sim in top:
+        if sim < 0.25:
+            break
+        item = index_by_path.get(rel_path)
+        if not item:
+            continue
+
+        source_url = _normalize_source_url(item.get("source_url") or "")
+        if not source_url:
+            md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+            source_url = extract_source_url(md_path)
+
+        kw = _keyword_score(query, item)
+        hybrid = 0.65 * sim + 0.35 * kw
+        adjustments = _ranking_adjustments(item, topic_matches)
+        final_score = round(hybrid + adjustments["total_adjustment"], 4)
+        if _should_filter_result(item, source_url):
+            continue
+        reason = [f"語意 {sim:.0%}", f"關鍵字 {kw:.0%}"]
+        if adjustments["topic_bonus"] > 0:
+            reason.append(f"主題加權 +{adjustments['topic_bonus']:.2f}")
+        if adjustments["summary_bonus"] != 0:
+            reason.append(f"摘要調整 {adjustments['summary_bonus']:+.2f}")
+        if adjustments["title_bonus"] != 0:
+            reason.append(f"標題調整 {adjustments['title_bonus']:+.2f}")
+        if adjustments["source_bonus"] != 0:
+            reason.append(f"來源調整 {adjustments['source_bonus']:+.2f}")
+        if adjustments["category_penalty"] != 0:
+            reason.append(f"泛分類調整 {adjustments['category_penalty']:+.2f}")
+        results.append({
+            "title": _display_title(item),
+            "summary": clean_summary(item.get("summary") or ""),
+            "category": item.get("category") or "general",
+            "tags": item.get("tags") or [],
+            "relative_path": rel_path,
+            "source_url": source_url,
+            "score": final_score,
+            "topic_boost": topic_matches.get("topic_boost", 0.0),
+            "matched_categories": topic_matches.get("matched_categories", []),
+            "matched_tags": topic_matches.get("matched_tags", []),
+            "ranking_adjustments": adjustments,
+            "relevance_reason": " + ".join(reason),
+        })
+
+    # Re-sort by hybrid score and trim to limit
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:limit]
+
+def recall(query: str, limit: int, min_score: int, index_file: Path = INDEX_FILE,
+           topic_profile_file: Path = TOPIC_PROFILE_FILE) -> List[Dict[str, Any]]:
+    data = load_index(index_file)
+    items = data.get("items", [])
+    query = query.strip()
+    query_tokens = tokenize(query)
+    if not query_tokens and not query:
+        return []
+
+    topic_profile = load_topic_profile(topic_profile_file)
+    topic_matches = get_topic_profile_matches(query_tokens, topic_profile) if topic_profile else {}
+    topic_boost = topic_matches.get("topic_boost", 0.0)
+
+    results = []
+    for item in items:
+        base_score = float(score_item(item, query_tokens, query.lower()))
+        adjustments = _ranking_adjustments(item, topic_matches)
+        score = base_score + adjustments["total_adjustment"] * 10
+
+        if score < min_score:
+            continue
+
+        rel_path = item.get("relative_path") or item.get("path") or ""
+        # Use pre-indexed source_url first; fall back to file scan only if missing
+        source_url = _normalize_source_url(item.get("source_url") or "")
+        if not source_url:
+            md_path = BOOKMARKS_DIR / rel_path if rel_path and not rel_path.startswith("/") else Path(rel_path)
+            source_url = extract_source_url(md_path)
+        if _should_filter_result(item, source_url):
+            continue
+        results.append({
+            "title": _display_title(item),
+            "summary": clean_summary(item.get("summary") or ""),
+            "category": item.get("category") or "general",
+            "tags": item.get("tags") or [],
+            "relative_path": rel_path,
+            "source_url": source_url,
+            "score": round(score, 4),
+            "topic_boost": topic_boost,
+            "matched_categories": topic_matches.get("matched_categories", []),
+            "matched_tags": topic_matches.get("matched_tags", []),
+            "ranking_adjustments": adjustments,
+            "relevance_reason": build_relevance_reason(item, query_tokens, topic_matches),
+        })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:limit]
+
+
+def print_markdown(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
+        print("沒有找到適合主動召回的知識。")
+        return
+
+    print(f"# 對話主動召回結果\n")
+    print(f"查詢：{query}\n")
+
+    if wiki_hits:
+        print("## Wiki 知識層\n")
+        for hit in wiki_hits:
+            print(f"### {hit['topic_title']} — {hit['section_title']}")
+            print(f"{hit['excerpt']}")
+            print(f"- 來源：{hit['path']}\n")
+
+    if results:
+        print("## 原始卡片層\n")
+        for idx, item in enumerate(results, start=1):
+            print(f"### {idx}. {item['title']}")
+            print(f"- 分類：{item['category']}")
+            if item.get("tags"):
+                print(f"- 標籤：{', '.join(item['tags'][:8])}")
+            print(f"- 相關原因：{item['relevance_reason']}")
+            print(f"- 分數：{item['score']}")
+            if item.get("summary"):
+                print(f"- 一句話摘要：{item['summary'][:180]}")
+            if item.get("source_url"):
+                print(f"- 原文連結：{item['source_url']}")
+            print(f"- 檔案：{item['relative_path']}\n")
+
+
+def print_prompt(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
+        print("NO_RECALL")
+        return
+
+    if wiki_hits:
+        print("根據你的知識庫，這個主題有以下整理：")
+        for hit in wiki_hits:
+            print(f"- [{hit['topic_title']}] {hit['section_title']}：{hit['excerpt'][:120]}")
+
+    if results:
+        print("相關原始書籤：")
+        for item in results:
+            print(f"- {item['title']}")
+            if item.get("summary"):
+                print(f"  摘要：{item['summary'][:120]}")
+            print(f"  為什麼相關：{item['relevance_reason']}")
+            if item.get("source_url"):
+                print(f"  原文：{item['source_url']}")
+            else:
+                print(f"  檔案：{item['relative_path']}")
+
+
+def print_chat(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], query: str) -> None:
+    if not wiki_hits and not results:
+        print("NO_RECALL")
+        return
+
+    if wiki_hits:
+        hit = wiki_hits[0]
+        print(f"[知識庫] {hit['topic_title']}：{hit['excerpt'][:120]}")
+
+    if results:
+        top = results[:2]
+        print("相關書籤：")
+        for item in top:
+            summary = item.get("summary") or "這篇和你現在聊的主題接近。"
+            reason = item.get("relevance_reason") or "主題接近"
+            print(f"- {item['title']}：{summary[:90]}")
+            print(f"  為什麼相關：{reason}")
+            if item.get("source_url"):
+                print(f"  原文：{item['source_url']}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Recall relevant X bookmarks for conversation use")
+    parser.add_argument("query", nargs="?", help="當前對話查詢")
+    parser.add_argument("--query-file", help="從檔案讀取 query")
+    parser.add_argument("--limit", type=int, default=3)
+    parser.add_argument("--min-score", type=int, default=6)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--format", choices=["markdown", "prompt", "chat"], default="markdown")
+    parser.add_argument("--index-file", default=str(INDEX_FILE))
+    parser.add_argument("--semantic", action="store_true",
+                        help="Force semantic search (default: auto-detect)")
+    parser.add_argument("--no-semantic", action="store_true",
+                        help="Force keyword search even if vector index exists")
+    parser.add_argument("--gbrain", action="store_true",
+                        help="Use gbrain hybrid search backend (pgvector + RRF + Gemini)")
+    parser.add_argument("--vector-file", default=str(VECTOR_FILE))
+    parser.add_argument("--topic-profile-file", default=str(TOPIC_PROFILE_FILE))
+    parser.add_argument("--no-wiki", action="store_true",
+                        help="Skip wiki layer, search cards only")
+    args = parser.parse_args()
+
+    query = args.query or ""
+    if args.query_file:
+        query = Path(args.query_file).read_text(encoding="utf-8").strip()
+    if not query.strip():
+        print("請提供 query", file=sys.stderr)
+        return 1
+
+    # 第一層：wiki 知識層（先查合成知識）
+    wiki_hits: List[Dict[str, Any]] = []
+    if not args.no_wiki:
+        wiki_hits = wiki_recall(query, limit=2)
+
+    # 第二層：cards 細節層（gbrain > semantic > keyword）
+    vector_path = Path(args.vector_file)
+    topic_profile_path = Path(args.topic_profile_file)
+
+    # Auto-detect gbrain: read config from xbrain_recall (openclaw.json + env vars)
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xbrain_recall import GBRAIN_AVAILABLE as _gbrain_available, GEMINI_API_KEY as _gemini_key
+    except ImportError:
+        _gbrain_available = False
+        _gemini_key = ""
+    use_gbrain = args.gbrain or (not args.no_semantic and _gbrain_available and bool(_gemini_key))
+
+    search_mode = "keyword"
+    if use_gbrain:
+        results = gbrain_semantic_recall(query, args.limit)
+        if results:
+            search_mode = "gbrain"
+        else:
+            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
+            search_mode = "keyword_fallback"
+    elif (not args.no_semantic) and (args.semantic or vector_path.exists()):
+        results = semantic_recall(query, args.limit, vector_path, Path(args.index_file), topic_profile_path)
+        if results:
+            search_mode = "semantic"
+        else:
+            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
+            search_mode = "keyword_fallback"
+    else:
+        results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
+
+    _mode_labels = {
+        "gbrain": "⚡ gbrain 混合搜尋（RRF + Gemini）",
+        "semantic": "🔍 語意向量搜尋",
+        "keyword": "🔤 關鍵字搜尋",
+        "keyword_fallback": "🔤 關鍵字搜尋（語意降級）",
+    }
+    if not args.json:
+        wiki_label = "" if args.no_wiki else f" + 📖 Wiki({'有' if wiki_hits else '無'}命中)"
+        print(f"[搜尋模式：{_mode_labels.get(search_mode, search_mode)}{wiki_label}]")
+
+    if args.json:
+        print(json.dumps({
+            "query": query,
+            "wiki_hits": wiki_hits,
+            "results": results,
+            "search_mode": search_mode,
+        }, ensure_ascii=False, indent=2))
+    elif args.format == "prompt":
+        print_prompt(wiki_hits, results, query)
+    elif args.format == "chat":
+        print_chat(wiki_hits, results, query)
+    else:
+        print_markdown(wiki_hits, results, query)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

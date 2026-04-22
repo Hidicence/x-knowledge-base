@@ -1,0 +1,30 @@
+{
+  "skill_name": "x-knowledge-base",
+  "evals": [
+    {
+      "id": "bookmark-reco-basic",
+      "prompt": "執行 x-knowledge-base 推薦流程，回報 Top 5，格式需包含來源/作者/一句重點/連結。"
+    },
+    {
+      "id": "bookmark-reco-dedup",
+      "prompt": "若 following 與 for-you 出現同一篇貼文，輸出只保留一筆，並標註來源優先順序。"
+    },
+    {
+      "id": "bookmark-reco-interest-fit",
+      "prompt": "根據書籤偏好（Vibe Coding、AI Agents、ESG/Carbon）排序推薦，並說明每則命中主題。"
+    },
+    {
+      "id": "bookmark-reco-low-noise",
+      "prompt": "降低廣告/低資訊量內容，優先高資訊密度貼文，輸出 Top 5。"
+    },
+    {
+      "id": "bookmark-reco-stable-output",
+      "prompt": "連續執行兩次推薦，若結果相近且無新亮點，第二次應回覆 NO_REPLY。"
+    }
+  ],
+  "metrics": {
+    "interest_hit_rate": "Top5 中命中目標主題（Vibe/Agent/ESG）比例，目標 >= 0.8",
+    "duplicate_rate": "Top5 中重複 tweet 比例，目標 <= 0.05",
+    "noise_rate": "低價值內容比例（僅短連結/無上下文廣告），目標 <= 0.2"
+  }
+}

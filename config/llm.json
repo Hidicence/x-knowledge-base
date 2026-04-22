@@ -1,0 +1,8 @@
+{
+  "_comment": "XKB unified LLM config. Change 'model' here to switch all scripts at once.",
+  "model": "openai-codex/gpt-5.4",
+  "_examples": {
+    "minimax":     "MiniMax-M2.7",
+    "gpt_5_4":     "openai-codex/gpt-5.4"
+  }
+}

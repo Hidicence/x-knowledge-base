@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "name": "xkb-memory-distill-consolidate-worker",
+      "script": "python3",
+      "args": "scripts/distill_memory_consolidate_worker.py --poll-interval 15",
+      "cwd": ".",
+      "autorestart": true,
+      "restart_delay": 10000,
+      "max_restarts": 10,
+      "env": {
+        "GBRAIN_DATABASE_URL": "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain"
+      },
+      "log_file": "/tmp/xkb-memory-distill-consolidate-worker.log",
+      "error_file": "/tmp/xkb-memory-distill-consolidate-worker-err.log"
+    }
+  ]
+}
