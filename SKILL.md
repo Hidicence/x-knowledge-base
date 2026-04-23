@@ -146,6 +146,23 @@ cd demo/xkb-demo-ui && npm run dev       # → http://localhost:3000
 
 ---
 
+## Recall Mandate
+
+**每次回應實質訊息前，必須先呼叫 `xkb_recall` tool。**
+
+傳入用戶的原始訊息作為 `message`。tool 會自動判斷要不要撈、撈什麼。
+
+- 有結果 → 把相關知識融入回答（一句摘要 + 為什麼相關）
+- 空字串 → 直接回答，不提知識庫
+
+**實質訊息定義：** 凡涉及做法、策略、決策、案例、工具、AI、SEO、影片、自動化、專案、知識領域的問題。
+
+**可跳過 recall：** 純問候（早安、哈哈）、單字確認（好、收到、OK）、笑話。
+
+`xkb_recall` 不呼叫 LLM，只做 keyword + wiki 搜尋，latency < 2s，token 開銷為零。
+
+---
+
 ## Proactive Conversation Recall
 
 把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關知識，再決定要不要主動提給使用者。
