@@ -290,7 +290,9 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         all_results = wiki_result_dicts + assoc_results + contrarian_results
         _dedup_mark_shown(all_results)
         has_wiki = bool(wiki_text)
-        has_assoc = bool(assoc_text and len(assoc_text) >= 20)
+        # has_assoc must check dedup-filtered results, not raw assoc_text
+        # (avoids showing "有 N 個相關片段" when everything was dedup'd)
+        has_assoc = bool(assoc_results) or bool(assoc_text and len(assoc_text) >= 20 and wiki_result_dicts)
         has_content = has_wiki or has_assoc
 
         if not has_content and not contrarian_text:
@@ -317,12 +319,12 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # Wiki first (highest authority)
         if has_wiki:
             text_parts.append(wiki_text)
-        # Bookmark supplement
-        if has_assoc:
+        # Bookmark supplement — only if there are actual (non-dedup'd) results
+        if has_assoc and assoc_results:
             if delivery_mode == "side_hint":
                 text_parts.append(_format_side_hint(assoc_text))
             elif not has_wiki:
-                text_parts.append(_format_expandable(query, len(assoc_results) or 1))
+                text_parts.append(_format_expandable(query, len(assoc_results)))
         if contrarian_text:
             text_parts.append(contrarian_text)
         formatted_text = "\n\n".join(text_parts)
