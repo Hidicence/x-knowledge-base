@@ -89,15 +89,22 @@ export default function ChatPanel({ onResult, onRecall }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
       })
-      const data: AskResult = await res.json()
+      // Parse JSON regardless of status code
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
       clearTimeout(t1); clearTimeout(t2)
       setPhase(-1)
-      setMessages(prev => [...prev, { role: 'assistant', text: data.answer, result: data }])
-      onResult(data)
-    } catch {
+      if (!res.ok || !data.answer) {
+        const errMsg = data?.error || data?.answer || `伺服器錯誤 (${res.status})，請查看終端機 log`
+        setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${errMsg}` }])
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', text: data.answer, result: data }])
+        onResult(data as AskResult)
+      }
+    } catch (err) {
       clearTimeout(t1); clearTimeout(t2)
       setPhase(-1)
-      setMessages(prev => [...prev, { role: 'assistant', text: '⚠️ Error calling XKB.' }])
+      const msg = err instanceof Error ? err.message : '連線失敗，請確認 dev server 是否正在執行'
+      setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msg}` }])
     } finally {
       setLoading(false)
     }
