@@ -20,7 +20,13 @@ import sys
 from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-ROUTER_SCRIPT = WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py"
+
+# Dual-mode path resolution:
+# - Local/direct: OPENCLAW_WORKSPACE = repo root  → WORKSPACE/scripts/recall_router.py
+# - OpenClaw:     OPENCLAW_WORKSPACE = ~/.openclaw/workspace → WORKSPACE/skills/x-knowledge-base/scripts/recall_router.py
+_direct = WORKSPACE / "scripts" / "recall_router.py"
+_oc = WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py"
+ROUTER_SCRIPT = _direct if _direct.exists() else _oc
 
 SERVER_INFO = {
     "name": "xkb-recall",
