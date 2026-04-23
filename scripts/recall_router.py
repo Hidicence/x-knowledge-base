@@ -133,19 +133,22 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
     if not script.exists():
         return "", []
     try:
+        _sub_env = {**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
+                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
         # Get chat format output
         result_chat = subprocess.run(
             [sys.executable, str(script), query, "--format", "chat", "--limit", str(limit)],
-            capture_output=True, text=True, timeout=20,
-            env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE)},
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+            env=_sub_env,
         )
         chat_text = result_chat.stdout.strip()
 
         # Get JSON output for structured results
         result_json = subprocess.run(
             [sys.executable, str(script), query, "--json", "--limit", str(limit)],
-            capture_output=True, text=True, timeout=20,
-            env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE)},
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+            env=_sub_env,
         )
         try:
             raw_results = json.loads(result_json.stdout)

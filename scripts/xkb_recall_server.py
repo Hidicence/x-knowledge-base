@@ -69,8 +69,11 @@ def _run_recall_structured(message: str) -> dict:
             [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
-            env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE)},
+            env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
+                 "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         )
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
