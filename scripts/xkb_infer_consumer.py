@@ -138,6 +138,26 @@ def main():
             result_file = data.get("result_file", "")
             model = data.get("model") or "MiniMax-M2.7"
             timeout_seconds = max(60, min(LOCK_TTL_SECONDS - 30, 600))
+
+            # Re-derive result_file from the request artifact so old jobs with
+            # stale chunk-0000.json paths are transparently corrected.
+            if request_file:
+                try:
+                    req_data = json.loads(Path(request_file).read_text(encoding="utf-8"))
+                    _task = req_data.get("task", "")
+                    _card_id = req_data.get("card_id") or ""
+                    _chunk_index = req_data.get("chunk_index", 0)
+                    _req_path = Path(request_file)
+                    if _task == "bookmark_enrich_card" and _card_id:
+                        result_file = str(
+                            _req_path.parent.parent / "results" / f"bookmark-{_card_id}.json"
+                        )
+                    elif not result_file:
+                        result_file = str(
+                            _req_path.parent.parent / "results" / f"chunk-{_chunk_index:04d}.json"
+                        )
+                except Exception:
+                    pass
             result_path = Path(result_file)
 
             print(f"[consumer] job #{job_id} request={request_file} model={model}", file=sys.stderr)
