@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "name": "xkb-infer-consumer",
+      "script": "python3",
+      "args": "scripts/xkb_infer_consumer.py",
+      "cwd": ".",
+      "autorestart": true,
+      "restart_delay": 10000,
+      "max_restarts": 10,
+      "env": {
+        "GBRAIN_DATABASE_URL": "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain"
+      },
+      "log_file": "/tmp/xkb-infer-consumer.log",
+      "error_file": "/tmp/xkb-infer-consumer-err.log"
+    }
+  ]
+}
