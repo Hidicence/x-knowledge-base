@@ -18,7 +18,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 import distill_memory_to_wiki as distill
 
-GBRAIN_DB_URL = os.getenv("GBRAIN_DATABASE_URL", "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain")
+GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 QUEUE = "xkb-memory-distill"
 CHUNK_QUEUE = "xkb-memory-distill-chunk"
 LOCK_DURATION_S = 900

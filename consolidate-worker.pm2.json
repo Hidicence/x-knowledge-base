@@ -8,9 +8,6 @@
       "autorestart": true,
       "restart_delay": 10000,
       "max_restarts": 10,
-      "env": {
-        "GBRAIN_DATABASE_URL": "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain"
-      },
       "log_file": "/tmp/xkb-memory-distill-consolidate-worker.log",
       "error_file": "/tmp/xkb-memory-distill-consolidate-worker-err.log"
     }

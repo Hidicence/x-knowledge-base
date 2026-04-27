@@ -18,3 +18,10 @@ __pycache__/
 *.swo
 /tmp/
 vector_index.json
+
+# ── Secrets 目錄（只允許 *.example 進 repo）────────────────────────────────
+.secrets/
+!.secrets/*.example
+
+# ── PM2 runtime JSON（含真實路徑等機器相關設定）─────────────────────────────
+# 如需版控，改用 *.pm2.example.json 作模板

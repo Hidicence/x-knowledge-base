@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import distill_memory_to_wiki as distill
 from xkb_infer_enqueue import enqueue_request
 
-GBRAIN_DB_URL = os.getenv("GBRAIN_DATABASE_URL", "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain")
+GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 QUEUE = "xkb-memory-distill-chunk"
 LOCK_DURATION_S = 600
 POLL_INTERVAL_S = 15

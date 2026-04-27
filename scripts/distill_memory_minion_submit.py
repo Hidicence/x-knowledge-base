@@ -11,7 +11,7 @@ import psycopg2
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 MEMORY_DIR = WORKSPACE / "memory"
-GBRAIN_DB_URL = os.getenv("GBRAIN_DATABASE_URL", "postgresql://gbrain:REDACTED_ROTATE_THIS_PASSWORD@127.0.0.1:5432/gbrain")
+GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 QUEUE = "xkb-memory-distill"
 DEFAULT_TIMEOUT_MS = 900000
 DEFAULT_MAX_ATTEMPTS = 3
