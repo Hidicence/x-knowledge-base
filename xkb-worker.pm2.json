@@ -2,7 +2,7 @@
   "name": "xkb-minion-worker",
   "script": "python3",
   "args": "scripts/xkb_minion_worker.py --poll-interval 15",
-  "cwd": "/root/.openclaw/workspace/skills/x-knowledge-base",
+  "cwd": ".",
   "autorestart": true,
   "restart_delay": 10000,
   "max_restarts": 10,
