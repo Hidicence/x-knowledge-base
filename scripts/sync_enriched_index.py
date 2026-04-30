@@ -114,10 +114,16 @@ def _resolve_item_id(item: dict) -> str:
         m = re.match(r"^(\d{15,20})", stem)
         if m:
             return m.group(1)
+        # Non-numeric stems (github_star-xxx, github_fork-xxx, local cards) — use full stem as id
+        if stem:
+            return stem
     return ""
 
 
 def _resolve_card_id(text: str, stem: str) -> str:
+    # Non-numeric stems (github/local cards) — stem itself is the stable id
+    if stem and not re.match(r"\d", stem):
+        return stem
     if re.fullmatch(r"\d{15,20}", stem):
         return stem
     m = re.match(r"^(\d{15,20})", stem)
@@ -138,16 +144,17 @@ def _is_valid_orphan_card(text: str, card_id: str, source_url: str, title: str, 
     _cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
     if not _cleaned.startswith("---"):
         return False
-    if _extract_frontmatter_value(text, "type") != "x-knowledge-card":
+    card_type = _extract_frontmatter_value(text, "type")
+    if card_type not in {"x-knowledge-card", "knowledge-card"}:
         return False
     source_type = _extract_frontmatter_value(text, "source_type")
-    if source_type not in {"x-bookmark", "youtube"}:
+    if source_type not in {"x-bookmark", "youtube", "github_fork", "github_star", "local-paper", "pubmed"}:
         return False
     if not _looks_like_url(source_url):
         return False
     if source_type == "x-bookmark" and not _extract_status_id(source_url):
         return False
-    if source_type == "youtube" and not card_id:
+    if source_type in {"youtube", "github_fork", "github_star", "local-paper", "pubmed"} and not card_id:
         return False
     if _placeholder_text(title) and _placeholder_text(summary):
         return False
@@ -233,6 +240,9 @@ def main() -> None:
         print(f"   (first 5 not found: {not_found_ids[:5]})")
 
     added = 0
+    existing_ids = {_resolve_item_id(item) for item in items}
+    existing_urls = {(item.get("source_url") or "").strip() for item in items if (item.get("source_url") or "").strip()}
+    existing_paths = {(item.get("relative_path") or item.get("path") or "").strip() for item in items}
     for raw_card_id in not_found_ids:
         card_path = CARDS_DIR / f"{raw_card_id}.md"
         if not card_path.exists():
@@ -251,6 +261,8 @@ def main() -> None:
 
         card_abs = str(card_path)
         card_rel = _relative_from_workspace(card_path)
+        if resolved_id in existing_ids or source_url in existing_urls or card_rel in existing_paths or card_abs in existing_paths:
+            continue
         new_entry = {
             "id": resolved_id,
             "path": card_abs,
@@ -260,7 +272,7 @@ def main() -> None:
             "tags": tags,
             "source_url": source_url,
             "category": category,
-            "source": source_type,
+            "source_type": source_type,
             "enriched": True,
         }
         if not args.dry_run:
