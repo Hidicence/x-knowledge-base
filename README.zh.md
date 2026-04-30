@@ -21,6 +21,91 @@ XKB 建立在不同的前提上：知識有生命週期。目標不是存更多�
 
 ---
 
+
+## 先從簡單模式開始：三種運行方式
+
+XKB 可以分層使用。第一天不需要把 XBrain/GBrain 全部裝好。
+
+| 模式 | 適合情境 | 需要什麼 | 檢索方式 |
+|------|----------|----------|----------|
+| **Lite** | 第一次使用、本地筆記、小型知識庫 | Python + 一個 LLM provider | `search_index.json` 關鍵字搜尋 |
+| **Enhanced** | 想要更好的語意召回，但不想架服務 | Lite + `GEMINI_API_KEY` | 平面 `vector_index.json` 降級向量搜尋 |
+| **Full / XBrain** | 日常使用、大型知識庫、agent workflow | OpenClaw + GBrain/XBrain | Postgres/pgvector hybrid RRF 搜尋 |
+
+建議路徑：
+1. 先用 **Lite** 模式 ingest 幾份本地筆記。
+2. 需要語意搜尋時，再加 Gemini embedding。
+3. 知識庫變大、需要 hybrid search 和 durable jobs 時，再安裝 XBrain/GBrain。
+
+你的個人卡片、索引、圖譜資料與 runtime state 應該留在本機，不要進 git。這個 repo 放的是工具與模板，不是你的私人知識庫。
+
+---
+
+## 10 分鐘 Lite Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/Hidicence/x-knowledge-base
+cd x-knowledge-base
+
+# 2. 選一個 workspace 放私人資料
+export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
+mkdir -p "$OPENCLAW_WORKSPACE/memory/cards" "$OPENCLAW_WORKSPACE/memory/bookmarks"
+
+# 3. 設定 LLM provider
+cp .env.example .env
+# 編輯 .env，或在 shell export LLM_MODEL / LLM_API_URL / LLM_API_KEY。
+
+# 4. Ingest 本地 markdown 資料夾
+python3 scripts/local_ingest.py /path/to/notes --category notes
+
+# 5. 建立降級搜尋索引
+bash scripts/build_search_index.sh
+
+# 6. 搜尋或提問
+bash scripts/search_bookmarks.sh "agent memory"
+python3 scripts/xkb_ask.py "我的筆記裡浮現了哪些模式？"
+```
+
+這個模式不需要 X/Twitter cookies、GBrain、Postgres、Bun，也不需要 OpenClaw cron。
+
+---
+
+## 隱私與公開 repo 整潔規則
+
+XKB 的設計目標是：公開 repo 保持乾淨，你的私人知識庫留在本機。
+
+**不要 commit：**
+- `.env` 或 `.secrets/` 底下的真實檔案
+- X/Twitter cookies，例如 `BIRD_AUTH_TOKEN` / `BIRD_CT0`
+- API keys，例如 `LLM_API_KEY`、`GEMINI_API_KEY`、`OPENAI_API_KEY`
+- 產生出的個人資料：`memory/cards/`、`memory/bookmarks/search_index.json`、`memory/bookmarks/vector_index.json`
+- demo 輸出：`demo/xkb-demo-ui/public/graph-data.json`
+- runtime queues、logs、caches、PM2 dumps、機器專屬路徑
+
+**可以 commit：**
+- source scripts
+- config templates / examples
+- docs
+- sample graph/schema files
+- `.env.example` / `.secrets/*.example` placeholder
+
+發布前建議跑：
+
+```bash
+git status --short
+git diff --check
+python3 scripts/health_check_pipeline.py
+```
+
+針對 index hygiene：
+
+```bash
+python3 scripts/prune_duplicate_index_rows.py --dry-run
+python3 scripts/sync_enriched_index.py --dry-run  # 若你的版本支援
+```
+
+---
 ## 如何運作
 
 ### 完整 Pipeline
@@ -282,7 +367,9 @@ python3 scripts/xkb_ask.py "agent memory design" --json
 - 把 Minions 當作大規模內部工作流的預設執行基底
 - 既然書籤富化主路徑已經 Minions-native，下一步優先補 knowledge governance：confidence、staleness、supersession、typed relationships
 
-## 快速開始
+## 升級路徑：OpenClaw + XBrain
+
+Lite 模式跑通後，再啟用完整 stack。
 
 ### 使用 OpenClaw
 
@@ -290,29 +377,32 @@ python3 scripts/xkb_ask.py "agent memory design" --json
 # 1. Clone 到你的 OpenClaw skills 目錄
 git clone https://github.com/Hidicence/x-knowledge-base \
   ~/.openclaw/workspace/skills/x-knowledge-base
+cd ~/.openclaw/workspace/skills/x-knowledge-base
 
-# 2. 安裝 XBrain（混合搜尋引擎）— 一次性設定
-bash ~/.openclaw/workspace/skills/x-knowledge-base/scripts/setup_xbrain.sh
+# 2. 在 OpenClaw 設定 model/auth
+# 將 env keys 加入 ~/.openclaw/openclaw.json，例如：
+# { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
 
-# 3. 將 API key 加入 ~/.openclaw/openclaw.json
-#    { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
+# 3. 可選：安裝 XBrain/GBrain hybrid search
+bash scripts/setup_xbrain.sh
 
-# 4. 執行 demo
+# 4. 健康檢查
+python3 scripts/health_check_pipeline.py
+
+# 5. 執行 demo
 bash scripts/xkb_demo.sh
 ```
 
-### 獨立安裝
+### Standalone + XBrain
 
 ```bash
 export LLM_API_KEY="your-minimax-or-openai-key"
 export LLM_API_URL="https://api.minimax.io/anthropic/v1"
 export LLM_MODEL="MiniMax-M2.7"
-export OPENCLAW_WORKSPACE="~/.openclaw/workspace"
+export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
 export GEMINI_API_KEY="your-gemini-key"
 
-# 安裝 XBrain（一次性）
 bash scripts/setup_xbrain.sh
-
 bash scripts/xkb_demo.sh
 ```
 

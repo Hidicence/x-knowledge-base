@@ -21,6 +21,91 @@ XKB is built on a different premise: knowledge has a lifecycle. The goal is not 
 
 ---
 
+
+## Start Simple: Three Operating Modes
+
+XKB can run in layers. You do **not** need to install the full XBrain/GBrain stack on day one.
+
+| Mode | Best for | Requires | Retrieval |
+|------|----------|----------|-----------|
+| **Lite** | First run, local notes, small libraries | Python + an LLM provider | `search_index.json` keyword search |
+| **Enhanced** | Better semantic recall without services | Lite + `GEMINI_API_KEY` | flat `vector_index.json` fallback |
+| **Full / XBrain** | Daily use, larger libraries, agent workflows | OpenClaw + GBrain/XBrain | Postgres/pgvector hybrid RRF search |
+
+Recommended path:
+1. Start with **Lite** mode and ingest a few local notes.
+2. Add Gemini embeddings only if you need semantic fallback search.
+3. Install XBrain/GBrain once the library is large enough to need hybrid search and durable jobs.
+
+Your personal cards, indexes, graph data, and runtime state should stay outside git. This repo contains the tooling and templates, not your private knowledge base.
+
+---
+
+## 10-Minute Lite Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/Hidicence/x-knowledge-base
+cd x-knowledge-base
+
+# 2. Choose a workspace for your private data
+export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
+mkdir -p "$OPENCLAW_WORKSPACE/memory/cards" "$OPENCLAW_WORKSPACE/memory/bookmarks"
+
+# 3. Configure an LLM provider
+cp .env.example .env
+# Edit .env or export LLM_MODEL / LLM_API_URL / LLM_API_KEY in your shell.
+
+# 4. Ingest a local markdown folder
+python3 scripts/local_ingest.py /path/to/notes --category notes
+
+# 5. Build the fallback search index
+bash scripts/build_search_index.sh
+
+# 6. Ask or search
+bash scripts/search_bookmarks.sh "agent memory"
+python3 scripts/xkb_ask.py "What patterns are emerging in my notes?"
+```
+
+This mode does not require X/Twitter cookies, GBrain, Postgres, Bun, or OpenClaw cron.
+
+---
+
+## Privacy & Public Repo Hygiene
+
+XKB is designed so the public repo can stay clean while your knowledge base remains local.
+
+**Do not commit:**
+- `.env` or real files under `.secrets/`
+- X/Twitter cookies such as `BIRD_AUTH_TOKEN` / `BIRD_CT0`
+- API keys such as `LLM_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`
+- generated personal data: `memory/cards/`, `memory/bookmarks/search_index.json`, `memory/bookmarks/vector_index.json`
+- demo output: `demo/xkb-demo-ui/public/graph-data.json`
+- runtime queues, logs, caches, PM2 dumps, or machine-specific paths
+
+**Safe to commit:**
+- source scripts
+- config templates and examples
+- docs
+- sample graph/schema files
+- `.env.example` / `.secrets/*.example` placeholders
+
+Before publishing changes, run:
+
+```bash
+git status --short
+git diff --check
+python3 scripts/health_check_pipeline.py
+```
+
+For index hygiene specifically:
+
+```bash
+python3 scripts/prune_duplicate_index_rows.py --dry-run
+python3 scripts/sync_enriched_index.py --dry-run  # if available in your version
+```
+
+---
 ## How It Works
 
 ### The Full Pipeline
@@ -282,7 +367,9 @@ Short version:
 - treat Minions as the default execution substrate for large-scale internal workflows
 - now that bookmark enrichment is already Minions-native, focus next on knowledge governance: confidence, staleness, supersession, typed relationships
 
-## Quick Start
+## Upgrade Path: OpenClaw + XBrain
+
+Once Lite mode works, you can enable the full stack.
 
 ### With OpenClaw
 
@@ -290,33 +377,36 @@ Short version:
 # 1. Clone into your OpenClaw skills directory
 git clone https://github.com/Hidicence/x-knowledge-base \
   ~/.openclaw/workspace/skills/x-knowledge-base
+cd ~/.openclaw/workspace/skills/x-knowledge-base
 
-# 2. Install XBrain (hybrid search engine) — one-time setup
-bash ~/.openclaw/workspace/skills/x-knowledge-base/scripts/setup_xbrain.sh
+# 2. Configure model/auth in OpenClaw
+# Add env keys to ~/.openclaw/openclaw.json, for example:
+# { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
 
-# 3. Add API keys to ~/.openclaw/openclaw.json
-#    { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
+# 3. Optional: install XBrain/GBrain hybrid search
+bash scripts/setup_xbrain.sh
 
-# 4. Run the demo
+# 4. Run health check
+python3 scripts/health_check_pipeline.py
+
+# 5. Run the demo
 bash scripts/xkb_demo.sh
 ```
 
-### Standalone
+### Standalone with XBrain
 
 ```bash
 export LLM_API_KEY="your-minimax-or-openai-key"
 export LLM_API_URL="https://api.minimax.io/anthropic/v1"
 export LLM_MODEL="MiniMax-M2.7"
-export OPENCLAW_WORKSPACE="~/.openclaw/workspace"
+export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
 export GEMINI_API_KEY="your-gemini-key"
 
-# Install XBrain (one-time)
 bash scripts/setup_xbrain.sh
-
 bash scripts/xkb_demo.sh
 ```
 
-### XBrain Setup (manual)
+### Manual XBrain Setup
 
 If you prefer not to use the setup script:
 
