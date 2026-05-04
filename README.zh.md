@@ -80,7 +80,7 @@ XKB 的設計目標是：公開 repo 保持乾淨，你的私人知識庫留在�
 - X/Twitter cookies，例如 `BIRD_AUTH_TOKEN` / `BIRD_CT0`
 - API keys，例如 `LLM_API_KEY`、`GEMINI_API_KEY`、`OPENAI_API_KEY`
 - 產生出的個人資料：`memory/cards/`、`memory/bookmarks/search_index.json`、`memory/bookmarks/vector_index.json`、`memory/x-knowledge-base/wiki/`
-- demo 輸出：`demo/xkb-demo-ui/public/graph-data.json`
+- 產生出的 demo 輸出：`$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/graph-data.json`
 - runtime queues、logs、caches、PM2 dumps、機器專屬路徑
 
 **可以 commit：**
@@ -287,7 +287,7 @@ Wiki 是**蒸餾輸出層**——由兩個來源建構的可讀、長期知識�
 Wiki 位於 skill 目錄內的 `wiki/`。workspace 符號連結至此：
 
 ```
-~/.openclaw/workspace/wiki/  →  skills/x-knowledge-base/wiki/  (symlink)
+~/.openclaw/workspace/wiki/  →  ~/.openclaw/workspace/memory/x-knowledge-base/wiki/  (symlink)
 ```
 
 這防止雙 wiki 漂移：所有工具從同一處讀取。
@@ -305,7 +305,7 @@ python3 scripts/distill_memory_to_wiki.py --stage --days 2
 
 # 套用所有 staged 候選（自動批准）
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md \
+  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md \
   --approve-all
 ```
 
@@ -328,7 +328,7 @@ python3 scripts/health_check_pipeline.py
 
 當使用者發送訊息，XKB 使用**雙層召回**：
 
-1. **Layer 1 — Wiki 主題**（`wiki/topics/*.md`）：蒸餾過的持久知識。回答概念性問題。
+1. **Layer 1 — Wiki 主題**（`memory/x-knowledge-base/wiki/topics/*.md`）：蒸餾過的持久知識。回答概念性問題。
 2. **Layer 2 — 卡片**（XBrain 混合搜尋，降級到 `search_index.json`）：原始證據。提供具體引用與來源。
 
 ```bash
@@ -497,9 +497,8 @@ demo/
 │   │   ├── ChatPanel.tsx         自然語言問答 via xkb_ask.py
 │   │   └── EvidencePanel.tsx     來源卡片 + wiki 引用
 │   └── public/
-│       ├── graph-data.json       ← 你的個人資料（gitignored）
 │       └── graph-data.sample.json  schema 參考
-└── generate_graph.py         從 search_index.json 建構 graph-data.json
+└── generate_graph.py         從 search_index.json 建構 graph-data.json，輸出到 $OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/
 ```
 
 **執行 demo：**
@@ -509,7 +508,7 @@ cd demo/xkb-demo-ui && npm install && npm run dev
 # → http://localhost:3000
 ```
 
-> `graph-data.json` 是個人資料，gitignored。你的知識永遠留在本機。
+> `graph-data.json` 會產生在 `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/`。它是個人 runtime data，不應 commit。
 
 ---
 
@@ -560,7 +559,7 @@ python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 # 蒸餾對話記憶至 wiki 主題
 python3 scripts/distill_memory_to_wiki.py --stage --days 3
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
+  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
 ```
 
 ### 4. 提問
@@ -577,7 +576,7 @@ python3 scripts/health_check_pipeline.py
 
 預期輸出：
 ```
-✅  wiki_canonical      workspace/wiki → skills/x-knowledge-base/wiki (symlink 正確)
+✅  wiki_canonical      workspace/wiki → memory/x-knowledge-base/wiki (symlink 正確)
 ✅  recall_wiki_source  Recall 從 canonical wiki 讀取
 ✅  index_freshness     摘要覆蓋率：212/270 (79%) | 富化：218 | 向量：471
 ```

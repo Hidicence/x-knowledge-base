@@ -80,7 +80,7 @@ XKB is designed so the public repo can stay clean while your knowledge base rema
 - X/Twitter cookies such as `BIRD_AUTH_TOKEN` / `BIRD_CT0`
 - API keys such as `LLM_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`
 - generated personal data: `memory/cards/`, `memory/bookmarks/search_index.json`, `memory/bookmarks/vector_index.json`, `memory/x-knowledge-base/wiki/`
-- demo output: `demo/xkb-demo-ui/public/graph-data.json`
+- generated demo output: `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/graph-data.json`
 - runtime queues, logs, caches, PM2 dumps, or machine-specific paths
 
 **Safe to commit:**
@@ -287,7 +287,7 @@ The wiki is the **distilled output layer** — a readable, long-term knowledge b
 The wiki lives at `wiki/` inside the skill directory. The workspace symlinks to it:
 
 ```
-~/.openclaw/workspace/wiki/  →  skills/x-knowledge-base/wiki/  (symlink)
+~/.openclaw/workspace/wiki/  →  ~/.openclaw/workspace/memory/x-knowledge-base/wiki/  (symlink)
 ```
 
 This prevents dual-wiki drift: every tool reads from one place.
@@ -305,7 +305,7 @@ python3 scripts/distill_memory_to_wiki.py --stage --days 2
 
 # Apply all staged candidates (auto-approve)
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md \
+  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md \
   --approve-all
 ```
 
@@ -328,7 +328,7 @@ Checks three things:
 
 When a user sends a message, XKB uses **two-layer recall**:
 
-1. **Layer 1 — Wiki topics** (`wiki/topics/*.md`): synthesized, durable knowledge. Answers conceptual questions.
+1. **Layer 1 — Wiki topics** (`memory/x-knowledge-base/wiki/topics/*.md`): synthesized, durable knowledge. Answers conceptual questions.
 2. **Layer 2 — Cards** (XBrain hybrid search, falls back to `search_index.json`): raw evidence. Provides specific citations and sources.
 
 ```bash
@@ -497,9 +497,8 @@ demo/
 │   │   ├── ChatPanel.tsx         Natural-language Q&A via xkb_ask.py
 │   │   └── EvidencePanel.tsx     Source cards + wiki references
 │   └── public/
-│       ├── graph-data.json       ← your personal data (gitignored)
 │       └── graph-data.sample.json  schema reference
-└── generate_graph.py         Builds graph-data.json from search_index.json
+└── generate_graph.py         Builds graph-data.json from search_index.json into $OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/
 ```
 
 **Run the demo:**
@@ -509,7 +508,7 @@ cd demo/xkb-demo-ui && npm install && npm run dev
 # → http://localhost:3000
 ```
 
-> `graph-data.json` is gitignored. Your personal knowledge never leaves your machine.
+> `graph-data.json` is generated under `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/`. It is personal runtime data and should not be committed.
 
 ---
 
@@ -560,7 +559,7 @@ python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 # Distill conversation memory into wiki topics
 python3 scripts/distill_memory_to_wiki.py --stage --days 3
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
+  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
 ```
 
 ### 4. Ask
@@ -577,7 +576,7 @@ python3 scripts/health_check_pipeline.py
 
 Expected output:
 ```
-✅  wiki_canonical      workspace/wiki → skills/x-knowledge-base/wiki (symlink correct)
+✅  wiki_canonical      workspace/wiki → memory/x-knowledge-base/wiki (symlink correct)
 ✅  recall_wiki_source  Recall reads from canonical wiki
 ✅  index_freshness     summary coverage: 212/270 (79%) | enriched: 218 | vectors: 471
 ```
