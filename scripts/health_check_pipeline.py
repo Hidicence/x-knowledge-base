@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
 WIKI_TOPICS_DIR = WIKI_DIR / "topics"
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"

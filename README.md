@@ -79,7 +79,7 @@ XKB is designed so the public repo can stay clean while your knowledge base rema
 - `.env` or real files under `.secrets/`
 - X/Twitter cookies such as `BIRD_AUTH_TOKEN` / `BIRD_CT0`
 - API keys such as `LLM_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`
-- generated personal data: `memory/cards/`, `memory/bookmarks/search_index.json`, `memory/bookmarks/vector_index.json`
+- generated personal data: `memory/cards/`, `memory/bookmarks/search_index.json`, `memory/bookmarks/vector_index.json`, `memory/x-knowledge-base/wiki/`
 - demo output: `demo/xkb-demo-ui/public/graph-data.json`
 - runtime queues, logs, caches, PM2 dumps, or machine-specific paths
 
@@ -127,8 +127,8 @@ Input sources
 ┌─────────────────────────────────────────────────────────────┐
 │  Knowledge Artifacts (permanent, gitignored)                │
 │                                                             │
-│  memory/cards/*.md          structured 9-section cards      │
-│  wiki/topics/*.md           distilled long-term knowledge   │
+│  memory/cards/*.md                      structured 9-section cards      │
+│  memory/x-knowledge-base/wiki/topics/   distilled long-term knowledge   │
 └─────────────────────────────────────────────────────────────┘
         │
         ▼ on every card write (auto)
@@ -154,7 +154,7 @@ Input sources
         │
         ▼
   ┌─────────────────────────────────────────────────────────┐
-  │  Wiki Layer (wiki/topics/*.md)                          │
+  │  Wiki Layer (memory/x-knowledge-base/wiki/topics/*.md)   │
   │                                                         │
   │  sync_cards_to_wiki.py     external bookmark knowledge  │
   │  distill_memory_to_wiki.py conversation memory insights │

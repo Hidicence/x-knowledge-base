@@ -1,0 +1,80 @@
+{
+  "generated": "2026-05-04",
+  "items": [
+    {
+      "from": "scripts/_session_dedup.py",
+      "to": "archive/scripts-20260504/_session_dedup.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/auto_categorize.sh",
+      "to": "archive/scripts-20260504/auto_categorize.sh",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/build_topic_profile.py",
+      "to": "archive/scripts-20260504/build_topic_profile.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/cleanup_titles_in_index.py",
+      "to": "archive/scripts-20260504/cleanup_titles_in_index.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/conversation_state_parser.py",
+      "to": "archive/scripts-20260504/conversation_state_parser.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/crawl_bookmarks_coverage.py",
+      "to": "archive/scripts-20260504/crawl_bookmarks_coverage.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/distill_memory_minion_submit.py",
+      "to": "archive/scripts-20260504/distill_memory_minion_submit.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/eval_recommendations.py",
+      "to": "archive/scripts-20260504/eval_recommendations.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/export_notebooklm.py",
+      "to": "archive/scripts-20260504/export_notebooklm.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/gbrain_recall.py",
+      "to": "archive/scripts-20260504/gbrain_recall.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/push_to_github.sh",
+      "to": "archive/scripts-20260504/push_to_github.sh",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/recommend_from_profile.sh",
+      "to": "archive/scripts-20260504/recommend_from_profile.sh",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/sync_tiege_queue.py",
+      "to": "archive/scripts-20260504/sync_tiege_queue.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/sync_to_drive.sh",
+      "to": "archive/scripts-20260504/sync_to_drive.sh",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    },
+    {
+      "from": "scripts/wiki_health.py",
+      "to": "archive/scripts-20260504/wiki_health.py",
+      "reason": "No real refs after excluding generated audit docs; not PM2/cron/running process; archived instead of deleted."
+    }
+  ]
+}

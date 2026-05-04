@@ -214,6 +214,20 @@ for root in [bookmarks_dir, cards_dir]:
         seen_paths.add(key)
         files.append((f, root))
 
+def _mtime_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _size_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 if not incremental or not index_file.exists():
     records = [parse_record(f, root) for f, root in files]
     status = "full"
@@ -233,8 +247,8 @@ else:
 
         if (
             old_item is None
-            or int(old_item.get("mtime", -1)) != int(st.st_mtime)
-            or int(old_item.get("size", -1)) != int(st.st_size)
+            or _mtime_int(old_item.get("mtime")) != int(st.st_mtime)
+            or _size_int(old_item.get("size")) != int(st.st_size)
         ):
             by_key[key] = parse_record(f, root)
             changed += 1

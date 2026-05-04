@@ -3,8 +3,8 @@
 Generate graph-data.json for the XKB demo UI.
 
 Sources:
-  - wiki/topics/*.md  → topic nodes (title + wiki content preview)
-  - search_index.json → card nodes + concept (tag) nodes
+  - memory/x-knowledge-base/wiki/topics/*.md → topic nodes
+  - memory/bookmarks/search_index.json       → card nodes + concept nodes
 
 Three-layer graph: Topic → Concept → Card
 
@@ -22,10 +22,11 @@ import networkx as nx
 # ── paths ────────────────────────────────────────────────────────────────────
 _SCRIPT_DIR   = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
+_DEFAULT_WORKSPACE = _PROJECT_ROOT.parent.parent if _PROJECT_ROOT.parent.name == "skills" else _PROJECT_ROOT
 
 WORKSPACE = Path(os.getenv(
     "OPENCLAW_WORKSPACE",
-    os.getenv("WORKSPACE_DIR", str(_PROJECT_ROOT))
+    os.getenv("WORKSPACE_DIR", str(_DEFAULT_WORKSPACE))
 ))
 INDEX_PATH = Path(os.getenv(
     "XKB_INDEX_PATH",
@@ -33,11 +34,11 @@ INDEX_PATH = Path(os.getenv(
 ))
 WIKI_DIR = Path(os.getenv(
     "XKB_WIKI_DIR",
-    str(WORKSPACE / "wiki" / "topics")
+    str(WORKSPACE / "memory" / "x-knowledge-base" / "wiki" / "topics")
 ))
 OUT_PATH = Path(os.getenv(
     "XKB_GRAPH_OUT",
-    str(_SCRIPT_DIR / "xkb-demo-ui" / "public" / "graph-data.json")
+    str(WORKSPACE / "memory" / "x-knowledge-base" / "demo" / "graph-data.json")
 ))
 
 CARD_CAP    = 250   # total card nodes

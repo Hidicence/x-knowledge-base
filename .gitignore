@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 *.pyo
+.next/
+node_modules/
 
 # ── Secrets（絕對不進 repo）────────────────────────────────────────────────
 .env
@@ -27,3 +29,5 @@ vector_index.json
 
 # ── PM2 runtime JSON（含真實路徑等機器相關設定）─────────────────────────────
 # 如需版控，改用 *.pm2.example.json 作模板
+
+dist/

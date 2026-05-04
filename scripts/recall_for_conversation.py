@@ -22,7 +22,7 @@ TOPIC_PROFILE_FILE = Path(
     os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
 )
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki"))) / "topics"
+WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki"))) / "topics"
 GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
 LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
 LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}

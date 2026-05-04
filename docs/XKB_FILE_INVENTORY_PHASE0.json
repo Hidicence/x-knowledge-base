@@ -1,0 +1,1352 @@
+[
+  {
+    "path": "SKILL.md",
+    "size": 12328,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "README.md",
+    "size": 25660,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": ".env.example",
+    "size": 4160,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "xkb-worker.pm2.json",
+    "size": 296,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "infer-consumer.pm2.json",
+    "size": 345,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "README.zh.md",
+    "size": 24885,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "consolidate-worker.pm2.json",
+    "size": 436,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "distill-worker.pm2.json",
+    "size": 395,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": ".gitignore",
+    "size": 1299,
+    "status": "review",
+    "flags": []
+  },
+  {
+    "path": "chunk-worker.pm2.json",
+    "size": 412,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "tools/agent_reach_enricher.py",
+    "size": 8581,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "tools/bookmark_enhancer.py",
+    "size": 16152,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "tools/embedding_providers.py",
+    "size": 8588,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "docs/XKB_CLEANUP_PRODUCTIZATION_PLAN.md",
+    "size": 8103,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "docs/xkb-vnext-roadmap-draft.md",
+    "size": 7717,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "docs/security-audit-response.md",
+    "size": 5387,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "docs/xkb-inference-adapter-spec.md",
+    "size": 3981,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "docs/data-flow.md",
+    "size": 6239,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "docs/xkb-wiki-architecture.md",
+    "size": 9628,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "scripts/topic_guide_generator.py",
+    "size": 7778,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/status_knowledge_pipeline.py",
+    "size": 9755,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/distill_memory_to_wiki.py",
+    "size": 19299,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/contrarian_recall.py",
+    "size": 7009,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/canonicalize_duplicates.py",
+    "size": 5231,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/action_recall.py",
+    "size": 9061,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/fetch_and_summarize.sh",
+    "size": 13393,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/distill_memory_minion_worker.py",
+    "size": 9828,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/fetch_pubmed.py",
+    "size": 8651,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/sync_tiege_queue.py",
+    "size": 3877,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/conversation_state_parser.py",
+    "size": 12434,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/suggest_topic_map.py",
+    "size": 8144,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/build_search_index.sh",
+    "size": 10747,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/smoke_test_pipeline.sh",
+    "size": 3486,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/run_github_sync.sh",
+    "size": 1713,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/recommend_from_profile.sh",
+    "size": 7436,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/auto_categorize.sh",
+    "size": 1737,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/fetch_github_repos.py",
+    "size": 12613,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/sync_cards_to_wiki.py",
+    "size": 29414,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/fetch_bookmarks.sh",
+    "size": 3359,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/_session_dedup.py",
+    "size": 3703,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/health_check.py",
+    "size": 13070,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/_llm.py",
+    "size": 10343,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_adapter_http.py",
+    "size": 4590,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/recall_for_conversation.py",
+    "size": 31665,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/build_vector_index.py",
+    "size": 9034,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/full_sync_v2.py",
+    "size": 4955,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/run_youtube_sync.sh",
+    "size": 1747,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/run_bookmark_worker.py",
+    "size": 15336,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_minion_submit.py",
+    "size": 6720,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/eval_recommendations.py",
+    "size": 1418,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_recall_server.py",
+    "size": 7011,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/search_bookmarks.sh",
+    "size": 3788,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/crawl_bookmarks_graphql.py",
+    "size": 7987,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/health_check_pipeline.py",
+    "size": 6639,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/monitor_youtube_playlist.py",
+    "size": 12098,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/migrate_schema.py",
+    "size": 5913,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/distill_memory_consolidate_worker.py",
+    "size": 6419,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/audit_index_quality.py",
+    "size": 5615,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_run_request.py",
+    "size": 5205,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_minion_worker.py",
+    "size": 6120,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/normalize_index_quality.py",
+    "size": 4260,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/distill_memory_chunk_worker.py",
+    "size": 6463,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/export_notebooklm.py",
+    "size": 4610,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_demo.sh",
+    "size": 6743,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/distill_memory_minion_submit.py",
+    "size": 3822,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/local_ingest.py",
+    "size": 14357,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/wiki_health.py",
+    "size": 6210,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/recall_router.py",
+    "size": 15430,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/rebuild_v2_fetch.sh",
+    "size": 1244,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/fetch_youtube_playlist.py",
+    "size": 11881,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/prune_duplicate_index_rows.py",
+    "size": 5519,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/gbrain_recall.py",
+    "size": 6446,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/init_rebuild_v2.py",
+    "size": 2253,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/crawl_bookmarks_coverage.py",
+    "size": 7271,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/run_scan_worker.py",
+    "size": 9791,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/lint_wiki.py",
+    "size": 7226,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_ask.py",
+    "size": 23506,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/cleanup_titles_in_index.py",
+    "size": 3170,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xbrain_recall.py",
+    "size": 9024,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/push_to_github.sh",
+    "size": 3434,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/_card_prompt.py",
+    "size": 10210,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "scripts/build_topic_profile.py",
+    "size": 6024,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/sync_to_drive.sh",
+    "size": 984,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/recall_gate.py",
+    "size": 4511,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_infer_enqueue.py",
+    "size": 3548,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/import_bookmarks_v2_from_graphql.py",
+    "size": 2551,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "scripts/sync_enriched_index.py",
+    "size": 11070,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/continuity_recall.py",
+    "size": 10359,
+    "status": "review-script",
+    "flags": []
+  },
+  {
+    "path": "scripts/xkb_infer_consumer.py",
+    "size": 7560,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/setup_xbrain.sh",
+    "size": 4923,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "scripts/pdf_ingest.py",
+    "size": 16297,
+    "status": "integration",
+    "flags": []
+  },
+  {
+    "path": "references/tiege-single-item-workflow.md",
+    "size": 2603,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "references/tiege-prompt.md",
+    "size": 859,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "references/article-recovery-report-2026-04-05.md",
+    "size": 2185,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "references/notebooklm-schema.md",
+    "size": 1633,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "references/rebuild-v2-plan.md",
+    "size": 3795,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "references/conversation-recall.md",
+    "size": 8864,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": ".secrets/gbrain.env.example",
+    "size": 250,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": ".secrets/gbrain.env",
+    "size": 95,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": ".secrets/.gitignore",
+    "size": 92,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "demo/generate_graph.py",
+    "size": 12200,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "config/llm.json",
+    "size": 221,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "config/youtube-playlists.json",
+    "size": 440,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "config/interests.yaml",
+    "size": 487,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "config/tiege-queue.example.json",
+    "size": 455,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "config/recommendation-topics.json",
+    "size": 809,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "config/category-rules.json",
+    "size": 2244,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "wiki/WIKI-SCHEMA.md",
+    "size": 8647,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "wiki/index.md",
+    "size": 618,
+    "status": "config-or-schema",
+    "flags": []
+  },
+  {
+    "path": "wiki/review-decisions.json",
+    "size": 34977,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/log.md",
+    "size": 7565,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/.gitignore",
+    "size": 98,
+    "status": "review",
+    "flags": []
+  },
+  {
+    "path": "wiki/topic-map.json",
+    "size": 351,
+    "status": "review",
+    "flags": []
+  },
+  {
+    "path": "assets/knowledge-card-template.md",
+    "size": 403,
+    "status": "core",
+    "flags": []
+  },
+  {
+    "path": "evals/evals.json",
+    "size": 1175,
+    "status": "review",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/10-ai-agent-architecture.md",
+    "size": 1439,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/03-personal-knowledge-management.md",
+    "size": 1108,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/09-go-to-market-strategy.md",
+    "size": 1314,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/02-prompt-engineering-tips.md",
+    "size": 1278,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/01-rag-vs-memory.md",
+    "size": 1163,
+    "status": "internal",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/07-llm-cost-optimization.md",
+    "size": 1283,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/08-second-brain-setup.md",
+    "size": 1229,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/05-startup-fundraising-notes.md",
+    "size": 1140,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/04-ai-product-design-principles.md",
+    "size": 1134,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/sample-notes/06-content-creation-workflow.md",
+    "size": 1107,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/package.json",
+    "size": 602,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/README.md",
+    "size": 1450,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/next-env.d.ts",
+    "size": 247,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/next.config.ts",
+    "size": 177,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/postcss.config.mjs",
+    "size": 94,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/CLAUDE.md",
+    "size": 11,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/tsconfig.json",
+    "size": 666,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/package-lock.json",
+    "size": 120129,
+    "status": "docs-or-demo",
+    "flags": [
+      "generated-risk"
+    ]
+  },
+  {
+    "path": "demo/xkb-demo-ui/.gitignore",
+    "size": 547,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/AGENTS.md",
+    "size": 327,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/components/ChatPanel.tsx",
+    "size": 9286,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/components/KnowledgeTree.tsx",
+    "size": 4585,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/components/EvidencePanel.tsx",
+    "size": 5603,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/components/KnowledgeGraph.tsx",
+    "size": 6811,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/layout.tsx",
+    "size": 810,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/page.tsx",
+    "size": 17468,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/favicon.ico",
+    "size": 25931,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/globals.css",
+    "size": 1282,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/next.svg",
+    "size": 1375,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/file.svg",
+    "size": 391,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/vercel.svg",
+    "size": 128,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/globe.svg",
+    "size": 1035,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/window.svg",
+    "size": 385,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/graph-data.json",
+    "size": 1219922,
+    "status": "docs-or-demo",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "demo/xkb-demo-ui/public/graph-data.sample.json",
+    "size": 801,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/api/ask/route.ts",
+    "size": 2529,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "demo/xkb-demo-ui/app/api/recall/route.ts",
+    "size": 1570,
+    "status": "docs-or-demo",
+    "flags": []
+  },
+  {
+    "path": "wiki/topics/openclaw-agent-workflows.md",
+    "size": 32228,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/video-prompt-patterns.md",
+    "size": 8268,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/xkb-pipeline-architecture.md",
+    "size": 5024,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/xkb-evolution.md",
+    "size": 6262,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/ai-video-workflows.md",
+    "size": 8220,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/.gitkeep",
+    "size": 0,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/ai-seo-and-geo.md",
+    "size": 6093,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/醫療ai影像診斷-guide.md",
+    "size": 8642,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/learning-base.md",
+    "size": 5398,
+    "status": "review",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/topics/ai-agent-memory-systems.md",
+    "size": 18241,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-21-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-11-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-29-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-23-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-15-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-26-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-25-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-23-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-08-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-27-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-13-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-03-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-28-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-19-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-14-afternoon-candidates.md",
+    "size": 1229,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-14-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-12-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-07-candidates.md",
+    "size": 623,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-11-manual-sync-after-card-backfill-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-28-healthcheck-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-03-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-08-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-02-evening-candidates.md",
+    "size": 1779,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-26-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-21-smoke-test-candidates.md",
+    "size": 3811,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-01-evening-candidates.md",
+    "size": 1187,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-29-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-12-candidates.md",
+    "size": 2519,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-28-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-01-afternoon-candidates.md",
+    "size": 1292,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-11-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-13-afternoon-candidates.md",
+    "size": 1779,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-05-02-afternoon-candidates.md",
+    "size": 2108,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-19-afternoon-candidates.md",
+    "size": 2905,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-19-evening-candidates.md",
+    "size": 1273,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-24-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-30-evening-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-21-afternoon-candidates.md",
+    "size": 2122,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-12-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-15-afternoon-candidates.md",
+    "size": 655,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-25-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-17-cc-distill-candidates.md",
+    "size": 9335,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  },
+  {
+    "path": "wiki/_staging/2026-04-24-afternoon-candidates.md",
+    "size": 258,
+    "status": "internal",
+    "flags": [
+      "private-risk"
+    ]
+  }
+]

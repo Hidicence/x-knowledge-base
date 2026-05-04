@@ -34,7 +34,7 @@ from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))

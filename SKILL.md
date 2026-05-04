@@ -15,18 +15,16 @@ From saved fragments to a reusable, proactive knowledge system.
 從零散收藏走向可回用、可主動召回的知識系統。
 
 > XKB 從 X/Twitter 書籤出發，現在已演化成多來源知識生命週期系統：ingest → card/index → recall → wiki。
+>
+> **路徑原則**：`skills/x-knowledge-base/` 只放 reusable skill code；個人資料與執行期資料放在 `memory/x-knowledge-base/`、`memory/cards/`、`memory/bookmarks/`。詳見 `docs/RUNTIME_PATHS.md`。
 
-## Canonical Model
+## Personal data paths
 
-XKB 目前可視為四層：
-
-1. **Ingest layer** — 從各來源抓進原始內容，每個來源有專屬腳本
-2. **Card / Index layer** — 所有來源統一走 `scripts/_card_prompt.py`，輸出相同的 9-section knowledge card
-3. **Recall / Ask layer** — 在對話或明確提問時，主動浮現最相關的既有知識
-4. **Wiki layer** — 經 absorb gate 後，把高價值內容沉澱為長期可讀的 wiki topics
-
-**關鍵設計**：不管來源是書籤、論文、影片還是 GitHub repo，產出的卡片結構完全一致。
-`source_type` 欄位（x-bookmark / youtube / github_fork / github_star / local-paper / pubmed）是 metadata，不是不同 schema。
+- `memory/cards/` — generated cards
+- `memory/bookmarks/` — raw bookmarks, `search_index.json`, `vector_index.json`
+- `memory/x-knowledge-base/wiki/` — wiki runtime data (`index.md`, `log.md`, `topic-map.json`, `review-decisions.json`, `topics/`, `_staging/`)
+- `wiki/` — compatibility symlink to `memory/x-knowledge-base/wiki/`
+- `skills/x-knowledge-base/` — code/doc/sample zone only
 
 ---
 
@@ -142,7 +140,7 @@ python3 demo/generate_graph.py           # 從 search_index.json 生成圖譜資
 cd demo/xkb-demo-ui && npm run dev       # → http://localhost:3000
 ```
 
-> `demo/xkb-demo-ui/public/graph-data.json` 是個人資料，已 gitignore，不會進 repo。
+> `demo/xkb-demo-ui/public/graph-data.json` 是個人/generated 資料，不應進入 release package。公開版本只保留 sanitized sample。
 
 ---
 
@@ -216,7 +214,7 @@ python3 scripts/build_vector_index.py
 python3 scripts/build_vector_index.py --incremental
 ```
 
-`vector_index.json` 是個人資料，不進 repo。
+`vector_index.json` 是個人/generated 資料，預設位於 `memory/bookmarks/`，不進 release package。
 
 ---
 
@@ -251,7 +249,7 @@ python3 scripts/migrate_schema.py             # 執行
 - card title + summary → embedding API（向量索引）
 - PubMed 搜尋詞 → NCBI public API
 
-以下永遠留在本機：raw bookmark 檔、search_index.json、wiki pages。
+以下永遠留在本機資料區：raw bookmark 檔、search_index.json、vector_index.json、wiki pages、staging candidates。
 
 ---
 

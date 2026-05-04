@@ -79,7 +79,7 @@ XKB 的設計目標是：公開 repo 保持乾淨，你的私人知識庫留在�
 - `.env` 或 `.secrets/` 底下的真實檔案
 - X/Twitter cookies，例如 `BIRD_AUTH_TOKEN` / `BIRD_CT0`
 - API keys，例如 `LLM_API_KEY`、`GEMINI_API_KEY`、`OPENAI_API_KEY`
-- 產生出的個人資料：`memory/cards/`、`memory/bookmarks/search_index.json`、`memory/bookmarks/vector_index.json`
+- 產生出的個人資料：`memory/cards/`、`memory/bookmarks/search_index.json`、`memory/bookmarks/vector_index.json`、`memory/x-knowledge-base/wiki/`
 - demo 輸出：`demo/xkb-demo-ui/public/graph-data.json`
 - runtime queues、logs、caches、PM2 dumps、機器專屬路徑
 
@@ -127,8 +127,8 @@ python3 scripts/sync_enriched_index.py --dry-run  # 若你的版本支援
 ┌─────────────────────────────────────────────────────────────┐
 │  知識產物（永久，gitignored）                                │
 │                                                             │
-│  memory/cards/*.md          結構化 9-section 卡片           │
-│  wiki/topics/*.md           蒸餾後的長期知識                 │
+│  memory/cards/*.md                      結構化 9-section 卡片           │
+│  memory/x-knowledge-base/wiki/topics/   蒸餾後的長期知識                 │
 └─────────────────────────────────────────────────────────────┘
         │
         ▼ 每次寫卡時自動觸發
@@ -154,7 +154,7 @@ python3 scripts/sync_enriched_index.py --dry-run  # 若你的版本支援
         │
         ▼
   ┌─────────────────────────────────────────────────────────┐
-  │  Wiki 層（wiki/topics/*.md）                             │
+  │  Wiki 層（memory/x-knowledge-base/wiki/topics/*.md）      │
   │                                                         │
   │  sync_cards_to_wiki.py     外部書籤知識蒸餾              │
   │  distill_memory_to_wiki.py 對話記憶蒸餾                  │

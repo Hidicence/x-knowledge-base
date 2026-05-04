@@ -25,7 +25,7 @@ from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(_SKILL_DIR / "wiki")))
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(WORKSPACE / "memory" / "x-knowledge-base" / "wiki")))
 TOPICS_DIR = WIKI_DIR / "topics"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
