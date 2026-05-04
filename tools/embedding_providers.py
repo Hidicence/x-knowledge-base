@@ -139,7 +139,7 @@ class OllamaProvider(EmbeddingProvider):
 
 
 def _openclaw_key(key_name: str) -> str:
-    """Fallback: read API key from /root/.openclaw/openclaw.json."""
+    """Fallback: read API key from OPENCLAW_JSON or ~/.openclaw/openclaw.json."""
     try:
         config_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
         if config_path.exists():

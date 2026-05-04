@@ -61,11 +61,11 @@ levels of credentials, or list required binaries and external services completel
 
 ### 4. Hardcoded Filesystem Paths
 
-**Finding:** Multiple scripts had hardcoded `/root/.openclaw/...` paths that would fail
+**Finding:** Multiple scripts had hardcoded user-specific OpenClaw paths that would fail
 on any non-root Linux installation or macOS.
 
 **Status: Fixed (v0.7)**
-- 12 Python scripts patched: fallback defaults changed from `/root/.openclaw/...`
+- 12 Python scripts patched: fallback defaults changed from user-specific absolute paths
   to `Path.home() / ".openclaw" / ...` (portable across users and OS)
 - `run_youtube_sync.sh` patched: all hardcoded `/root/` paths replaced with
   `${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}` and `${OPENCLAW_JSON:-...}`

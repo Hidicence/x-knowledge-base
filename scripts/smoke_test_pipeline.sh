@@ -3,7 +3,7 @@
 # Usage: bash smoke_test_pipeline.sh
 # Exit code: 0 = all pass, 1 = one or more failures
 
-WORKSPACE_DIR="${OPENCLAW_WORKSPACE:-/root/.openclaw/workspace}"
+WORKSPACE_DIR="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}"
 SKILL_DIR="$WORKSPACE_DIR/skills/x-knowledge-base"
 SCRIPTS="$SKILL_DIR/scripts"
 

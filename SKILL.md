@@ -4,9 +4,9 @@ description: |
   Evolve scattered inputs into a proactive, reusable personal knowledge base for AI agents.
   Use for: ingesting X/Twitter bookmarks, local notes, YouTube, GitHub, PDFs, and PubMed papers;
   generating knowledge cards; building search/vector indexes; surfacing relevant knowledge during conversations;
-  and distilling durable wiki pages.
-  將分散資料來源整理成可檢索、可主動召回、可沉澱成 wiki 的個人知識系統。
-  使用於：抓取與整理 X/Twitter 書籤、本地筆記、YouTube、GitHub、PDF、PubMed 論文；生成知識卡；更新搜尋/向量索引；在對話中主動召回既有知識；以及沉澱長期 wiki。
+  distilling durable wiki pages; and packaging/publishing the skill itself on ClawHub.
+  將分散資料來源整理成可檢索、可主動召回、可沉澱成 wiki 的個人知識系統，也用來維護/發佈 XKB skill。
+  使用於：抓取與整理 X/Twitter 書籤、本地筆記、YouTube、GitHub、PDF、PubMed 論文；生成知識卡；更新搜尋/向量索引；在對話中主動召回既有知識；以及沉澱長期 wiki 與發布 ClawHub 版本。
 ---
 
 # X Knowledge Base
@@ -14,9 +14,9 @@ description: |
 From saved fragments to a reusable, proactive knowledge system.
 從零散收藏走向可回用、可主動召回的知識系統。
 
-> XKB 從 X/Twitter 書籤出發，現在已演化成多來源知識生命週期系統：ingest → card/index → recall → wiki。
+> XKB 從 X/Twitter 書籤出發，現在已演化成多來源知識生命週期系統：ingest → card/index → recall → wiki → ClawHub release.
 >
-> **路徑原則**：`skills/x-knowledge-base/` 只放 reusable skill code；個人資料與執行期資料放在 `memory/x-knowledge-base/`、`memory/cards/`、`memory/bookmarks/`。詳見 `docs/RUNTIME_PATHS.md`。
+> **發佈原則**：`skills/x-knowledge-base/` 只放 reusable skill code；個人資料與執行期資料放在 `memory/x-knowledge-base/`、`memory/cards/`、`memory/bookmarks/`。要對外發佈時，優先確認 release package 不含私密資料，再用 ClawHub 同步版本。詳見 `docs/RUNTIME_PATHS.md`。
 
 ## Personal data paths
 
@@ -112,14 +112,26 @@ python3 scripts/xkb_ask.py "你的問題" --format chat
 python3 scripts/xkb_ask.py "你的問題" --json
 ```
 
-### Wiki 同步
+### ClawHub 發佈 / 同步
 
 ```bash
-python3 scripts/suggest_topic_map.py --review
-python3 scripts/sync_cards_to_wiki.py --apply --limit 20
-python3 scripts/sync_cards_to_wiki.py --review-rejects
-python3 scripts/sync_cards_to_wiki.py --explain "https://example.com/article"
+# 先確認登入
+clawhub whoami
+
+# 檢查目前 registry 狀態
+clawhub inspect x-knowledge-base --json --no-input
+
+# 發佈新版（從 skill 目錄）
+clawhub publish . --slug x-knowledge-base --name "X Knowledge Base" --version 1.0.x --changelog "..."
+
+# 若只是本地變更後同步 registry
+clawhub sync
 ```
+
+**發佈前檢查：**
+- `skills/x-knowledge-base/` 內是否只剩可公開內容
+- `.secrets/`、私密 token、個人資料、runtime 產物都不應進 release package
+- README 類文件不必額外堆；SKILL.md 要能獨立說清楚怎麼用、怎麼發佈
 
 ### 搜尋
 
