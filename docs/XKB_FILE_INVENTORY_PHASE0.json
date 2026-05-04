@@ -582,27 +582,18 @@
     "flags": []
   },
   {
-    "path": ".secrets/gbrain.env.example",
+    "path": "config/examples/gbrain.env.example",
     "size": 250,
-    "status": "internal",
-    "flags": [
-      "private-risk"
-    ]
+    "status": "config-or-schema",
+    "flags": []
   },
   {
     "path": ".secrets/gbrain.env",
     "size": 95,
-    "status": "internal",
+    "status": "internal-untracked",
     "flags": [
-      "private-risk"
-    ]
-  },
-  {
-    "path": ".secrets/.gitignore",
-    "size": 92,
-    "status": "review",
-    "flags": [
-      "private-risk"
+      "private-risk",
+      "not-shipped"
     ]
   },
   {

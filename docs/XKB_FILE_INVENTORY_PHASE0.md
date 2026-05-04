@@ -14,9 +14,8 @@ Generated: 2026-05-04
 
 ## Flagged private/generated risks
 
-- `.secrets/gbrain.env.example` — private-risk; status=internal; size=250
-- `.secrets/gbrain.env` — private-risk; status=internal; size=95
-- `.secrets/.gitignore` — private-risk; status=review; size=92
+- `config/examples/gbrain.env.example` — public example; status=config-or-schema; size=250
+- `.secrets/gbrain.env` — private-risk; status=internal-untracked; not shipped
 - `wiki/review-decisions.json` — private-risk; status=internal; size=34977
 - `wiki/log.md` — private-risk; status=internal; size=7565
 - `demo/xkb-demo-ui/package-lock.json` — generated-risk; status=docs-or-demo; size=120129
