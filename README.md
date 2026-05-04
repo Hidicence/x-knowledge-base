@@ -4,7 +4,7 @@
 
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
-> XKB is not an X/Twitter bookmark organizer. It is a multi-source personal knowledge lifecycle system: local notes, bookmarks, videos, repositories, papers, and conversation memory are transformed into structured cards, searchable indexes, distilled wiki topics, and an interactive knowledge graph. The core idea is semantic active recall — knowledge should resurface when it becomes useful, not sit in an archive waiting to be manually found.
+> XKB is a personal knowledge lifecycle system. It turns local notes, bookmarks, videos, repositories, papers, and conversation memory into structured cards, searchable indexes, distilled wiki topics, and an interactive knowledge graph. The core idea is semantic active recall — knowledge should resurface when it becomes useful, not sit in an archive waiting to be manually found.
 
 [![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
 *(Click to watch the concept presentation)*
@@ -17,7 +17,7 @@ Every day we consume notes, articles, videos, repositories, papers, conversation
 
 Most tools stop at capture: save a bookmark, store a note, tag a source. XKB starts after capture. It turns raw material into reusable knowledge, connects it to what you already know, and lets agents retrieve it at the moment of need. **Knowledge should know when you need it.**
 
-XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more — it is to make what you have already consumed *reappear at the right moment* and *gradually sediment into durable understanding*. X/Twitter bookmarks are only one possible input source, not the product definition.
+XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more — it is to make what you have already consumed *reappear at the right moment* and *gradually sediment into durable understanding*.
 
 ---
 
