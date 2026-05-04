@@ -4,7 +4,7 @@
 
 > **讓知識重新浮現 | Make Knowledge Reappear**
 >
-> 具有語義主動召回功能的個人知識生命週期系統——書籤、對話、筆記透過雙層檢索引擎（XBrain 混合搜尋 + wiki 蒸餾）轉化為可持久回用的知識。附帶互動式知識圖譜介面。
+> XKB 不是 X/Twitter 書籤整理器，而是一套多來源個人知識生命週期系統：本地筆記、書籤、影片、repo、論文與對話記憶，會被轉化為結構化卡片、可搜尋索引、蒸餾後的 wiki 主題，以及互動式知識圖譜。核心是語義主動召回——知識不該只是躺在資料庫裡等你想起來找，而應該在變得有用時重新浮現。
 
 [![觀看簡報影片](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
 *（點擊觀看概念介紹）*
@@ -13,11 +13,11 @@
 
 ## 問題所在
 
-每天我們消費數十篇文章、討論串、資訊。當下收藏是因為感覺重要。六個月後——找不到、無法想起來、壓根不記得當初學到了什麼。
+每天我們消費筆記、文章、影片、repo、論文、對話與討論串。當下保存是因為感覺重要。六個月後——找不到、想不起來，也不確定當初到底學到了什麼。
 
-現有工具都預設你需要時得自己手動取出知識。**但知識應該自己能判斷你何時需要它。**
+多數工具停在 capture：存書籤、放筆記、貼標籤。XKB 從 capture 之後開始：把原始材料轉成可回用知識，連到既有理解，並讓 agent 在需要時取回。**知識應該自己能判斷你何時需要它。**
 
-XKB 建立在不同的前提上：知識有生命週期。目標不是存更多，而是讓你已經消費過的內容*在適當的時機重新浮現*，並*逐步沉澱為持久理解*。
+XKB 建立在不同的前提上：知識有生命週期。目標不是存更多，而是讓你已經消費過的內容*在適當的時機重新浮現*，並*逐步沉澱為持久理解*。X/Twitter 書籤只是其中一種輸入來源，不是產品定義。
 
 ---
 
@@ -112,11 +112,12 @@ python3 scripts/sync_enriched_index.py --dry-run  # 若你的版本支援
 
 ```
 輸入來源
-├── X/Twitter 書籤         →  xkb_minion_submit.py / xkb_minion_worker.py
+├── 本地筆記 / markdown    →  local_ingest.py
 ├── YouTube 播放清單       →  fetch_youtube_playlist.py
 ├── GitHub forks / stars   →  fetch_github_repos.py
-├── 本地筆記 / markdown    →  local_ingest.py
-└── PubMed / 學術論文      →  fetch_pubmed.py + local_ingest.py
+├── PubMed / 學術論文      →  fetch_pubmed.py + local_ingest.py
+├── 對話記憶               →  distill_memory_to_wiki.py
+└── X/Twitter 書籤         →  xkb_minion_submit.py / xkb_minion_worker.py
         │
         ▼
   scripts/_card_prompt.py   ← 所有 ingest 腳本共享
