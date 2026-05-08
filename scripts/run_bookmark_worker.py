@@ -340,11 +340,23 @@ def main() -> None:
     total_todo = len([i for i in items if i["status"] == "todo"])
     print(f"📋 Processing {len(todo)}/{total_todo} todo items  [worker: {args.worker}]")
     if args.local_only:
-        print("   (local-only mode — no content sent to external APIs)")
+        print("   (local-only mode — no content sent to external APIs; queue will not be mutated)")
     elif args.dry_run:
-        print("   (dry-run mode — no API calls)")
+        print("   (dry-run mode — no API calls; queue will not be mutated)")
     else:
         print(f"   ⚠️  Bookmark content will be sent to LLM for enrichment (via openclaw).")
+
+    if args.dry_run:
+        for item in todo:
+            print(f"  → {item['id']}  [{item.get('category', '')}]  ", end="", flush=True)
+            bookmark_content = _read_bookmark(item["source_path"])
+            if bookmark_content:
+                preview = bookmark_content[:80].replace("\n", " ")
+                print(f"preview: {preview}...")
+            else:
+                print("missing bookmark file")
+        print("\n✅ dry-run complete; queue unchanged")
+        return
 
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):
