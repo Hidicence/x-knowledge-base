@@ -11,7 +11,12 @@
   <a href="#運作方式"><strong>運作方式</strong></a> ·
   <a href="#選擇運行模式"><strong>運行模式</strong></a> ·
   <a href="./docs/data-flow.md"><strong>隱私與資料流</strong></a> ·
+  <a href="#授權"><strong>授權</strong></a> ·
   <a href="https://youtu.be/JWgm6ky_pys"><strong>概念影片</strong></a>
+</p>
+
+<p align="center">
+  <a href="./LICENSE"><img alt="授權：PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-E07A3F"></a>
 </p>
 
 ## 知識不該在收藏後消失
@@ -317,5 +322,13 @@ python3 scripts/health_check_pipeline.py
 ## 參與貢獻
 
 先讀 [`SKILL.md`](./SKILL.md)、[`docs/data-flow.md`](./docs/data-flow.md) 與 [`docs/xkb-wiki-architecture.md`](./docs/xkb-wiki-architecture.md)。歡迎提出 issue 與 pull request。
+
+## 授權
+
+XKB 依 [PolyForm Noncommercial License 1.0.0](./LICENSE) **開放原始碼供非商業用途使用**。依照授權條款，個人研究、學習、實驗、興趣專案，以及符合條件的非商業組織用途均可使用。此授權不包含商業使用；商業使用必須另向授權人取得書面授權。
+
+這是 **source-available 授權，不是 OSI 認可的開源授權**。使用、修改或散布 XKB 前，請先閱讀完整授權條款。
+
+Required Notice: Copyright 2026 Hidicence. Licensed under the PolyForm Noncommercial License 1.0.0.
 
 你的知識值得的不只是被保存，而是在重要時刻重新回來。

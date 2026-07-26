@@ -11,7 +11,12 @@
   <a href="#how-it-works"><strong>How it works</strong></a> ·
   <a href="#choose-your-runtime"><strong>Runtime modes</strong></a> ·
   <a href="./docs/data-flow.md"><strong>Privacy & data flow</strong></a> ·
+  <a href="#license"><strong>License</strong></a> ·
   <a href="https://youtu.be/JWgm6ky_pys"><strong>Pitch video</strong></a>
+</p>
+
+<p align="center">
+  <a href="./LICENSE"><img alt="License: PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-E07A3F"></a>
 </p>
 
 ## Knowledge should not disappear after capture
@@ -317,5 +322,13 @@ python3 scripts/health_check_pipeline.py
 ## Contributing
 
 Start with [`SKILL.md`](./SKILL.md), [`docs/data-flow.md`](./docs/data-flow.md), and [`docs/xkb-wiki-architecture.md`](./docs/xkb-wiki-architecture.md). Issues and pull requests are welcome.
+
+## License
+
+XKB is **source-available for noncommercial use** under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Personal research, study, experimentation, hobby projects, and qualifying noncommercial-organization use are permitted under its terms. Commercial use is not granted by this license and requires a separate written license from the licensor.
+
+This is **not an OSI-approved open-source license**. Review the full license before using, modifying, or distributing XKB.
+
+Required Notice: Copyright 2026 Hidicence. Licensed under the PolyForm Noncommercial License 1.0.0.
 
 Your knowledge deserves more than storage. It deserves to return when it matters.
