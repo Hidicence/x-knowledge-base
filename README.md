@@ -1,650 +1,321 @@
-# X Knowledge Base (XKB)
+<p align="right">
+  <strong>English</strong> · <a href="./README.zh.md">繁體中文</a>
+</p>
 
-[**繁體中文**](./README.zh.md) · English
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="X Knowledge Base turns scattered sources into structured knowledge and active recall">
+</p>
 
-> **讓知識重新浮現 | Make Knowledge Reappear**
->
-> XKB is a personal knowledge lifecycle system. It turns local notes, bookmarks, videos, repositories, papers, and conversation memory into structured cards, searchable indexes, distilled wiki topics, and an interactive knowledge graph. The core idea is semantic active recall — knowledge should resurface when it becomes useful, not sit in an archive waiting to be manually found.
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="#how-it-works"><strong>How it works</strong></a> ·
+  <a href="#choose-your-runtime"><strong>Runtime modes</strong></a> ·
+  <a href="./docs/data-flow.md"><strong>Privacy & data flow</strong></a> ·
+  <a href="https://youtu.be/JWgm6ky_pys"><strong>Pitch video</strong></a>
+</p>
 
-[![Watch the Pitch Video](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
-*(Click to watch the concept presentation)*
+## Knowledge should not disappear after capture
 
----
+Bookmarks, notes, videos, repositories, papers, and conversations accumulate quickly. Most knowledge tools help you save them; the difficult part comes later: recovering the right idea, with evidence, while you are actually working.
 
-## The Problem
+**X Knowledge Base (XKB)** is a local-first knowledge lifecycle for people and AI agents. It converts heterogeneous sources into one structured card format, retrieves them through hybrid search, distills durable insights into a human-readable wiki, and surfaces relevant context during a conversation.
 
-Every day we consume notes, articles, videos, repositories, papers, conversations, and threads. We save them because they feel important. Six months later — we cannot find them, cannot recall them, and have no idea what we actually learned.
+This repository contains the reusable tooling. Your cards, indexes, wiki pages, graph data, credentials, and runtime state stay in your own workspace and are excluded from the public repository.
 
-Most tools stop at capture: save a bookmark, store a note, tag a source. XKB starts after capture. It turns raw material into reusable knowledge, connects it to what you already know, and lets agents retrieve it at the moment of need. **Knowledge should know when you need it.**
+<p align="center">
+  <img src="./assets/readme/lifecycle.svg" width="100%" alt="XKB lifecycle: capture, structure, retrieve, distill, and reappear">
+</p>
 
-XKB is built on a different premise: knowledge has a lifecycle. The goal is not to archive more — it is to make what you have already consumed *reappear at the right moment* and *gradually sediment into durable understanding*.
+## What makes XKB different
 
----
+### One schema across many sources
 
+Local Markdown, X/Twitter bookmarks, YouTube transcripts, GitHub repositories, PDFs, and PubMed papers converge on the same nine-section core card schema. That gives retrieval and synthesis a stable unit instead of a pile of source-specific summaries.
 
-## Start Simple: Three Operating Modes
+### Retrieval before generation
 
-XKB can run in layers. You do **not** need to install the full XBrain/GBrain stack on day one.
+XKB searches the distilled wiki first, then the underlying evidence cards. In Full mode, XBrain/GBrain provides vector + keyword hybrid retrieval with Reciprocal Rank Fusion (RRF). If that runtime is unavailable, XKB falls back to local keyword and flat vector indexes.
 
-| Mode | Best for | Requires | Retrieval |
-|------|----------|----------|-----------|
-| **Lite** | First run, local notes, small libraries | Python + an LLM provider | `search_index.json` keyword search |
-| **Enhanced** | Better semantic recall without services | Lite + `GEMINI_API_KEY` | flat `vector_index.json` fallback |
-| **Full / XBrain** | Daily use, larger libraries, agent workflows | OpenClaw + GBrain/XBrain | Postgres/pgvector hybrid RRF search |
+### Distillation is gated
 
-Recommended path:
-1. Start with **Lite** mode and ingest a few local notes.
-2. Add Gemini embeddings only if you need semantic fallback search.
-3. Install XBrain/GBrain once the library is large enough to need hybrid search and durable jobs.
+Cards are evidence units; wiki topics are durable understanding. `sync_cards_to_wiki.py` and `distill_memory_to_wiki.py` use an absorb/staging workflow so every captured item does not automatically become long-term knowledge.
 
-Your personal cards, indexes, graph data, and runtime state should stay outside git. This repo contains the tooling and templates, not your private knowledge base.
+### Built for agent conversations
 
----
+`recall_for_conversation.py`, `xkb_ask.py`, and the MCP server expose relevant knowledge with source links. The goal is not another archive to browse—it is context that returns when an agent or person needs it.
 
-## 10-Minute Lite Quick Start
+## Quick start
+
+The smallest useful path ingests local Markdown and searches it. It does **not** require X/Twitter cookies, Bun, GBrain, Postgres, or an OpenClaw cron setup.
+
+### 1. Clone and create a private workspace
 
 ```bash
-# 1. Clone
-git clone https://github.com/Hidicence/x-knowledge-base
+git clone https://github.com/Hidicence/x-knowledge-base.git
 cd x-knowledge-base
 
-# 2. Choose a workspace for your private data
 export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
-mkdir -p "$OPENCLAW_WORKSPACE/memory/cards" "$OPENCLAW_WORKSPACE/memory/bookmarks"
-
-# 3. Configure an LLM provider
-cp .env.example .env
-# Edit .env or export LLM_MODEL / LLM_API_URL / LLM_API_KEY in your shell.
-
-# 4. Ingest a local markdown folder
-python3 scripts/local_ingest.py /path/to/notes --category notes
-
-# 5. Build the fallback search index
-bash scripts/build_search_index.sh
-
-# 6. Ask or search
-bash scripts/search_bookmarks.sh "agent memory"
-python3 scripts/xkb_ask.py "What patterns are emerging in my notes?"
+mkdir -p \
+  "$OPENCLAW_WORKSPACE/memory/cards" \
+  "$OPENCLAW_WORKSPACE/memory/bookmarks"
 ```
 
-This mode does not require X/Twitter cookies, GBrain, Postgres, Bun, or OpenClaw cron.
+### 2. Configure an LLM
 
----
+If you already use OpenClaw, select any model available to your OpenClaw installation in `config/llm.json`.
 
-## Privacy & Public Repo Hygiene
-
-XKB is designed so the public repo can stay clean while your knowledge base remains local.
-
-**Do not commit:**
-- `.env` or real files under `.secrets/`
-- X/Twitter cookies such as `BIRD_AUTH_TOKEN` / `BIRD_CT0`
-- API keys such as `LLM_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`
-- generated personal data: `memory/cards/`, `memory/bookmarks/search_index.json`, `memory/bookmarks/vector_index.json`, `memory/x-knowledge-base/wiki/`
-- generated demo output: `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/graph-data.json`
-- runtime queues, logs, caches, PM2 dumps, or machine-specific paths
-
-**Safe to commit:**
-- source scripts
-- config templates and examples
-- docs
-- sample graph/schema files
-- `.env.example` / `.secrets/*.example` placeholders
-
-Before publishing changes, run:
+For standalone use, export an OpenAI-compatible endpoint:
 
 ```bash
-git status --short
-git diff --check
+export LLM_API_URL="https://your-provider.example/v1"
+export LLM_API_KEY="your-key"
+export LLM_MODEL="your-model"
+```
+
+> Do not commit real credentials. Environment variables and your private OpenClaw configuration are runtime state, not repository content.
+
+### 3. Ingest, index, and ask
+
+```bash
+# Replace demo/sample-notes with your own Markdown directory.
+python3 scripts/local_ingest.py demo/sample-notes \
+  --category learning --limit 3
+
+bash scripts/build_search_index.sh
+bash scripts/search_bookmarks.sh "agent memory"
+python3 scripts/xkb_ask.py "What patterns appear across these notes?"
+```
+
+Generated cards and indexes are written under `$OPENCLAW_WORKSPACE/memory/`, not into this repository.
+
+## How it works
+
+```text
+Sources
+  local notes · X bookmarks · YouTube · GitHub · PDF/PubMed · memory
+       │
+       ▼
+Shared card contract
+  source adapters + scripts/_card_prompt.py + scripts/_llm.py
+       │
+       ▼
+Knowledge cards
+  one nine-section schema · source links · claim level · bilingual summary
+       │
+       ├──────────────► XBrain/GBrain hybrid retrieval (primary)
+       │                    vector + keyword + RRF
+       │
+       ├──────────────► search_index.json / vector_index.json (fallback)
+       │
+       ▼
+Absorb gate
+  cards + conversation memory → staging/review → durable wiki topics
+       │
+       ▼
+Active recall
+  wiki first → evidence cards → answer with sources
+```
+
+### The nine-section card
+
+Every supported source produces the same knowledge structure:
+
+1. Core question and conclusion
+2. Claim level: Attested, Scholarship, or Inference
+3. Key arguments
+4. False Friends—terms whose technical meaning differs from common usage
+5. Surprises
+6. Relationship to existing knowledge
+7. Bilingual summary for retrieval
+8. Actionable value
+9. Original source and links
+
+For image-bearing sources, XKB can append a tenth **Media Evidence** section with OCR and vision notes through `scripts/media_ingest.py`.
+
+## Choose your runtime
+
+Start with the smallest mode that solves your problem.
+
+| Mode | Best for | Retrieval | Additional runtime |
+| --- | --- | --- | --- |
+| **Lite** | First use, local notes, small libraries | `search_index.json` keyword search | Python + an LLM |
+| **Enhanced** | Semantic fallback without a database service | flat `vector_index.json` | Gemini, OpenAI, or local Ollama embeddings |
+| **Full / XBrain** | Larger libraries and agent workflows | vector + keyword hybrid RRF | OpenClaw + GBrain/XBrain |
+
+### Enable flat semantic retrieval
+
+```bash
+export EMBEDDING_PROVIDER=gemini
+export GEMINI_API_KEY="your-key"
+python3 scripts/build_vector_index.py --incremental
+```
+
+`build_vector_index.py` also supports the embedding providers documented in `.env.example`; use Ollama when you want embeddings to remain local.
+
+### Enable XBrain/GBrain
+
+Review `scripts/setup_xbrain.sh` before running it: the script installs or updates Bun/GBrain and edits your local OpenClaw configuration.
+
+```bash
+bash scripts/setup_xbrain.sh
 python3 scripts/health_check_pipeline.py
 ```
 
-For index hygiene specifically:
+When XBrain is available, ingest scripts make a best-effort attempt to index newly written cards and recall can use `xbrain_recall.py`. Local card creation remains independent; if XBrain cannot be reached, recall degrades to local indexes.
+
+## Add sources
 
 ```bash
-python3 scripts/prune_duplicate_index_rows.py --dry-run
-python3 scripts/sync_enriched_index.py --dry-run  # if available in your version
+# Local Markdown / text
+python3 scripts/local_ingest.py /path/to/notes --category learning
+
+# X/Twitter bookmarks already saved in your workspace
+python3 scripts/run_scan_worker.py --limit 20
+
+# YouTube playlist transcripts
+python3 scripts/fetch_youtube_playlist.py --playlist "PLAYLIST_URL" --limit 5
+
+# GitHub forks and stars
+python3 scripts/fetch_github_repos.py --forks --stars --limit 20
+
+# PubMed open-access papers
+python3 scripts/fetch_pubmed.py "retrieval augmented generation" \
+  --limit 10 --out /tmp/xkb-papers
+python3 scripts/local_ingest.py /tmp/xkb-papers --category research --tag pubmed
 ```
 
----
-## How It Works
+Source adapters converge on the shared card contract. Most use `_card_prompt.py` directly; local-file ingest currently maintains a compatible prompt implementation while producing the same core schema.
 
-### The Full Pipeline
+## Distill cards into durable knowledge
 
-```
-Input sources
-├── Local notes / markdown     →  local_ingest.py
-├── YouTube playlists          →  fetch_youtube_playlist.py
-├── GitHub forks/stars         →  fetch_github_repos.py
-├── PubMed / academic papers   →  fetch_pubmed.py + local_ingest.py
-├── Conversation memory        →  distill_memory_to_wiki.py
-└── X/Twitter bookmarks        →  xkb_minion_submit.py / xkb_minion_worker.py
-        │
-        ▼
-  scripts/_card_prompt.py   ← shared by ALL ingest scripts
-  (unified 9-section card format, same prompt regardless of source)
-        │
-        ▼ (all LLM calls go through scripts/_llm.py)
-        │
-┌─────────────────────────────────────────────────────────────┐
-│  Knowledge Artifacts (permanent, gitignored)                │
-│                                                             │
-│  memory/cards/*.md                      structured 9-section cards      │
-│  memory/x-knowledge-base/wiki/topics/   distilled long-term knowledge   │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼ on every card write (auto)
-┌─────────────────────────────────────────────────────────────┐
-│  Primary Retrieval — XBrain                                 │
-│  (XKB's semantic search layer, powered by GBrain)           │
-│                                                             │
-│  • pgvector + Postgres-backed GBrain                        │
-│  • Gemini embeddings                                        │
-│  • RRF hybrid search (vector + keyword)                     │
-│  • Minions job runtime for durable internal pipelines       │
-│  • xbrain_recall.py  ← used automatically by all scripts   │
-└─────────────────────────────────────────────────────────────┘
-        │  falls back to when XBrain unavailable
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Fallback Retrieval                                         │
-│                                                             │
-│  search_index.json          keyword + summary search        │
-│  vector_index.json          flat Gemini vector index        │
-│  build_vector_index.py      rebuilds flat index on demand   │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │  Wiki Layer (memory/x-knowledge-base/wiki/topics/*.md)   │
-  │                                                         │
-  │  sync_cards_to_wiki.py     external bookmark knowledge  │
-  │  distill_memory_to_wiki.py conversation memory insights │
-  │                            (daily cron, auto-staged)    │
-  └─────────────────────────────────────────────────────────┘
-        │
-        ▼
-xkb_ask.py / Active Recall Layer
-Two-layer recall: wiki topics (synthesized) → cards (XBrain hybrid search)
-        │
-        ▼
-demo/xkb-demo-ui/  ← Interactive graph explorer (Next.js)
-Knowledge Graph | Chat | Evidence Panel
-```
-
-### Every Card Uses the Same 9-Section Structure
-
-| # | Section | Purpose |
-|---|---------|---------|
-| 1 | **Core Question & Conclusion** | What question does this answer? What is the conclusion? |
-| 2 | **Claim Level** | Attested / Scholarship / Inference — how reliable? |
-| 3 | **Key Arguments** | 3–5 key arguments extracted from the source |
-| 4 | **False Friends** | Terms with specific technical meaning in this context |
-| 5 | **Surprises** | What might surprise a knowledgeable reader? |
-| 6 | **Relation to Existing Knowledge** | How does this relate to existing cards? |
-| 7 | **Bilingual Summary** | ZH + EN (used for search index) |
-| 8 | **Value to User** | Actionable directions, relevant projects |
-| 9 | **Source** | Source URL and related links |
-
-One format, every source. A YouTube video, a GitHub repo, and a PubMed paper all produce the same card structure.
-
----
-
-## LLM Configuration
-
-XKB uses a **single unified LLM config**. All scripts share the same model — no scattered environment variables.
-
-### `config/llm.json` — change this one file to switch all scripts
-
-```json
-{
-  "model": "openai-codex/gpt-5.4"
-}
-```
-
-Available model formats (anything supported by `openclaw capability model run`):
-
-| Value | Provider |
-|-------|----------|
-| `openai-codex/gpt-5.4` | ChatGPT via OpenClaw OAuth |
-| `openai-codex/gpt-5.4-mini` | ChatGPT Mini via OpenClaw OAuth |
-| `MiniMax-M2.7` | MiniMax via API key |
-| `MiniMax-M2.5` | MiniMax M2.5 via API key |
-
-> **How it works:** All scripts call `scripts/_llm.py`, which invokes `openclaw capability model run`. OpenClaw handles all auth (OAuth token refresh, API keys) automatically. Scripts no longer need to manage API keys.
-
-> **Embedding is separate.** Semantic vector search uses Gemini (`GEMINI_API_KEY`) and is not affected by `config/llm.json`.
-
-### Standalone / non-OpenClaw setup
-
-If you are not using OpenClaw, override the model via environment variables:
+The wiki is a curated output layer, not a mirror of every captured item.
 
 ```bash
-export LLM_MODEL="MiniMax-M2.5"
-export LLM_API_URL="https://api.minimax.io/anthropic"
-export LLM_API_KEY="your-minimax-key"
-```
+# Evaluate cards through the absorb gate and update wiki topics.
+python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 
-> `LLM_MODEL` env var takes priority over `config/llm.json`.
+# Extract durable candidates from recent conversation memory.
+python3 scripts/distill_memory_to_wiki.py --stage --days 3
 
----
-
-## Minions Pipeline
-
-**X/Twitter bookmark enrichment now runs on a Minions-native queue pipeline by default** on top of Postgres-backed GBrain. This replaces the old cron-spawn scan-worker pattern for the main bookmark enrichment path.
-
-### Deployed components
-- `scripts/xkb_minion_submit.py`
-  - scans unenriched bookmarks
-  - submits one idempotent Minion job per bookmark
-  - intended to run from cron (for example, hourly)
-- `scripts/xkb_minion_worker.py`
-  - long-lived worker daemon
-  - claims jobs from `minion_jobs`
-  - runs LLM enrichment
-  - writes final cards and updates job state
-
-### Why this replaced the old cron scan-worker pattern
-Old pattern:
-- spawned a fresh Python process every 10 minutes
-- produced zombie `openclaw-infer` subprocesses under load
-- was harder to observe, retry, and recover safely
-
-Current Minions-native pattern:
-- one long-lived worker daemon
-- sequential processing by default (one job at a time)
-- built-in timeout
-- retry + exponential backoff
-- idempotent submissions keyed by bookmark/card id
-- observable via `gbrain jobs list`
-
-### Smoke-tested behavior
-Validated in this environment:
-- worker successfully claims jobs
-- LLM inference starts correctly
-- jobs move through expected states
-- active → dead flow was observed under intentionally short timeout in test mode
-- production timeout can be set to 300s per job
-
-### Monitoring
-```bash
-# see job states
-gbrain jobs list
-
-# verify Minions health
-gbrain jobs smoke
-```
-
-## Wiki Layer
-
-The wiki is the **distilled output layer** — a readable, long-term knowledge base built from two sources:
-
-| Source | Script | What it adds |
-|--------|--------|--------------|
-| External bookmarks | `sync_cards_to_wiki.py` | Synthesized insights from cards via absorb gate |
-| Conversation memory | `distill_memory_to_wiki.py` | Decisions, workflows, principles from daily memory logs |
-
-### Single Canonical Source
-
-The wiki lives at `wiki/` inside the skill directory. The workspace symlinks to it:
-
-```
-~/.openclaw/workspace/wiki/  →  ~/.openclaw/workspace/memory/x-knowledge-base/wiki/  (symlink)
-```
-
-This prevents dual-wiki drift: every tool reads from one place.
-
-### Memory → Wiki Distillation
-
-`distill_memory_to_wiki.py` reads recent `memory/YYYY-MM-DD.md` logs, uses LLM to extract insights worth long-term preservation, and either stages them for review or applies them to wiki topic pages.
-
-```bash
-# Preview what would be extracted from the last 3 days
-python3 scripts/distill_memory_to_wiki.py --dry-run --days 3
-
-# Stage candidates for review
-python3 scripts/distill_memory_to_wiki.py --stage --days 2
-
-# Apply all staged candidates (auto-approve)
+# Inspect the staged file before applying selected candidates.
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md \
+  --staging-file "$OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/FILE.md" \
   --approve-all
 ```
 
-Cron jobs run this automatically at 15:30 and 21:30 UTC+8 daily.
+The default runtime layout is documented in [`docs/RUNTIME_PATHS.md`](./docs/RUNTIME_PATHS.md).
 
-### Health Check
-
-```bash
-python3 scripts/health_check_pipeline.py
-```
-
-Checks three things:
-1. `workspace/wiki` is a symlink to the canonical wiki (not a duplicate)
-2. Recall reads from the correct wiki path
-3. `search_index.json` summary coverage ≥ 70%, age < 26h; vector index freshness
-
----
-
-## Active Recall Layer
-
-When a user sends a message, XKB uses **two-layer recall**:
-
-1. **Layer 1 — Wiki topics** (`memory/x-knowledge-base/wiki/topics/*.md`): synthesized, durable knowledge. Answers conceptual questions.
-2. **Layer 2 — Cards** (XBrain hybrid search, falls back to `search_index.json`): raw evidence. Provides specific citations and sources.
+## Ask and recall
 
 ```bash
-# Ask a question over your knowledge base
-python3 scripts/xkb_ask.py "What are alternatives to RAG?"
+# Grounded question answering over wiki topics and evidence cards
+python3 scripts/xkb_ask.py "What alternatives to RAG have I collected?"
+
+# Compact output for chat workflows
 python3 scripts/xkb_ask.py "What is the absorb gate?" --format chat
-python3 scripts/xkb_ask.py "agent memory design" --json
+
+# Conversation-time retrieval
+python3 scripts/recall_for_conversation.py \
+  "I need a reliable agent memory workflow" --json
 ```
 
-### As an MCP Tool (Claude Code / any MCP client)
+### MCP tool
 
-Add to `.claude/settings.json`:
+Expose recall to Claude Code or another MCP client:
 
 ```json
 {
   "mcpServers": {
     "xkb-recall": {
       "command": "python3",
-      "args": ["/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
-      "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
+      "args": ["/absolute/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
+      "env": {
+        "OPENCLAW_WORKSPACE": "/absolute/path/to/your/workspace"
+      }
     }
   }
 }
 ```
 
----
+## Explore the knowledge graph
 
-## vNext Direction
+The demo is a Next.js three-panel explorer: **Knowledge Graph · Chat · Evidence**.
 
-A draft roadmap for the next phase lives here:
-- `docs/xkb-vnext-roadmap-draft.md`
-
-Short version:
-- keep wiki as the human-readable product layer
-- place graph/relations in the structured knowledge layer below wiki
-- treat Minions as the default execution substrate for large-scale internal workflows
-- now that bookmark enrichment is already Minions-native, focus next on knowledge governance: confidence, staleness, supersession, typed relationships
-
-## Upgrade Path: OpenClaw + XBrain
-
-Once Lite mode works, you can enable the full stack.
-
-### With OpenClaw
-
-```bash
-# 1. Clone into your OpenClaw skills directory
-git clone https://github.com/Hidicence/x-knowledge-base \
-  ~/.openclaw/workspace/skills/x-knowledge-base
-cd ~/.openclaw/workspace/skills/x-knowledge-base
-
-# 2. Configure model/auth in OpenClaw
-# Add env keys to ~/.openclaw/openclaw.json, for example:
-# { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
-
-# 3. Optional: install XBrain/GBrain hybrid search
-bash scripts/setup_xbrain.sh
-
-# 4. Run health check
-python3 scripts/health_check_pipeline.py
-
-# 5. Run the demo
-bash scripts/xkb_demo.sh
-```
-
-### Standalone with XBrain
-
-```bash
-export LLM_API_KEY="your-minimax-or-openai-key"
-export LLM_API_URL="https://api.minimax.io/anthropic/v1"
-export LLM_MODEL="MiniMax-M2.7"
-export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
-export GEMINI_API_KEY="your-gemini-key"
-
-bash scripts/setup_xbrain.sh
-bash scripts/xkb_demo.sh
-```
-
-### Manual XBrain Setup
-
-If you prefer not to use the setup script:
-
-```bash
-# 1. Install Bun  https://bun.sh
-curl -fsSL https://bun.sh/install | bash
-
-# 2. Clone GBrain runtime
-git clone https://github.com/garrytan/gbrain ~/gbrain
-cd ~/gbrain && bun install && bun run src/cli.ts init
-
-# 3. Tell XKB where to find it
-# Add to ~/.openclaw/openclaw.json → "env":
-#   "gbrain_dir": "/absolute/path/to/gbrain"
-#   "GEMINI_API_KEY": "your-key"   ← required for embeddings
-
-# 4. Verify
-python3 scripts/xbrain_recall.py "test query"
-```
-
----
-
-## Scripts Reference
-
-### Ingest Pipeline
-
-All scripts share `_card_prompt.py` and `_llm.py` — one prompt, one LLM call, one card format.
-
-| Script | Source | What it does |
-|--------|--------|-------------|
-| `run_scan_worker.py` | X/Twitter | Scans bookmarks for unenriched files → cards |
-| `run_bookmark_worker.py` | X/Twitter queue | Processes tiege-queue.json one item at a time |
-| `fetch_youtube_playlist.py` | YouTube | Playlist subtitles → knowledge cards |
-| `fetch_github_repos.py` | GitHub | Forks/stars → repo-level knowledge cards |
-| `local_ingest.py` | Local / PubMed | Markdown/txt/papers → cards |
-| `fetch_pubmed.py` | PubMed Central | Fetch open-access papers as markdown |
-| `_card_prompt.py` | *(shared)* | Unified prompt, card format, summary extraction |
-| `_llm.py` | *(shared)* | Unified LLM call via `openclaw capability model run` |
-
-### Index & Enrichment
-
-| Script | What it does |
-|--------|-------------|
-| `sync_enriched_index.py` | Backfill summaries/tags from enriched cards into search_index.json |
-| `build_vector_index.py` | Build/update flat JSON vector index (fallback when XBrain unavailable) |
-| `xbrain_recall.py` | XBrain search bridge — hybrid RRF (pgvector + keyword); auto-used by all recall scripts |
-
-### Wiki Pipeline
-
-| Script | What it does |
-|--------|-------------|
-| `sync_cards_to_wiki.py` | Cards → wiki topic pages via LLM absorb gate |
-| `distill_memory_to_wiki.py` | Daily memory logs → wiki topic insights (stage/apply workflow) |
-| `sync_cards_to_wiki.py --review` | Review pending absorb decisions |
-| `lint_wiki.py` | Validate wiki structure, detect gap topics |
-| `topic_guide_generator.py` | Generate new wiki topic stubs |
-| `suggest_topic_map.py` | Suggest topic map updates from uncovered cards |
-
-### Active Recall Layer
-
-| Script | What it does |
-|--------|-------------|
-| `xkb_ask.py` | Natural-language Q&A: wiki (Layer 1) → cards via XBrain hybrid search (Layer 2) |
-| `recall_for_conversation.py` | Conversation-triggered recall (wiki + XBrain card search) |
-| `continuity_recall.py` | MEMORY.md + wiki lookup for session continuity |
-| `contrarian_recall.py` | Surfaces warnings, failures, counter-examples |
-| `action_recall.py` | Action-oriented recall (what to do next) |
-| `xkb_recall_server.py` | MCP server exposing recall as a tool |
-
-### Maintenance & Observability
-
-| Script | What it does |
-|--------|-------------|
-| `health_check_pipeline.py` | Wiki symlink integrity, recall source path, index freshness |
-| `status_knowledge_pipeline.py` | Full pipeline status in one view |
-| `health_check.py` | Semantic conflict detection, gap analysis |
-
----
-
-## Demo UI — Interactive Knowledge Graph
-
-```
-demo/
-├── xkb-demo-ui/              Next.js app — three-column explorer
-│   ├── app/page.tsx          Main layout: graph | chat | evidence
-│   ├── components/
-│   │   ├── KnowledgeGraph.tsx    Force-directed graph (react-force-graph-2d)
-│   │   ├── ChatPanel.tsx         Natural-language Q&A via xkb_ask.py
-│   │   └── EvidencePanel.tsx     Source cards + wiki references
-│   └── public/
-│       └── graph-data.sample.json  schema reference
-└── generate_graph.py         Builds graph-data.json from search_index.json into $OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/
-```
-
-**Run the demo:**
 ```bash
 python3 demo/generate_graph.py
-cd demo/xkb-demo-ui && npm install && npm run dev
-# → http://localhost:3000
+cd demo/xkb-demo-ui
+npm install
+npm run dev
+# http://localhost:3000
 ```
 
-> `graph-data.json` is generated under `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/`. It is personal runtime data and should not be committed.
+Generated graph data is stored in the private workspace. The repository only includes a sanitized schema/sample.
 
----
+## Privacy model
 
-## Step-by-Step Setup
+XKB is local-first, not automatically local-only. Generated artifacts stay local, but cloud-backed enrichment and embeddings send selected content to configured services.
 
-### 1. Ingest content
+- Knowledge cards, indexes, wiki topics, graph data, and queues remain in your workspace.
+- Local documents and fetched source text are sent to your configured LLM when enrichment runs.
+- Card titles and summaries are sent to the selected embedding provider when vector indexing runs.
+- X/Twitter session cookies are high-sensitivity credentials and must never enter source control.
+- Ollama can keep embedding generation local; skipping cloud enrichment keeps raw capture local as well.
 
-```bash
-# Local notes
-python3 scripts/local_ingest.py notes/ --category learning
+Read [`docs/data-flow.md`](./docs/data-flow.md) before ingesting sensitive material. It maps each source and script to the third parties it may contact.
 
-# X/Twitter bookmarks
-python3 scripts/run_scan_worker.py --limit 20
+## Repository and runtime boundaries
 
-# YouTube playlists
-python3 scripts/fetch_youtube_playlist.py --playlist "URL"
-
-# GitHub repos
-python3 scripts/fetch_github_repos.py --forks --stars
-
-# PubMed papers
-python3 scripts/fetch_pubmed.py "antimicrobial resistance" --limit 20 --out /tmp/papers
-python3 scripts/local_ingest.py /tmp/papers/ --category research --tag pubmed
+```text
+x-knowledge-base/                         reusable code, docs, templates
+$OPENCLAW_WORKSPACE/memory/cards/         generated knowledge cards
+$OPENCLAW_WORKSPACE/memory/bookmarks/     raw sources + fallback indexes
+$OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/
+                                          staging + distilled wiki topics
 ```
 
-### 2. Enrich the index
+Never commit `.env`, session cookies, API keys, generated personal cards, indexes, wiki pages, queues, logs, or machine-specific paths.
+
+## Operate and verify
 
 ```bash
-# Backfill summaries from enriched cards into search_index.json (always run this)
-python3 scripts/sync_enriched_index.py
+# Pipeline health and canonical wiki paths
+python3 scripts/health_check_pipeline.py
 
-# Only needed if XBrain is not configured (fallback mode)
-python3 scripts/build_vector_index.py --incremental
-```
+# Index quality
+python3 scripts/audit_index_quality.py
+python3 scripts/prune_duplicate_index_rows.py --dry-run
 
-> **XBrain (primary):** every ingest script auto-pushes cards to XBrain on write.
-> `xbrain_recall.py` is used automatically by all recall scripts — no extra steps.
-> Set `gbrain_dir` in `~/.openclaw/openclaw.json` to point at your GBrain runtime directory.
->
-> **Fallback:** if XBrain is unavailable, recall falls back to `search_index.json` keyword search automatically.
+# Wiki structure
+python3 scripts/lint_wiki.py
 
-### 3. Sync to wiki
-
-```bash
-# Sync external knowledge (bookmark cards → wiki topics)
-python3 scripts/sync_cards_to_wiki.py --apply --limit 20
-
-# Distill conversation memory into wiki topics
-python3 scripts/distill_memory_to_wiki.py --stage --days 3
-python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
-```
-
-### 4. Ask
-
-```bash
-python3 scripts/xkb_ask.py "What are the alternatives to RAG?"
-```
-
-### 5. Check pipeline health
-
-```bash
+# Before publishing repository changes
+git diff --check
 python3 scripts/health_check_pipeline.py
 ```
 
-Expected output:
-```
-✅  wiki_canonical      workspace/wiki → memory/x-knowledge-base/wiki (symlink correct)
-✅  recall_wiki_source  Recall reads from canonical wiki
-✅  index_freshness     summary coverage: 212/270 (79%) | enriched: 218 | vectors: 471
-```
+## Project map
 
----
+| Area | Key files |
+| --- | --- |
+| Card contract & LLM | `scripts/_card_prompt.py`, `scripts/_llm.py`, `scripts/local_ingest.py` |
+| Source adapters | `local_ingest.py`, `fetch_youtube_playlist.py`, `fetch_github_repos.py`, `fetch_pubmed.py` |
+| Retrieval | `xbrain_recall.py`, `build_search_index.sh`, `build_vector_index.py` |
+| Active recall | `xkb_ask.py`, `recall_for_conversation.py`, `xkb_recall_server.py` |
+| Distillation | `sync_cards_to_wiki.py`, `distill_memory_to_wiki.py` |
+| Operations | `health_check_pipeline.py`, `status_knowledge_pipeline.py`, `lint_wiki.py` |
+| Demo | `demo/generate_graph.py`, `demo/xkb-demo-ui/` |
 
-## Automated Pipeline (OpenClaw Cron)
+## Design principles
 
-When running with OpenClaw, the full pipeline runs automatically:
-
-| Schedule | Job | What it does |
-|----------|-----|-------------|
-| 13:30 UTC+8 | `daily:xkb-ingestion-batch` | Ingest new X/Twitter bookmarks → cards → auto-push to XBrain → sync_enriched_index |
-| 15:30 UTC+8 | `daily:wiki-distill-afternoon` | Distill today's memory into wiki candidates |
-| 21:30 UTC+8 | `daily:wiki-distill-evening` | Second distillation pass, apply high-confidence candidates |
-
-The pipeline ensures that after each ingestion run:
-1. Each card is auto-pushed to XBrain on write — hybrid RRF search immediately available
-2. `sync_enriched_index.py` backfills summaries into the fallback search index
-3. New insights from conversations are automatically staged for wiki inclusion
-
----
-
-## Requirements
-
-- Python 3.10+
-- Node.js 18+ (demo UI only)
-- OpenClaw (recommended) — handles all LLM auth and cron automation
-- `GEMINI_API_KEY` — required for XBrain semantic embeddings; set in `~/.openclaw/openclaw.json`
-- [Bun](https://bun.sh) + [GBrain](https://github.com/garrytan/gbrain) runtime (optional) — powers XBrain hybrid search (pgvector/PGLite + RRF); set `gbrain_dir` in `openclaw.json` to activate. Falls back to keyword search if not configured.
-
----
-
-## Roadmap
-
-| Version | Status | What it delivered |
-|---------|--------|-------------------|
-| v0.1 | ✅ | Bookmark ingestion, knowledge cards, keyword search |
-| v0.2 | ✅ | Multi-layer extraction, enrichment worker, vector index |
-| v0.3 | ✅ | Wiki pipeline: absorb gate, topic pages, memory distillation |
-| v0.4 | ✅ | Local notes ingest, ask layer, demo mode, auto topic-map |
-| v0.5 | ✅ | Absorb gate explainability, review-decisions log |
-| v0.6 | ✅ | Active Recall Layer: proactive recall, MCP server, telemetry |
-| v0.7 | ✅ | Claim levels, False Friends, bilingual summaries, academic PDF pipeline |
-| v0.8 | ✅ | Unified ingest pipeline (_card_prompt.py); demo UI (graph + chat) |
-| v0.9 | ✅ | Two-layer recall (wiki first); unified LLM config; memory→wiki distillation pipeline; single canonical wiki; pipeline health check |
-| v1.0 | ✅ | XBrain hybrid search (pgvector + RRF) fully integrated across all ingest scripts; unified path resolution; graceful fallback to keyword search |
-| v1.1 | 🔜 | **Active Recall quality upgrade** — soft-trigger re-ranking; Claim level surfaced in recall output; trigger strategy expansion beyond rule-based regex |
-| v1.2 | 🔜 | **Agent-to-Agent knowledge exchange** — standardized card format (9-section + Claim level) as exchange unit over A2A protocol; `receive_card` MCP tool; XBrain as local digestion layer for received cards |
-
----
-
-## Design Principles
-
-- **One card format, many sources.** Every source produces the same 9-section card.
-- **Layers, not one database.** Working memory, consolidation, capture, and output are separate problems.
-- **Quality gates over quantity.** The absorb gate keeps the wiki as a distilled output layer.
-- **Understanding over summarization.** Cards answer what question this solves, not what it says.
-- **Single source of truth.** One canonical wiki path, one LLM config file — no scattered settings.
-- **OpenClaw handles auth.** Scripts call `openclaw capability model run`; token management is not their problem.
-- **Graceful degradation.** XBrain hybrid search is the primary retrieval path; keyword fallback activates automatically when XBrain is unavailable. Nothing breaks.
-- **Personal data stays local.** Graph data, cards, and wiki are gitignored.
-
----
+- **Understanding over storage.** A card should answer what a source helps you understand, not merely summarize it.
+- **One schema, many sources.** Stable knowledge units make cross-source retrieval possible.
+- **Evidence before synthesis.** Durable conclusions remain traceable to cards and original URLs.
+- **Gates over automatic accumulation.** The wiki earns its signal by rejecting low-value material.
+- **Graceful degradation.** Full hybrid retrieval is optional; the library remains usable without it.
+- **Personal data stays personal.** Reusable tooling belongs in git; runtime knowledge does not.
 
 ## Contributing
 
-Start with [`SKILL.md`](SKILL.md) and [`docs/xkb-wiki-architecture.md`](docs/xkb-wiki-architecture.md).
+Start with [`SKILL.md`](./SKILL.md), [`docs/data-flow.md`](./docs/data-flow.md), and [`docs/xkb-wiki-architecture.md`](./docs/xkb-wiki-architecture.md). Issues and pull requests are welcome.
 
-PRs and issues welcome. Your knowledge deserves to be remembered.
+Your knowledge deserves more than storage. It deserves to return when it matters.

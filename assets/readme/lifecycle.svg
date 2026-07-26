@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+  <title id="title">The XKB knowledge lifecycle</title>
+  <desc id="desc">Five stages: capture sources, structure knowledge cards, retrieve through hybrid search, distill into wiki topics, and recall in agent conversations.</desc>
+  <rect width="1200" height="440" rx="28" fill="#07111A"/>
+
+  <g transform="translate(60 52)">
+    <text x="0" y="0" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">THE KNOWLEDGE LIFECYCLE</text>
+    <text x="0" y="48" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="750">From saved fragment to useful context</text>
+  </g>
+
+  <g transform="translate(60 154)">
+    <path d="M96 84 H984" stroke="#294554" stroke-width="4"/>
+    <path d="M984 84 l-14 -10 v20 z" fill="#294554"/>
+
+    <g transform="translate(0 0)">
+      <circle cx="96" cy="84" r="42" fill="#112A36" stroke="#59D8C8" stroke-width="2"/>
+      <text x="96" y="92" text-anchor="middle" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="700">01</text>
+      <text x="96" y="154" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Capture</text>
+      <text x="96" y="184" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">notes · X · video</text>
+      <text x="96" y="208" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">GitHub · papers</text>
+    </g>
+
+    <g transform="translate(222 0)">
+      <circle cx="96" cy="84" r="42" fill="#112A36" stroke="#59D8C8" stroke-width="2"/>
+      <text x="96" y="92" text-anchor="middle" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="700">02</text>
+      <text x="96" y="154" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Structure</text>
+      <text x="96" y="184" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">one schema</text>
+      <text x="96" y="208" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">nine sections</text>
+    </g>
+
+    <g transform="translate(444 0)">
+      <circle cx="96" cy="84" r="42" fill="#112A36" stroke="#59D8C8" stroke-width="2"/>
+      <text x="96" y="92" text-anchor="middle" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="700">03</text>
+      <text x="96" y="154" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Retrieve</text>
+      <text x="96" y="184" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">hybrid RRF</text>
+      <text x="96" y="208" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">graceful fallback</text>
+    </g>
+
+    <g transform="translate(666 0)">
+      <circle cx="96" cy="84" r="42" fill="#2A2119" stroke="#FFB86B" stroke-width="2"/>
+      <text x="96" y="92" text-anchor="middle" fill="#FFB86B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="700">04</text>
+      <text x="96" y="154" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Distill</text>
+      <text x="96" y="184" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">absorb gate</text>
+      <text x="96" y="208" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">durable wiki</text>
+    </g>
+
+    <g transform="translate(888 0)">
+      <circle cx="96" cy="84" r="42" fill="#102D2D" stroke="#59D8C8" stroke-width="3"/>
+      <text x="96" y="92" text-anchor="middle" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="700">05</text>
+      <text x="96" y="154" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Reappear</text>
+      <text x="96" y="184" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">agent recall</text>
+      <text x="96" y="208" text-anchor="middle" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">answers + evidence</text>
+    </g>
+  </g>
+
+  <g transform="translate(60 382)">
+    <rect width="1080" height="1" fill="#203947"/>
+    <text x="0" y="31" fill="#91A4B7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">RAW SOURCES STAY TRACEABLE</text>
+    <text x="1080" y="31" text-anchor="end" fill="#91A4B7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">PERSONAL ARTIFACTS STAY LOCAL</text>
+  </g>
+</svg>

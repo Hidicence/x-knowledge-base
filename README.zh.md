@@ -1,650 +1,321 @@
-# X Knowledge Base（XKB）
+<p align="right">
+  <a href="./README.md">English</a> · <strong>繁體中文</strong>
+</p>
 
-[**English**](./README.md) · 繁體中文
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="X Knowledge Base 把零散來源轉化為結構化知識與主動召回">
+</p>
 
-> **讓知識重新浮現 | Make Knowledge Reappear**
->
-> XKB 是一套個人知識生命週期系統。它會把本地筆記、書籤、影片、repo、論文與對話記憶，轉化為結構化卡片、可搜尋索引、蒸餾後的 wiki 主題，以及互動式知識圖譜。核心是語義主動召回——知識不該只是躺在資料庫裡等你想起來找，而應該在變得有用時重新浮現。
+<p align="center">
+  <a href="#快速開始"><strong>快速開始</strong></a> ·
+  <a href="#運作方式"><strong>運作方式</strong></a> ·
+  <a href="#選擇運行模式"><strong>運行模式</strong></a> ·
+  <a href="./docs/data-flow.md"><strong>隱私與資料流</strong></a> ·
+  <a href="https://youtu.be/JWgm6ky_pys"><strong>概念影片</strong></a>
+</p>
 
-[![觀看簡報影片](https://img.youtube.com/vi/JWgm6ky_pys/maxresdefault.jpg)](https://youtu.be/JWgm6ky_pys)
-*（點擊觀看概念介紹）*
+## 知識不該在收藏後消失
 
----
+書籤、筆記、影片、repository、論文與對話累積得很快。多數知識工具能幫你保存，但真正困難的是後半段：在實際工作時，連同證據一起找回正確的想法。
 
-## 問題所在
+**X Knowledge Base（XKB）** 是給人與 AI Agent 使用的 local-first 知識生命週期系統。它把異質來源轉成統一格式的結構化卡片，透過混合搜尋找回內容，把值得長期保留的洞見蒸餾成人類可讀的 wiki，並在對話中主動浮現相關脈絡。
 
-每天我們消費筆記、文章、影片、repo、論文、對話與討論串。當下保存是因為感覺重要。六個月後——找不到、想不起來，也不確定當初到底學到了什麼。
+這個 repository 放可重用的工具；你的卡片、索引、wiki、圖譜、憑證與 runtime state 留在自己的 workspace，不會進入公開 repo。
 
-多數工具停在 capture：存書籤、放筆記、貼標籤。XKB 從 capture 之後開始：把原始材料轉成可回用知識，連到既有理解，並讓 agent 在需要時取回。**知識應該自己能判斷你何時需要它。**
+<p align="center">
+  <img src="./assets/readme/lifecycle.svg" width="100%" alt="XKB 知識生命週期：捕捉、結構化、檢索、蒸餾與重新浮現">
+</p>
 
-XKB 建立在不同的前提上：知識有生命週期。目標不是存更多，而是讓你已經消費過的內容*在適當的時機重新浮現*，並*逐步沉澱為持久理解*。
+## XKB 有什麼不同
 
----
+### 多種來源，共用一種知識格式
 
+本地 Markdown、X/Twitter 書籤、YouTube 字幕、GitHub repository、PDF 與 PubMed 論文，都會收斂到同一種九段式核心卡片 schema。檢索與綜合因此有穩定單位，而不是一堆彼此不相容的來源摘要。
 
-## 先從簡單模式開始：三種運行方式
+### 先檢索，再生成
 
-XKB 可以分層使用。第一天不需要把 XBrain/GBrain 全部裝好。
+XKB 先搜尋已蒸餾的 wiki，再找底層證據卡片。Full 模式由 XBrain/GBrain 提供向量＋關鍵字的 Reciprocal Rank Fusion（RRF）混合檢索；runtime 不可用時，則自動降級到本地關鍵字與平面向量索引。
 
-| 模式 | 適合情境 | 需要什麼 | 檢索方式 |
-|------|----------|----------|----------|
-| **Lite** | 第一次使用、本地筆記、小型知識庫 | Python + 一個 LLM provider | `search_index.json` 關鍵字搜尋 |
-| **Enhanced** | 想要更好的語意召回，但不想架服務 | Lite + `GEMINI_API_KEY` | 平面 `vector_index.json` 降級向量搜尋 |
-| **Full / XBrain** | 日常使用、大型知識庫、agent workflow | OpenClaw + GBrain/XBrain | Postgres/pgvector hybrid RRF 搜尋 |
+### 蒸餾必須通過 gate
 
-建議路徑：
-1. 先用 **Lite** 模式 ingest 幾份本地筆記。
-2. 需要語意搜尋時，再加 Gemini embedding。
-3. 知識庫變大、需要 hybrid search 和 durable jobs 時，再安裝 XBrain/GBrain。
+卡片是證據單位，wiki 是持久理解。`sync_cards_to_wiki.py` 與 `distill_memory_to_wiki.py` 使用 absorb/staging 工作流，不會讓每一筆收藏都自動變成長期知識。
 
-你的個人卡片、索引、圖譜資料與 runtime state 應該留在本機，不要進 git。這個 repo 放的是工具與模板，不是你的私人知識庫。
+### 為 Agent 對話而生
 
----
+`recall_for_conversation.py`、`xkb_ask.py` 與 MCP server 會連同來源連結一起提供相關知識。目標不是再造一個要你主動翻找的倉庫，而是讓脈絡在 Agent 或人需要時回來。
 
-## 10 分鐘 Lite Quick Start
+## 快速開始
+
+最小可用流程只需匯入本地 Markdown 並搜尋，不需要 X/Twitter cookies、Bun、GBrain、Postgres 或 OpenClaw cron。
+
+### 1. Clone 並建立私人 workspace
 
 ```bash
-# 1. Clone
-git clone https://github.com/Hidicence/x-knowledge-base
+git clone https://github.com/Hidicence/x-knowledge-base.git
 cd x-knowledge-base
 
-# 2. 選一個 workspace 放私人資料
 export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
-mkdir -p "$OPENCLAW_WORKSPACE/memory/cards" "$OPENCLAW_WORKSPACE/memory/bookmarks"
-
-# 3. 設定 LLM provider
-cp .env.example .env
-# 編輯 .env，或在 shell export LLM_MODEL / LLM_API_URL / LLM_API_KEY。
-
-# 4. Ingest 本地 markdown 資料夾
-python3 scripts/local_ingest.py /path/to/notes --category notes
-
-# 5. 建立降級搜尋索引
-bash scripts/build_search_index.sh
-
-# 6. 搜尋或提問
-bash scripts/search_bookmarks.sh "agent memory"
-python3 scripts/xkb_ask.py "我的筆記裡浮現了哪些模式？"
+mkdir -p \
+  "$OPENCLAW_WORKSPACE/memory/cards" \
+  "$OPENCLAW_WORKSPACE/memory/bookmarks"
 ```
 
-這個模式不需要 X/Twitter cookies、GBrain、Postgres、Bun，也不需要 OpenClaw cron。
+### 2. 設定 LLM
 
----
+如果已使用 OpenClaw，請在 `config/llm.json` 選擇你的 OpenClaw 安裝中可用的模型。
 
-## 隱私與公開 repo 整潔規則
-
-XKB 的設計目標是：公開 repo 保持乾淨，你的私人知識庫留在本機。
-
-**不要 commit：**
-- `.env` 或 `.secrets/` 底下的真實檔案
-- X/Twitter cookies，例如 `BIRD_AUTH_TOKEN` / `BIRD_CT0`
-- API keys，例如 `LLM_API_KEY`、`GEMINI_API_KEY`、`OPENAI_API_KEY`
-- 產生出的個人資料：`memory/cards/`、`memory/bookmarks/search_index.json`、`memory/bookmarks/vector_index.json`、`memory/x-knowledge-base/wiki/`
-- 產生出的 demo 輸出：`$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/graph-data.json`
-- runtime queues、logs、caches、PM2 dumps、機器專屬路徑
-
-**可以 commit：**
-- source scripts
-- config templates / examples
-- docs
-- sample graph/schema files
-- `.env.example` / `.secrets/*.example` placeholder
-
-發布前建議跑：
+獨立使用時，設定 OpenAI-compatible endpoint：
 
 ```bash
-git status --short
-git diff --check
+export LLM_API_URL="https://your-provider.example/v1"
+export LLM_API_KEY="your-key"
+export LLM_MODEL="your-model"
+```
+
+> 不要 commit 真實憑證。環境變數與私人 OpenClaw 設定屬於 runtime state，不是 repository 內容。
+
+### 3. 匯入、建索引、提問
+
+```bash
+# 把 demo/sample-notes 換成自己的 Markdown 目錄。
+python3 scripts/local_ingest.py demo/sample-notes \
+  --category learning --limit 3
+
+bash scripts/build_search_index.sh
+bash scripts/search_bookmarks.sh "agent memory"
+python3 scripts/xkb_ask.py "這些筆記之間浮現了哪些模式？"
+```
+
+產生的卡片與索引會寫入 `$OPENCLAW_WORKSPACE/memory/`，不會寫進這個 repository。
+
+## 運作方式
+
+```text
+來源
+  本地筆記 · X 書籤 · YouTube · GitHub · PDF/PubMed · 對話記憶
+       │
+       ▼
+共用卡片契約
+  來源 adapters + scripts/_card_prompt.py + scripts/_llm.py
+       │
+       ▼
+知識卡片
+  統一九段格式 · 來源連結 · Claim 等級 · 雙語摘要
+       │
+       ├──────────────► XBrain/GBrain 混合檢索（主要）
+       │                    向量 + 關鍵字 + RRF
+       │
+       ├──────────────► search_index.json / vector_index.json（降級）
+       │
+       ▼
+Absorb gate
+  卡片 + 對話記憶 → staging/review → 持久 wiki 主題
+       │
+       ▼
+主動召回
+  wiki 優先 → 證據卡片 → 帶來源的回答
+```
+
+### 九段式知識卡
+
+所有支援來源都產生同樣的知識結構：
+
+1. 核心問題與結論
+2. Claim 等級：Attested、Scholarship 或 Inference
+3. 關鍵論點
+4. False Friends：在技術脈絡中與日常意思不同的術語
+5. 驚訝點
+6. 與現有知識的關係
+7. 供檢索使用的雙語摘要
+8. 可執行價值
+9. 原始來源與相關連結
+
+來源若包含圖片，可透過 `scripts/media_ingest.py` 追加第十段 **Media Evidence**，保存 OCR 與 vision notes。
+
+## 選擇運行模式
+
+從能解決問題的最小模式開始。
+
+| 模式 | 適用情境 | 檢索方式 | 額外 runtime |
+| --- | --- | --- | --- |
+| **Lite** | 第一次使用、本地筆記、小型知識庫 | `search_index.json` 關鍵字搜尋 | Python + 一個 LLM |
+| **Enhanced** | 不架資料庫服務，但需要語意降級搜尋 | 平面 `vector_index.json` | Gemini、OpenAI 或本地 Ollama embedding |
+| **Full / XBrain** | 大型知識庫與 Agent workflow | 向量＋關鍵字 hybrid RRF | OpenClaw + GBrain/XBrain |
+
+### 啟用平面語意檢索
+
+```bash
+export EMBEDDING_PROVIDER=gemini
+export GEMINI_API_KEY="your-key"
+python3 scripts/build_vector_index.py --incremental
+```
+
+`build_vector_index.py` 也支援 `.env.example` 中記錄的 embedding provider；若希望 embedding 全程留在本機，可使用 Ollama。
+
+### 啟用 XBrain/GBrain
+
+執行前先閱讀 `scripts/setup_xbrain.sh`：它會安裝或更新 Bun/GBrain，並修改本機 OpenClaw 設定。
+
+```bash
+bash scripts/setup_xbrain.sh
 python3 scripts/health_check_pipeline.py
 ```
 
-針對 index hygiene：
+XBrain 可用時，ingest 腳本會 best-effort 嘗試替新卡片建立索引，召回也可使用 `xbrain_recall.py`。本地卡片寫入不依賴 XBrain；無法連線時，召回會降級使用本地索引。
+
+## 加入不同來源
 
 ```bash
-python3 scripts/prune_duplicate_index_rows.py --dry-run
-python3 scripts/sync_enriched_index.py --dry-run  # 若你的版本支援
+# 本地 Markdown / 純文字
+python3 scripts/local_ingest.py /path/to/notes --category learning
+
+# 已保存在 workspace 的 X/Twitter 書籤
+python3 scripts/run_scan_worker.py --limit 20
+
+# YouTube 播放清單字幕
+python3 scripts/fetch_youtube_playlist.py --playlist "PLAYLIST_URL" --limit 5
+
+# GitHub forks 與 stars
+python3 scripts/fetch_github_repos.py --forks --stars --limit 20
+
+# PubMed 開放存取論文
+python3 scripts/fetch_pubmed.py "retrieval augmented generation" \
+  --limit 10 --out /tmp/xkb-papers
+python3 scripts/local_ingest.py /tmp/xkb-papers --category research --tag pubmed
 ```
 
----
-## 如何運作
+不同來源 adapter 會收斂到共用卡片契約。多數直接使用 `_card_prompt.py`；本地檔案 ingest 目前保留一份相容 prompt 實作，但仍輸出相同核心 schema。
 
-### 完整 Pipeline
+## 把卡片蒸餾成持久知識
 
-```
-輸入來源
-├── 本地筆記 / markdown    →  local_ingest.py
-├── YouTube 播放清單       →  fetch_youtube_playlist.py
-├── GitHub forks / stars   →  fetch_github_repos.py
-├── PubMed / 學術論文      →  fetch_pubmed.py + local_ingest.py
-├── 對話記憶               →  distill_memory_to_wiki.py
-└── X/Twitter 書籤         →  xkb_minion_submit.py / xkb_minion_worker.py
-        │
-        ▼
-  scripts/_card_prompt.py   ← 所有 ingest 腳本共享
-  （統一 9-section 卡片格式，不論來源）
-        │
-        ▼（所有 LLM 呼叫經過 scripts/_llm.py）
-        │
-┌─────────────────────────────────────────────────────────────┐
-│  知識產物（永久，gitignored）                                │
-│                                                             │
-│  memory/cards/*.md                      結構化 9-section 卡片           │
-│  memory/x-knowledge-base/wiki/topics/   蒸餾後的長期知識                 │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼ 每次寫卡時自動觸發
-┌─────────────────────────────────────────────────────────────┐
-│  主要檢索 — XBrain                                          │
-│  （XKB 的語意搜尋層，由 GBrain 驅動）                        │
-│                                                             │
-│  • pgvector + Postgres-backed GBrain                        │
-│  • Gemini 向量嵌入                                          │
-│  • RRF 混合搜尋（向量 + 關鍵字）                             │
-│  • Minions job runtime 作為 durable internal pipeline       │
-│  • xbrain_recall.py  ← 所有腳本自動呼叫                     │
-└─────────────────────────────────────────────────────────────┘
-        │  XBrain 不可用時自動降級
-        ▼
-┌─────────────────────────────────────────────────────────────┐
-│  降級檢索                                                    │
-│                                                             │
-│  search_index.json          關鍵字 + 摘要搜尋               │
-│  vector_index.json          平面 Gemini 向量索引           │
-│  build_vector_index.py      按需重建平面索引                │
-└─────────────────────────────────────────────────────────────┘
-        │
-        ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │  Wiki 層（memory/x-knowledge-base/wiki/topics/*.md）      │
-  │                                                         │
-  │  sync_cards_to_wiki.py     外部書籤知識蒸餾              │
-  │  distill_memory_to_wiki.py 對話記憶蒸餾                  │
-  │                            （每日 cron，自動 staging）    │
-  └─────────────────────────────────────────────────────────┘
-        │
-        ▼
-xkb_ask.py / 主動召回層
-雙層召回：wiki 主題（蒸餾知識）→ 卡片（XBrain 混合搜尋）
-        │
-        ▼
-demo/xkb-demo-ui/  ← 互動式圖譜瀏覽器（Next.js）
-Knowledge Graph | Chat | Evidence Panel
-```
-
-### 每張卡片都使用相同的 9-Section 結構
-
-| # | 區塊 | 用途 |
-|---|------|------|
-| 1 | **核心問題與結論** | 回答什麼問題？結論是什麼？ |
-| 2 | **Claim 等級** | Attested / Scholarship / Inference — 可信度？ |
-| 3 | **關鍵論點** | 從來源萃取的 3–5 個核心論點 |
-| 4 | **False Friends** | 在此脈絡下有特殊技術含義的術語 |
-| 5 | **驚訝點** | 專業讀者可能會驚訝的點 |
-| 6 | **與現有知識的關係** | 與現有卡片的關聯 |
-| 7 | **雙語摘要** | ZH + EN（用於搜尋索引） |
-| 8 | **對使用者的價值** | 可行動的方向、相關專案 |
-| 9 | **原始來源** | 來源 URL 與相關連結 |
-
-一種格式，適用所有來源。YouTube 影片、GitHub repo、PubMed 論文都產生相同結構的卡片。
-
----
-
-## LLM 設定
-
-XKB 使用**單一統一 LLM 設定**。所有腳本共享同一模型，無需分散管理環境變數。
-
-### `config/llm.json` — 改這一個檔案就夠了
-
-```json
-{
-  "model": "openai-codex/gpt-5.4"
-}
-```
-
-可用模型格式（任何支援 `openclaw capability model run` 的模型）：
-
-| 數值 | 供應商 |
-|------|--------|
-| `openai-codex/gpt-5.4` | ChatGPT via OpenClaw OAuth |
-| `openai-codex/gpt-5.4-mini` | ChatGPT Mini via OpenClaw OAuth |
-| `MiniMax-M2.7` | MiniMax via API key |
-| `MiniMax-M2.5` | MiniMax M2.5 via API key |
-
-> **運作方式：** 所有腳本呼叫 `scripts/_llm.py`，由 `openclaw capability model run` 執行。OpenClaw 自動處理所有認證（OAuth token 刷新、API key）。腳本不再需要管理 API key。
-
-> **Embedding 是獨立的。** 語意向量搜尋使用 Gemini（`GEMINI_API_KEY`），不受 `config/llm.json` 影響。
-
-### 獨立 / 非 OpenClaw 安裝
-
-若不使用 OpenClaw，透過環境變數覆寫模型：
+Wiki 是經過篩選的成品層，不是每一筆收藏的鏡像。
 
 ```bash
-export LLM_MODEL="MiniMax-M2.5"
-export LLM_API_URL="https://api.minimax.io/anthropic"
-export LLM_API_KEY="your-minimax-key"
-```
+# 讓卡片通過 absorb gate，更新 wiki 主題。
+python3 scripts/sync_cards_to_wiki.py --apply --limit 20
 
-> 環境變數 `LLM_MODEL` 優先於 `config/llm.json`。
+# 從近期對話記憶擷取值得長期保留的候選內容。
+python3 scripts/distill_memory_to_wiki.py --stage --days 3
 
----
-
-## Minions Pipeline
-
-**X/Twitter 書籤富化主路徑，現在已預設跑在 Minions-native queue pipeline 上**，底層為 Postgres-backed GBrain。這代表主書籤富化流程已從舊的 cron-spawn scan-worker 模式切換出去。
-
-### 已部署元件
-- `scripts/xkb_minion_submit.py`
-  - 掃描尚未 enrich 的書籤
-  - 每張書籤提交一個具 idempotency 的 Minion job
-  - 適合由 cron 週期性觸發（例如每小時一次）
-- `scripts/xkb_minion_worker.py`
-  - 長駐 worker daemon
-  - 從 `minion_jobs` claim job
-  - 執行 LLM 富化
-  - 寫入最終卡片並更新 job 狀態
-
-### 為何取代舊 cron scan-worker 模式
-舊模式：
-- 每 10 分鐘啟動一個新的 Python process
-- 高負載時容易產生 `openclaw-infer` 殭屍 subprocess
-- retry、狀態觀測、失敗恢復都不夠穩
-
-目前 Minions-native 模式：
-- 一個長駐 worker daemon
-- 預設 sequential 處理（一次一個 job）
-- 內建 timeout
-- retry + exponential backoff
-- 以 bookmark/card id 為基礎做 idempotent submission
-- 可用 `gbrain jobs list` 觀察狀態
-
-### Smoke test 已驗證
-目前環境已驗證：
-- worker 可成功 claim job
-- LLM inference 能正常啟動
-- job 會按預期流轉狀態
-- 在刻意縮短 timeout 的測試下，已觀察到 active → dead 流程
-- production timeout 可設為每 job 300 秒
-
-### 監控方式
-```bash
-# 查看 job 狀態
-gbrain jobs list
-
-# 驗證 Minions 健康度
-gbrain jobs smoke
-```
-
-## Wiki 層
-
-Wiki 是**蒸餾輸出層**——由兩個來源建構的可讀、長期知識庫：
-
-| 來源 | 腳本 | 作用 |
-|------|------|------|
-| 外部書籤 | `sync_cards_to_wiki.py` | 透過 absorb gate 蒸餾卡片洞見 |
-| 對話記憶 | `distill_memory_to_wiki.py` | 從每日記憶日誌萃取決策、工作流、原則 |
-
-### 單一 canonical source
-
-Wiki 位於 skill 目錄內的 `wiki/`。workspace 符號連結至此：
-
-```
-~/.openclaw/workspace/wiki/  →  ~/.openclaw/workspace/memory/x-knowledge-base/wiki/  (symlink)
-```
-
-這防止雙 wiki 漂移：所有工具從同一處讀取。
-
-### Memory → Wiki 蒸餾
-
-`distill_memory_to_wiki.py` 讀取近期 `memory/YYYY-MM-DD.md` 日誌，使用 LLM 萃取值得長期保存的洞見（決策、工作流、原則），然後 either stages them for review or applies them to wiki topic pages。
-
-```bash
-# 預覽最近 3 天會萃取什麼
-python3 scripts/distill_memory_to_wiki.py --dry-run --days 3
-
-# Stage 待審候選
-python3 scripts/distill_memory_to_wiki.py --stage --days 2
-
-# 套用所有 staged 候選（自動批准）
+# 檢查 staging 檔案後，再套用選定候選。
 python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md \
+  --staging-file "$OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/FILE.md" \
   --approve-all
 ```
 
-Cron job 每天 15:30 與 21:30 TST 自動執行。
+預設 runtime layout 記錄在 [`docs/RUNTIME_PATHS.md`](./docs/RUNTIME_PATHS.md)。
 
-### 健康檢查
-
-```bash
-python3 scripts/health_check_pipeline.py
-```
-
-檢查三件事：
-1. `workspace/wiki` 是 canonical wiki 的符號連結（不是副本）
-2. Recall 從正確的 wiki 路徑讀取
-3. `search_index.json` 摘要覆蓋率 ≥ 70%，年齡 < 26h；向量索引新舊
-
----
-
-## 主動召回層
-
-當使用者發送訊息，XKB 使用**雙層召回**：
-
-1. **Layer 1 — Wiki 主題**（`memory/x-knowledge-base/wiki/topics/*.md`）：蒸餾過的持久知識。回答概念性問題。
-2. **Layer 2 — 卡片**（XBrain 混合搜尋，降級到 `search_index.json`）：原始證據。提供具體引用與來源。
+## 提問與召回
 
 ```bash
-# 對你的知識庫提問
-python3 scripts/xkb_ask.py "What are alternatives to RAG?"
-python3 scripts/xkb_ask.py "什麼是 absorb gate？" --format chat
-python3 scripts/xkb_ask.py "agent memory design" --json
+# 對 wiki 主題與證據卡片進行有來源的問答
+python3 scripts/xkb_ask.py "我收藏過哪些 RAG 替代方案？"
+
+# 適合聊天工作流的精簡輸出
+python3 scripts/xkb_ask.py "absorb gate 是什麼？" --format chat
+
+# 對話時召回
+python3 scripts/recall_for_conversation.py \
+  "我需要可靠的 Agent memory workflow" --json
 ```
 
-### 作為 MCP 工具（Claude Code / 任何 MCP 用戶端）
+### MCP Tool
 
-添加到 `.claude/settings.json`：
+把召回能力提供給 Claude Code 或其他 MCP client：
 
 ```json
 {
   "mcpServers": {
     "xkb-recall": {
       "command": "python3",
-      "args": ["/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
-      "env": { "OPENCLAW_WORKSPACE": "/path/to/workspace" }
+      "args": ["/absolute/path/to/x-knowledge-base/scripts/xkb_recall_server.py"],
+      "env": {
+        "OPENCLAW_WORKSPACE": "/absolute/path/to/your/workspace"
+      }
     }
   }
 }
 ```
 
----
+## 瀏覽知識圖譜
 
-## vNext 方向
+Demo 是 Next.js 三欄探索器：**Knowledge Graph · Chat · Evidence**。
 
-下一階段路線草案在這裡：
-- `docs/xkb-vnext-roadmap-draft.md`
-
-短版摘要：
-- 把 wiki 維持為 human-readable 的成品層
-- 把 graph / relations 放在 wiki 下面的 structured knowledge layer
-- 把 Minions 當作大規模內部工作流的預設執行基底
-- 既然書籤富化主路徑已經 Minions-native，下一步優先補 knowledge governance：confidence、staleness、supersession、typed relationships
-
-## 升級路徑：OpenClaw + XBrain
-
-Lite 模式跑通後，再啟用完整 stack。
-
-### 使用 OpenClaw
-
-```bash
-# 1. Clone 到你的 OpenClaw skills 目錄
-git clone https://github.com/Hidicence/x-knowledge-base \
-  ~/.openclaw/workspace/skills/x-knowledge-base
-cd ~/.openclaw/workspace/skills/x-knowledge-base
-
-# 2. 在 OpenClaw 設定 model/auth
-# 將 env keys 加入 ~/.openclaw/openclaw.json，例如：
-# { "env": { "GEMINI_API_KEY": "...", "LLM_API_KEY": "..." } }
-
-# 3. 可選：安裝 XBrain/GBrain hybrid search
-bash scripts/setup_xbrain.sh
-
-# 4. 健康檢查
-python3 scripts/health_check_pipeline.py
-
-# 5. 執行 demo
-bash scripts/xkb_demo.sh
-```
-
-### Standalone + XBrain
-
-```bash
-export LLM_API_KEY="your-minimax-or-openai-key"
-export LLM_API_URL="https://api.minimax.io/anthropic/v1"
-export LLM_MODEL="MiniMax-M2.7"
-export OPENCLAW_WORKSPACE="$HOME/.openclaw/workspace"
-export GEMINI_API_KEY="your-gemini-key"
-
-bash scripts/setup_xbrain.sh
-bash scripts/xkb_demo.sh
-```
-
-### XBrain 手動設定
-
-若不使用設定腳本：
-
-```bash
-# 1. 安裝 Bun  https://bun.sh
-curl -fsSL https://bun.sh/install | bash
-
-# 2. Clone GBrain 執行環境
-git clone https://github.com/garrytan/gbrain ~/gbrain
-cd ~/gbrain && bun install && bun run src/cli.ts init
-
-# 3. 告訴 XKB GBrain 在哪
-# 加入 ~/.openclaw/openclaw.json → "env":
-#   "gbrain_dir": "/absolute/path/to/gbrain"
-#   "GEMINI_API_KEY": "your-key"   ← 向量嵌入必需
-
-# 4. 驗證
-python3 scripts/xbrain_recall.py "test query"
-```
-
----
-
-## 腳本參考
-
-### Ingest Pipeline
-
-所有腳本共享 `_card_prompt.py` 與 `_llm.py`——一個 prompt、一個 LLM call、一個卡片格式。
-
-| 腳本 | 來源 | 功能 |
-|------|------|------|
-| `run_scan_worker.py` | X/Twitter | 掃描 bookmarks 目錄中尚未生成 card 的項目 → 卡片 |
-| `run_bookmark_worker.py` | X/Twitter 佇列 | 一次處理 tiege-queue.json 中一項 |
-| `fetch_youtube_playlist.py` | YouTube | 播放清單字幕 → 知識卡片 |
-| `fetch_github_repos.py` | GitHub | forks/stars → repo 層級知識卡片 |
-| `local_ingest.py` | 本地 / PubMed | Markdown/txt/論文 → 卡片 |
-| `fetch_pubmed.py` | PubMed Central | 抓取開放論文為 markdown |
-| `_card_prompt.py` | *(共用)* | 統一 prompt、卡片格式、摘要萃取 |
-| `_llm.py` | *(共用)* | 統一 LLM 呼叫 via `openclaw capability model run` |
-
-### 索引與富化
-
-| 腳本 | 功能 |
-|------|------|
-| `sync_enriched_index.py` | 將富化卡片的摘要/tags 回填至 search_index.json |
-| `build_vector_index.py` | 建立/更新平面 JSON 向量索引（XBrain 不可用時的降級方案） |
-| `xbrain_recall.py` | XBrain 搜尋橋接——混合 RRF（pgvector + 關鍵字）；所有 recall 腳本自動使用 |
-
-### Wiki Pipeline
-
-| 腳本 | 功能 |
-|------|------|
-| `sync_cards_to_wiki.py` | 卡片 → wiki 主題頁面（經 LLM absorb gate） |
-| `distill_memory_to_wiki.py` | 每日記憶日誌 → wiki 主題洞見（stage/apply 工作流） |
-| `sync_cards_to_wiki.py --review` | 審查待處理 absorb 決策 |
-| `lint_wiki.py` | 驗證 wiki 結構、偵測缺口主題 |
-| `topic_guide_generator.py` | 生成新 wiki 主題框架 |
-| `suggest_topic_map.py` | 從未覆蓋的卡片建議 topic map 更新 |
-
-### 主動召回層
-
-| 腳本 | 功能 |
-|------|------|
-| `xkb_ask.py` | 自然語言問答：wiki（Layer 1）→ 卡片經 XBrain 混合搜尋（Layer 2） |
-| `recall_for_conversation.py` | 對話觸發召回（wiki + XBrain 卡片搜尋） |
-| `continuity_recall.py` | MEMORY.md + wiki 查詢，確保對話連續性 |
-| `contrarian_recall.py` | 浮現警告、失敗案例、反例 |
-| `action_recall.py` | 行動導向召回（下一步要做什麼） |
-| `xkb_recall_server.py` | MCP server，將 recall 暴露為工具 |
-
-### 維護與可觀測性
-
-| 腳本 | 功能 |
-|------|------|
-| `health_check_pipeline.py` | Wiki 符號連結完整性、recall 來源路徑、索引新舊 |
-| `status_knowledge_pipeline.py` | 一眼看見全 pipeline 狀態 |
-| `health_check.py` | 語意衝突偵測、缺口分析 |
-
----
-
-## Demo UI — 互動式知識圖譜
-
-```
-demo/
-├── xkb-demo-ui/              Next.js app — 三欄瀏覽器
-│   ├── app/page.tsx          主版面：graph | chat | evidence
-│   ├── components/
-│   │   ├── KnowledgeGraph.tsx    力導向圖（react-force-graph-2d）
-│   │   ├── ChatPanel.tsx         自然語言問答 via xkb_ask.py
-│   │   └── EvidencePanel.tsx     來源卡片 + wiki 引用
-│   └── public/
-│       └── graph-data.sample.json  schema 參考
-└── generate_graph.py         從 search_index.json 建構 graph-data.json，輸出到 $OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/
-```
-
-**執行 demo：**
 ```bash
 python3 demo/generate_graph.py
-cd demo/xkb-demo-ui && npm install && npm run dev
-# → http://localhost:3000
+cd demo/xkb-demo-ui
+npm install
+npm run dev
+# http://localhost:3000
 ```
 
-> `graph-data.json` 會產生在 `$OPENCLAW_WORKSPACE/memory/x-knowledge-base/demo/`。它是個人 runtime data，不應 commit。
+產生的圖譜資料放在私人 workspace；repository 只保留去識別化的 schema/sample。
 
----
+## 隱私模型
 
-## 逐步設定
+XKB 是 local-first，不代表自動 local-only。產物保留在本機，但雲端 enrichment 與 embedding 仍會把選定內容送到已設定的服務。
 
-### 1. Ingest 內容
+- 知識卡、索引、wiki 主題、圖譜與 queues 留在你的 workspace。
+- 執行 enrichment 時，本地文件與抓取的來源文字會送到你設定的 LLM。
+- 建立向量索引時，卡片標題與摘要會送到選定的 embedding provider。
+- X/Twitter session cookies 是高敏感憑證，絕對不能進 source control。
+- 使用 Ollama 可讓 embedding 留在本機；不執行雲端 enrichment 時，raw capture 也能維持本地處理。
 
-```bash
-# 本地筆記
-python3 scripts/local_ingest.py notes/ --category learning
+處理敏感資料前，請先讀 [`docs/data-flow.md`](./docs/data-flow.md)。它列出每個來源與腳本可能接觸的第三方服務。
 
-# X/Twitter 書籤
-python3 scripts/run_scan_worker.py --limit 20
+## Repository 與 runtime 邊界
 
-# YouTube 播放清單
-python3 scripts/fetch_youtube_playlist.py --playlist "URL"
-
-# GitHub repos
-python3 scripts/fetch_github_repos.py --forks --stars
-
-# PubMed 論文
-python3 scripts/fetch_pubmed.py "antimicrobial resistance" --limit 20 --out /tmp/papers
-python3 scripts/local_ingest.py /tmp/papers/ --category research --tag pubmed
+```text
+x-knowledge-base/                         可重用程式、文件、模板
+$OPENCLAW_WORKSPACE/memory/cards/         產生的知識卡
+$OPENCLAW_WORKSPACE/memory/bookmarks/     原始來源 + 降級索引
+$OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/
+                                          staging + 蒸餾後的 wiki 主題
 ```
 
-### 2. 富化索引
+不要 commit `.env`、session cookies、API keys、私人卡片、索引、wiki、queues、logs 或機器專屬路徑。
+
+## 維運與驗證
 
 ```bash
-# 將富化卡片的摘要回填至 search_index.json（每次都執行）
-python3 scripts/sync_enriched_index.py
+# Pipeline 健康與 canonical wiki 路徑
+python3 scripts/health_check_pipeline.py
 
-# 只在 XBrain 未設定時需要（降級模式）
-python3 scripts/build_vector_index.py --incremental
-```
+# 索引品質
+python3 scripts/audit_index_quality.py
+python3 scripts/prune_duplicate_index_rows.py --dry-run
 
-> **XBrain（主要）：** 每個 ingest 腳本在寫卡時自動推送至 XBrain。
-> 所有 recall 腳本自動呼叫 `xbrain_recall.py`——無需額外步驟。
-> 在 `~/.openclaw/openclaw.json` 中設定 `gbrain_dir` 指向 GBrain 執行環境目錄。
->
-> **降級：** 若 XBrain 不可用，recall 自動降級至 `search_index.json` 關鍵字搜尋。
+# Wiki 結構
+python3 scripts/lint_wiki.py
 
-### 3. 同步至 wiki
-
-```bash
-# 同步外部知識（書籤卡片 → wiki 主題）
-python3 scripts/sync_cards_to_wiki.py --apply --limit 20
-
-# 蒸餾對話記憶至 wiki 主題
-python3 scripts/distill_memory_to_wiki.py --stage --days 3
-python3 scripts/distill_memory_to_wiki.py --apply \
-  --staging-file $OPENCLAW_WORKSPACE/memory/x-knowledge-base/wiki/_staging/YYYY-MM-DD-candidates.md --approve-all
-```
-
-### 4. 提問
-
-```bash
-python3 scripts/xkb_ask.py "RAG 的替代方案有哪些？"
-```
-
-### 5. 檢查 pipeline 健康
-
-```bash
+# 發布 repository 變更前
+git diff --check
 python3 scripts/health_check_pipeline.py
 ```
 
-預期輸出：
-```
-✅  wiki_canonical      workspace/wiki → memory/x-knowledge-base/wiki (symlink 正確)
-✅  recall_wiki_source  Recall 從 canonical wiki 讀取
-✅  index_freshness     摘要覆蓋率：212/270 (79%) | 富化：218 | 向量：471
-```
+## 專案地圖
 
----
-
-## 自動化 Pipeline（OpenClaw Cron）
-
-使用 OpenClaw 執行時，完整 pipeline 自動運作：
-
-| 排程 | Job | 功能 |
-|------|-----|------|
-| 13:30 TST | `daily:xkb-ingestion-batch` | Ingest 新 X/Twitter 書籤 → 卡片 → 自動推送至 XBrain → sync_enriched_index |
-| 15:30 TST | `daily:wiki-distill-afternoon` | 蒸餾今日記憶為 wiki 候選 |
-| 21:30 TST | `daily:wiki-distill-evening` | 第二輪蒸餾，套用高信心候選 |
-
-Pipeline 確保每次 ingestion 執行後：
-1. 每張卡片自動推送至 XBrain——混合 RRF 搜尋立即可用
-2. `sync_enriched_index.py` 將摘要回填至降級搜尋索引
-3. 對話新洞見自動 staging 等待納入 wiki
-
----
-
-## 需求
-
-- Python 3.10+
-- Node.js 18+（僅 demo UI 需要）
-- OpenClaw（推薦）——處理所有 LLM 認證與 cron 自動化
-- `GEMINI_API_KEY`——XBrain 語意向量嵌入必需；設定於 `~/.openclaw/openclaw.json`
-- [Bun](https://bun.sh) + [GBrain](https://github.com/garrytan/gbrain) 執行環境（可選）——驅動 XBrain 混合搜尋（pgvector/PGLite + RRF）；在 `openclaw.json` 設定 `gbrain_dir` 啟用。若未設定則降級至關鍵字搜尋。
-
----
-
-## Roadmap
-
-| 版本 | 狀態 | 內容 |
-|------|------|------|
-| v0.1 | ✅ | 書籤 ingestion、知識卡片、關鍵字搜尋 |
-| v0.2 | ✅ | 多層萃取、富化 worker、向量索引 |
-| v0.3 | ✅ | Wiki pipeline：absorb gate、主題頁、memory 蒸餾 |
-| v0.4 | ✅ | 本地筆記 ingest、ask 層、demo 模式、auto topic-map |
-| v0.5 | ✅ | Absorb gate 可解釋性、審查決策日誌 |
-| v0.6 | ✅ | 主動召回層：proactive recall、MCP server、遙測 |
-| v0.7 | ✅ | Claim 等級、False Friends、雙語摘要、學術 PDF pipeline |
-| v0.8 | ✅ | 統一 ingest pipeline（_card_prompt.py）；demo UI（graph + chat） |
-| v0.9 | ✅ | 雙層召回（wiki 優先）；統一 LLM 設定；memory→wiki 蒸餾 pipeline；單一 canonical wiki；pipeline 健康檢查 |
-| v1.0 | ✅ | XBrain 混合搜尋（pgvector + RRF）全面整合至所有 ingest 腳本；統一路徑解析；優雅的關鍵字降級 |
-| v1.1 | 🔜 | **主動召回品質升級**——soft-trigger 重排序；Claim 等級浮現在召回輸出中；觸發策略擴展（超越 rule-based regex） |
-| v1.2 | 🔜 | **Agent-to-Agent 知識交換**——標準化卡片格式（9-section + Claim 等級）作為 A2A 協定交換單位；`receive_card` MCP 工具；XBrain 作為接收卡片的本地消化層 |
-
----
+| 區域 | 主要檔案 |
+| --- | --- |
+| 卡片契約與 LLM | `scripts/_card_prompt.py`, `scripts/_llm.py`, `scripts/local_ingest.py` |
+| 來源 adapters | `local_ingest.py`, `fetch_youtube_playlist.py`, `fetch_github_repos.py`, `fetch_pubmed.py` |
+| 檢索 | `xbrain_recall.py`, `build_search_index.sh`, `build_vector_index.py` |
+| 主動召回 | `xkb_ask.py`, `recall_for_conversation.py`, `xkb_recall_server.py` |
+| 蒸餾 | `sync_cards_to_wiki.py`, `distill_memory_to_wiki.py` |
+| 維運 | `health_check_pipeline.py`, `status_knowledge_pipeline.py`, `lint_wiki.py` |
+| Demo | `demo/generate_graph.py`, `demo/xkb-demo-ui/` |
 
 ## 設計原則
 
-- **一種卡片格式，適用所有來源。** 每個來源都產生相同的 9-section 卡片。
-- **分層，而非一個資料庫。** 工作記憶、整合、捕捉、輸出是不同的問題。
-- **品質閘門勝過數量。** Absorb gate 保持 wiki 為蒸餾輸出層。
-- **理解勝過摘要。** 卡片回答這個解決什麼問題，而非它說了什麼。
-- **單一事實來源。** 一個 canonical wiki 路徑、一個 LLM 設定檔——無分散設定。
-- **OpenClaw 處理認證。** 腳本呼叫 `openclaw capability model run`；token 管理不是它們的問題。
-- **優雅降級。** XBrain 混合搜尋是主要檢索路徑；當 XBrain 不可用時自動啟動關鍵字降級。一切都不會壞。
-- **個人資料留本機。** 圖譜資料、卡片、wiki 皆 gitignored。
+- **理解優先於保存。** 卡片應回答來源幫你理解什麼，而不是只摘要它說了什麼。
+- **多種來源，共用一種 schema。** 穩定的知識單位讓跨來源檢索成為可能。
+- **先有證據，再做綜合。** 持久結論必須能追溯到卡片與原始 URL。
+- **用 gate 抵抗自動堆積。** Wiki 透過拒絕低價值內容來維持訊號品質。
+- **可優雅降級。** Full hybrid retrieval 是選配；缺少它仍可使用知識庫。
+- **私人資料留在私人空間。** 可重用工具進 git，runtime 知識不進 git。
 
----
+## 參與貢獻
 
-## 貢獻
+先讀 [`SKILL.md`](./SKILL.md)、[`docs/data-flow.md`](./docs/data-flow.md) 與 [`docs/xkb-wiki-architecture.md`](./docs/xkb-wiki-architecture.md)。歡迎提出 issue 與 pull request。
 
-從 [`SKILL.md`](SKILL.md) 與 [`docs/xkb-wiki-architecture.md`](docs/xkb-wiki-architecture.md) 開始。
-
-歡迎 PR 與 issues。你的知識值得被記住。
+你的知識值得的不只是被保存，而是在重要時刻重新回來。
