@@ -60,6 +60,7 @@ except ImportError:
         pass
 
 import xkb_paths
+import xkb_score
 
 WORKSPACE = xkb_paths.WORKSPACE
 # 隔壁的腳本，不是「workspace 底下某個猜出來的位置」
@@ -276,6 +277,9 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                    "section": r.name, "excerpt": r.description,
                                    "score": r.score, "url": ""} for r in action_results]
 
+        # 各層分數尺度不同，換算成可比的 unified_score 之後才排序
+        result_dicts = xkb_score.rank(result_dicts)
+
         delivery_mode = "inline_injection" if text_parts else "none"
         formatted_text = "\n\n".join(text_parts) if text_parts else ""
         _dedup_mark_shown(filtered[:3])
@@ -327,7 +331,8 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                        "section": r.section, "excerpt": r.excerpt,
                                        "score": r.score, "url": ""} for r in c_raw]
 
-        all_results = wiki_result_dicts + assoc_results + contrarian_results
+        # 各層分數尺度不同，換算成可比的 unified_score 之後才排序
+        all_results = xkb_score.rank(wiki_result_dicts + assoc_results + contrarian_results)
         _dedup_mark_shown(all_results)
         has_wiki = bool(wiki_text)
         # has_assoc must check dedup-filtered results, not raw assoc_text
