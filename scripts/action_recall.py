@@ -24,10 +24,14 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-_SKILL_DIR = Path(__file__).resolve().parent.parent
-SCRIPTS_DIR = _SKILL_DIR / "scripts"
-WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki"))) / "topics"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+import xkb_text
+
+WORKSPACE = xkb_paths.WORKSPACE
+_SKILL_DIR = xkb_paths.SKILL_DIR
+SCRIPTS_DIR = xkb_paths.SCRIPTS_DIR
+WIKI_TOPICS_DIR = xkb_paths.WIKI_TOPICS_DIR
 DOCS_PLANS_DIR = WORKSPACE / "docs" / "plans"
 DOCS_XKB_DIR = WORKSPACE / "docs" / "xkb"
 
@@ -54,8 +58,7 @@ class ActionResult(NamedTuple):
 
 
 def tokenize(text: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{1,}", text.lower())
-    return [t for t in tokens if t not in STOPWORDS and len(t) >= 2]
+    return xkb_text.tokenize(text, STOPWORDS)
 
 
 def _score(tokens: list[str], text: str) -> float:

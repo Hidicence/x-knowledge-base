@@ -31,3 +31,6 @@ vector_index.json
 # 如需版控，改用 *.pm2.example.json 作模板
 
 dist/
+
+# ── 本機路徑設定（xkb_init.py 產生，每台機器不同）────────────────────────────
+.xkb.json

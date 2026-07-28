@@ -12,17 +12,17 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-_index_default = BOOKMARKS_DIR / "search_index.json"
-_vector_default = BOOKMARKS_DIR / "vector_index.json"
-INDEX_FILE = Path(os.getenv("INDEX_FILE", str(_index_default)))
-VECTOR_FILE = Path(os.getenv("VECTOR_INDEX_PATH", os.getenv("VECTOR_FILE", str(_vector_default))))
-TOPIC_PROFILE_FILE = Path(
-    os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
-)
-_SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki"))) / "topics"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+import xkb_text
+
+WORKSPACE_DIR = xkb_paths.WORKSPACE
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
+VECTOR_FILE = xkb_paths.VECTOR_FILE
+TOPIC_PROFILE_FILE = xkb_paths.TOPIC_PROFILE_FILE
+_SKILL_DIR = xkb_paths.SKILL_DIR
+WIKI_TOPICS_DIR = xkb_paths.WIKI_TOPICS_DIR
 GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
 LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
 LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}
@@ -43,8 +43,7 @@ def load_index(index_file: Path) -> Dict[str, Any]:
 
 
 def tokenize(text: str) -> List[str]:
-    raw = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", text.lower())
-    return [t for t in raw if t not in STOPWORDS]
+    return xkb_text.tokenize(text, STOPWORDS)
 
 
 def clean_summary(text: str) -> str:

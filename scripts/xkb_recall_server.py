@@ -21,12 +21,18 @@ from pathlib import Path
 
 WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 
-# Dual-mode path resolution:
+# Router resolution, most reliable first:
+# - Sibling:      the router always ships next to this file, whatever OPENCLAW_WORKSPACE
+#                 points at. Required when code and data live in different trees, which
+#                 is what the README's MCP setup actually produces.
 # - Local/direct: OPENCLAW_WORKSPACE = repo root  → WORKSPACE/scripts/recall_router.py
 # - OpenClaw:     OPENCLAW_WORKSPACE = ~/.openclaw/workspace → WORKSPACE/skills/x-knowledge-base/scripts/recall_router.py
-_direct = WORKSPACE / "scripts" / "recall_router.py"
-_oc = WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py"
-ROUTER_SCRIPT = _direct if _direct.exists() else _oc
+_candidates = [
+    Path(__file__).resolve().parent / "recall_router.py",
+    WORKSPACE / "scripts" / "recall_router.py",
+    WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py",
+]
+ROUTER_SCRIPT = next((p for p in _candidates if p.exists()), _candidates[-1])
 
 SERVER_INFO = {
     "name": "xkb-recall",
@@ -58,12 +64,32 @@ TOOL_DEF = {
 }
 
 
+# A router failure and an honest "nothing matched" used to be indistinguishable:
+# both surfaced as results=[]. That turned a missing-import bug into a 12-week
+# silent outage (2026-05-04 → 2026-07-26). Every return path now carries an
+# explicit `status`, and failures say so loudly enough for the agent to repeat
+# it back to the user.
+def _empty(status: str = "ok", error: str = "") -> dict:
+    return {"trigger_class": "suppress", "state": "suppress", "delivery_mode": "none",
+            "results": [], "confidence": 0.0, "formatted_text": "", "query": "",
+            "status": status, "error": error}
+
+
+def _failure(reason: str) -> dict:
+    """A recall that could not run at all — never mistakable for 'no results'."""
+    return {**_empty("failed", reason),
+            "formatted_text": (
+                "【XKB 知識庫查詢失敗】\n"
+                f"原因:{reason}\n"
+                "注意:這不代表知識庫沒有相關內容,而是查詢本身沒有執行成功。"
+                "請明確告訴使用者這次回答並未使用知識庫。"
+            )}
+
+
 def _run_recall_structured(message: str) -> dict:
     """Call recall_router.py --json and return structured result."""
-    empty = {"trigger_class": "suppress", "state": "suppress", "delivery_mode": "none",
-             "results": [], "confidence": 0.0, "formatted_text": "", "query": ""}
     if not ROUTER_SCRIPT.exists():
-        return {**empty, "formatted_text": f"[xkb_recall] router not found at {ROUTER_SCRIPT}"}
+        return _failure(f"router not found at {ROUTER_SCRIPT}")
     try:
         result = subprocess.run(
             [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
@@ -75,11 +101,24 @@ def _run_recall_structured(message: str) -> dict:
             env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
                  "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         )
-        return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return empty
+        return _failure("router timed out after 30s")
     except Exception as e:
-        return {**empty, "formatted_text": f"[xkb_recall error: {e}]"}
+        return _failure(f"router could not be launched: {e}")
+
+    if result.returncode != 0:
+        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
+        return _failure(f"router exited {result.returncode}: {stderr_tail or 'no stderr'}")
+
+    try:
+        structured = json.loads(result.stdout)
+    except Exception as e:
+        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
+        return _failure(f"router returned unparseable output ({e}): {stderr_tail or 'no stderr'}")
+
+    structured.setdefault("status", "ok")
+    structured.setdefault("error", "")
+    return structured
 
 
 def _respond(req_id, result=None, error=None):
@@ -144,7 +183,7 @@ def handle(req: dict):
                 {"type": "text", "text": text_output},
                 {"type": "text", "text": f"[xkb_recall_meta] {json.dumps(structured, ensure_ascii=False)}"},
             ],
-            "isError": False,
+            "isError": structured.get("status") == "failed",
         })
         return
 

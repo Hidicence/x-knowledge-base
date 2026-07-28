@@ -22,11 +22,15 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-_SKILL_DIR = Path(__file__).resolve().parent.parent
-MEMORY_DIR = WORKSPACE / "memory"
-WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki"))) / "topics"
-MEMORY_MD = WORKSPACE / "MEMORY.md"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+import xkb_text
+
+WORKSPACE = xkb_paths.WORKSPACE
+_SKILL_DIR = xkb_paths.SKILL_DIR
+MEMORY_DIR = xkb_paths.DATA_DIR
+WIKI_TOPICS_DIR = xkb_paths.WIKI_TOPICS_DIR
+MEMORY_MD = xkb_paths.MEMORY_MD
 
 STOPWORDS = {
     "的", "了", "是", "我", "你", "他", "她", "它", "在", "有", "和", "與", "就", "也", "都", "很",
@@ -46,8 +50,7 @@ class RecallResult(NamedTuple):
 
 
 def tokenize(text: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{1,}", text.lower())
-    return [t for t in tokens if t not in STOPWORDS and len(t) >= 2]
+    return xkb_text.tokenize(text, STOPWORDS)
 
 
 def _score_text(tokens: list[str], text: str) -> float:
@@ -55,14 +58,13 @@ def _score_text(tokens: list[str], text: str) -> float:
     if not tokens or not text:
         return 0.0
     text_lower = text.lower()
-    hits = sum(1 for t in tokens if t in text_lower)
     # Phrase bonus: check if two consecutive tokens appear adjacent
     phrase_bonus = 0.0
     for i in range(len(tokens) - 1):
         phrase = tokens[i] + tokens[i + 1]
         if phrase in text_lower or f"{tokens[i]} {tokens[i+1]}" in text_lower:
             phrase_bonus += 0.5
-    return hits / max(len(tokens), 1) + phrase_bonus
+    return xkb_text.overlap_score(tokens, text) + phrase_bonus
 
 
 def _split_into_sections(content: str) -> list[tuple[str, str]]:

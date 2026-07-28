@@ -59,9 +59,12 @@ except ImportError:
     def _dedup_mark_shown(_results) -> None:  # type: ignore[misc]
         pass
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-SCRIPTS = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
-TELEMETRY_PATH = WORKSPACE / "memory" / "x-knowledge-base" / "recall-telemetry.jsonl"
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
+# 隔壁的腳本，不是「workspace 底下某個猜出來的位置」
+SCRIPTS = xkb_paths.SCRIPTS_DIR
+TELEMETRY_PATH = xkb_paths.TELEMETRY_PATH
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 MIN_SCORE_HARD = 0.3
@@ -131,10 +134,12 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
     """Returns (formatted_text, results_list)."""
     script = SCRIPTS / "recall_for_conversation.py"
     if not script.exists():
-        return "", []
+        # 隔壁檔案不見了是安裝壞掉，不是「查無資料」——要出聲，不要靜靜回空
+        msg = f"associative recall unavailable: {script} not found"
+        print(msg, file=sys.stderr)
+        return f"（{msg}）", []
     try:
-        _sub_env = {**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
-                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        _sub_env = xkb_paths.subprocess_env({"OPENCLAW_WORKSPACE": str(WORKSPACE)})
 
         # Get chat format output
         result_chat = subprocess.run(
@@ -151,16 +156,25 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
             env=_sub_env,
         )
         try:
-            raw_results = json.loads(result_json.stdout)
+            raw = json.loads(result_json.stdout)
+            # recall_for_conversation.py 回的是 {"query", "wiki_hits", "results", ...}，
+            # 不是一個 list。舊寫法用 isinstance(list) 判斷，永遠不成立，
+            # 於是所有書籤/卡片結果都被靜靜丟掉。
+            if isinstance(raw, dict):
+                items = raw.get("results") or []
+            elif isinstance(raw, list):
+                items = raw
+            else:
+                items = []
             results = []
-            for item in (raw_results if isinstance(raw_results, list) else []):
+            for item in items:
                 results.append({
-                    "source_type": "bookmark",
-                    "source_file": item.get("path", ""),
+                    "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
+                    "source_file": item.get("relative_path") or item.get("path", ""),
                     "section": item.get("title", ""),
                     "excerpt": (item.get("summary") or "")[:200],
                     "score": item.get("score", 0.0),
-                    "url": item.get("url", item.get("source_url", "")),
+                    "url": item.get("source_url") or item.get("url", ""),
                 })
         except Exception:
             # Fallback: no structured results but we have the text
@@ -262,18 +276,27 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         }
 
     else:  # soft
+        # Light scan：沒有任何規則命中，只是「順手看一眼」。
+        # 只掃 wiki（~20ms），不跑語意搜尋（1~2 秒），而且分數門檻拉高——
+        # 沒有明確訊號時，寧可安靜，也不要拿低分結果插嘴。
+        light = parsed.confidence < 0.4
+        min_wiki_score = 0.5 if light else 0.4
+
         # Wiki recall (highest priority — synthesized knowledge)
         wiki_results = recall_from_wiki(query, top_k=2)
-        wiki_results_filtered = [r for r in wiki_results if r.score >= 0.4]
+        wiki_results_filtered = [r for r in wiki_results if r.score >= min_wiki_score]
         wiki_results_filtered, _ = _dedup_filter_new(wiki_results_filtered)
         wiki_text = format_continuity_chat(wiki_results_filtered) if wiki_results_filtered else ""
         wiki_result_dicts = [{"source_type": "wiki", "source_file": r.source_file,
                                "section": r.section, "excerpt": r.excerpt,
                                "score": r.score, "url": r.url} for r in wiki_results_filtered]
 
-        # Associative recall (bookmark/card supplement)
-        assoc_text, assoc_results = run_associative_recall(query, limit=2)
-        assoc_results, _ = _dedup_filter_new(assoc_results)
+        # Associative recall (bookmark/card supplement) — light scan 不跑，太貴
+        if light:
+            assoc_text, assoc_results = "", []
+        else:
+            assoc_text, assoc_results = run_associative_recall(query, limit=2)
+            assoc_results, _ = _dedup_filter_new(assoc_results)
 
         # Contrarian recall (supplement — max 1 result, only on high-confidence soft)
         contrarian_text = ""
