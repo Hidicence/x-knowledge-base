@@ -130,6 +130,18 @@ def _results_to_dicts(results: list) -> list[dict]:
 
 # ── Associative recall via recall_for_conversation.py ─────────────────────────
 
+def _format_assoc_chat(results: list[dict]) -> str:
+    if not results:
+        return ""
+    lines = ["相關卡片／書籤："]
+    for r in results:
+        title = r.get("section") or r.get("source_file", "")
+        lines.append(f"- {title}：{r.get('excerpt', '')}")
+        if r.get("url"):
+            lines.append(f"  原文：{r['url']}")
+    return "\n".join(lines)
+
+
 def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]:
     """Returns (formatted_text, results_list)."""
     script = SCRIPTS / "recall_for_conversation.py"
@@ -141,20 +153,14 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
     try:
         _sub_env = xkb_paths.subprocess_env({"OPENCLAW_WORKSPACE": str(WORKSPACE)})
 
-        # Get chat format output
-        result_chat = subprocess.run(
-            [sys.executable, str(script), query, "--format", "chat", "--limit", str(limit)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
-            env=_sub_env,
-        )
-        chat_text = result_chat.stdout.strip()
-
-        # Get JSON output for structured results
+        # 只跑一次。原本跑兩次（一次要 chat 文字、一次要 JSON），而這支每次都要做
+        # 一輪語意搜尋，等於整個召回的成本平白翻倍。文字從 JSON 自己組就好。
         result_json = subprocess.run(
             [sys.executable, str(script), query, "--json", "--limit", str(limit)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
             env=_sub_env,
         )
+        chat_text = ""
         try:
             raw = json.loads(result_json.stdout)
             # recall_for_conversation.py 回的是 {"query", "wiki_hits", "results", ...}，
@@ -176,9 +182,9 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
                     "score": item.get("score", 0.0),
                     "url": item.get("source_url") or item.get("url", ""),
                 })
+            chat_text = _format_assoc_chat(results)
         except Exception:
-            # Fallback: no structured results but we have the text
-            results = [{"source_type": "bookmark", "source_file": "", "section": "", "excerpt": chat_text[:200], "score": 0.5, "url": ""}] if chat_text else []
+            results = []
 
         return chat_text, results
     except Exception as e:
@@ -248,6 +254,17 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         text_parts: list[str] = []
         if filtered:
             text_parts.append(_format_inline(format_continuity_chat(filtered[:3])))
+
+        # 卡片與書籤。
+        # hard trigger 是「我們之前怎麼…」這種明確的回想要求，而使用者存最多東西的地方
+        # 就是卡片（wiki 只有十幾個 topic，卡片上千張）。原本這條路徑只查 wiki 與記憶檔，
+        # 等於問「之前怎麼做的」反而查不到主要的知識來源。
+        assoc_text, assoc_results = run_associative_recall(query, limit=2)
+        assoc_results, _ = _dedup_filter_new(assoc_results)
+        if assoc_results:
+            result_dicts += assoc_results
+            if assoc_text:
+                text_parts.append(assoc_text)
 
         # Action recall (supplement for execution-planning state)
         action_results = action_recall(query, top_k=3)
