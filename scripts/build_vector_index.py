@@ -39,6 +39,10 @@ WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
+# wiki/memory 的向量另外存一份小檔。召回時只需要這 ~1,900 個向量，
+# 但它們混在 8,000 多個卡片向量裡，載入整個 62MB 檔案要 5.4 秒——
+# 而召回是每句話都要跑的。分開存之後只需要載入十分之一。
+SEMANTIC_FILE = BOOKMARKS_DIR / "semantic_index.json"
 
 
 # ── Text extraction ───────────────────────────────────────────────────────────
@@ -161,8 +165,8 @@ MIN_SECTION_CHARS = 80
 MAX_SECTION_CHARS = 4000
 
 
-def wiki_section_docs() -> list[tuple[str, str, str]]:
-    """把 wiki 主題頁切段，每段一個向量。回傳 [(key, text, hash)]。
+def knowledge_section_docs() -> list[tuple[str, str, str]]:
+    """把 wiki 主題頁與記憶檔切段，每段一個向量。回傳 [(key, text, hash)]。
 
     為什麼要做這件事：向量索引原本只涵蓋卡片。wiki——也就是使用者自己消化過、
     訊號密度最高的那一層——完全沒有語意搜尋，只能靠字串比對撈。
@@ -172,12 +176,18 @@ def wiki_section_docs() -> list[tuple[str, str, str]]:
 
     切到「段」而不是整頁：一頁 680K 的主題頁嵌成單一向量，等於什麼都不像。
     """
-    topics_dir = xkb_paths.WIKI_TOPICS_DIR
-    if not topics_dir.exists():
-        return []
+    sources: list[tuple[Path, str]] = []
+    if xkb_paths.WIKI_TOPICS_DIR.exists():
+        sources += [(p, "wiki/topics") for p in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))]
+    # 記憶檔也要語意化：hard trigger（「我們之前怎麼…」）查的就是這一層，
+    # 而它原本同樣只有字串比對，靠功能詞就能命中。
+    if xkb_paths.DATA_DIR.exists():
+        sources += [(p, "memory") for p in sorted(xkb_paths.DATA_DIR.glob("*.md"))]
+    if xkb_paths.MEMORY_MD.exists():
+        sources.append((xkb_paths.MEMORY_MD, "memory"))
 
     docs: list[tuple[str, str, str]] = []
-    for path in sorted(topics_dir.glob("*.md")):
+    for path, prefix in sources:
         try:
             content = path.read_text(encoding="utf-8")
         except OSError:
@@ -193,7 +203,7 @@ def wiki_section_docs() -> list[tuple[str, str, str]]:
             if len(body) < MIN_SECTION_CHARS:
                 return
             text = f"{title} — {section_name}\n{body}"[:MAX_SECTION_CHARS]
-            key = f"wiki/topics/{path.name}#{section_name or 'intro'}"
+            key = f"{prefix}/{path.name}#{section_name or 'intro'}"
             docs.append((key, text, hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
 
         for line in content.splitlines():
@@ -206,6 +216,23 @@ def wiki_section_docs() -> list[tuple[str, str, str]]:
         flush(section, buffer)
 
     return docs
+
+
+def write_semantic_index(vectors: dict[str, list[float]], path: Path) -> None:
+    """寫出 <path>.bin（float32 單位向量）與 <path>（keys + dims 的 JSON）。"""
+    import array
+
+    keys = sorted(vectors)
+    dims = len(vectors[keys[0]])
+    packed = array.array("f")
+    for key in keys:
+        vec = vectors[key]
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        packed.extend(x / norm for x in vec)
+
+    path.with_suffix(".bin").write_bytes(packed.tobytes())
+    path.write_text(json.dumps({"dims": dims, "keys": keys, "normalized": True},
+                               ensure_ascii=False), encoding="utf-8")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -243,11 +270,11 @@ def main() -> int:
     to_embed = []
 
     # wiki 段落：把消化過的那一層也納入語意搜尋
-    for wiki_key, wiki_text, wiki_hash in wiki_section_docs():
+    for wiki_key, wiki_text, wiki_hash in knowledge_section_docs():
         if not (args.incremental and wiki_key in existing_vectors
                 and existing_hashes.get(wiki_key) == wiki_hash):
             to_embed.append((wiki_key, wiki_text, wiki_hash))
-    print(f"📖 Wiki sections queued: {len(to_embed)}")
+    print(f"📖 Wiki/memory sections queued: {len(to_embed)}")
 
     for item in items:
         key = item.get("relative_path") or item.get("path") or ""
@@ -336,6 +363,20 @@ def main() -> int:
         "text_hashes": new_hashes,
     }
     save_vector_index(output, vector_path)
+
+    # 另存召回用的索引，二進位格式。
+    # 存 JSON 的話 1,868 個 3072 維向量要 76MB，光 json.loads 就要 5 秒——
+    # 而召回是每句話都要跑的。float32 打包後只有 23MB，載入約 0.1 秒。
+    # 順便先做單位化，查詢時只要點積，不必每次算平方根。
+    semantic_vectors = {
+        k: v for k, v in output.get("vectors", {}).items()
+        if (k.startswith("wiki/topics/") or k.startswith("memory/"))
+        and not k.startswith("memory/cards/")
+    }
+    if semantic_vectors:
+        semantic_path = Path(os.getenv("XKB_SEMANTIC_INDEX", str(SEMANTIC_FILE)))
+        write_semantic_index(semantic_vectors, semantic_path)
+        print(f"✅ Saved {len(semantic_vectors)} semantic vectors → {semantic_path.with_suffix('.bin')}")
 
     print(f"\n✅ Saved {len(new_vectors)} vectors → {vector_path}")
     print(f"   Provider : {output['meta']['provider']} / {output['meta']['model']}")

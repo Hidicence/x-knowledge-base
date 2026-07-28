@@ -304,11 +304,13 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         min_wiki_score = 0.5 if light else 0.4
 
         # Wiki recall (highest priority — synthesized knowledge)
-        wiki_results = recall_from_wiki(query, top_k=2)
+        # light scan 不做語意：它跑在幾乎每一句話上，每句多打一次 embedding API
+        # 既慢又花錢。有規則命中（真的在問東西）才值得那一次呼叫。
+        wiki_results = recall_from_wiki(query, top_k=2, semantic=not light)
         wiki_results_filtered = [r for r in wiki_results if r.score >= min_wiki_score]
         wiki_results_filtered, _ = _dedup_filter_new(wiki_results_filtered)
         wiki_text = format_continuity_chat(wiki_results_filtered) if wiki_results_filtered else ""
-        wiki_result_dicts = [{"source_type": "wiki", "source_file": r.source_file,
+        wiki_result_dicts = [{"source_type": r.source_type, "source_file": r.source_file,
                                "section": r.section, "excerpt": r.excerpt,
                                "score": r.score, "url": r.url} for r in wiki_results_filtered]
 

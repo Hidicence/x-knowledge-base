@@ -32,7 +32,11 @@ import os
 # 各層實測中位數（2026-07-28，8 個代表性查詢）。改了計分方式就要重新量。
 DEFAULT_ANCHORS = {
     "wiki": 0.93,
-    "memory": 0.93,     # 本機無資料可量，沿用 wiki（同一支程式、同一種計分）
+    "memory": 0.93,              # 與 wiki 同一支程式、同一種計分
+    # 語意召回回傳的是餘弦相似度（門檻 0.65，實測有效區間約 0.65~0.85），
+    # 跟關鍵字那套完全不同尺度，所以另立錨點
+    "wiki_semantic": 0.72,
+    "memory_semantic": 0.72,
     "card": 0.88,
     "bookmark": 0.88,
     "contrarian": 0.52,
@@ -43,6 +47,8 @@ DEFAULT_ANCHORS = {
 DEFAULT_WEIGHTS = {
     "wiki": 1.0,
     "memory": 1.0,
+    "wiki_semantic": 1.0,
+    "memory_semantic": 1.0,
     "card": 0.85,
     "bookmark": 0.85,
     "contrarian": 0.7,

@@ -176,8 +176,203 @@ def _parse_wiki_frontmatter(content: str) -> dict[str, str]:
     return data
 
 
-def recall_from_wiki(query: str, top_k: int = 2) -> list[RecallResult]:
-    """Search wiki/topics/*.md for relevant content."""
+# ── 語意召回 ──────────────────────────────────────────────────────────────────
+#
+# XKB 的核心不是資料庫，是根據語意主動召回。但 wiki 這一層原本只有字串比對：
+# 中文沒有空格，切 n-gram 之後「之前」「怎麼」「處理」會命中任何一份文件，
+# 於是「我們之前怎麼處理碳盤查的」撈回一堆無關結果，還給出 0.42 的分數。
+#
+# 語意分數說得出「沒有夠像的」——實測那句在 wiki 裡最高只有 0.574，
+# 因為知識庫裡本來就沒有碳盤查的內容。字串比對永遠說不出這句話。
+
+WIKI_MIN_SIMILARITY = float(os.getenv("XKB_WIKI_MIN_SIMILARITY", "0.65"))
+
+_VECTORS: dict[str, list[float]] | None = None
+_PROVIDER = None
+
+
+SEMANTIC_PREFIXES = {"wiki/topics/": "wiki_semantic", "memory/": "memory_semantic"}
+
+
+def _load_semantic_vectors() -> dict[str, list[float]]:
+    """載入 wiki 與記憶檔的段落向量（已單位化）。
+
+    優先讀二進位小檔：整份 vector_index.json 有 8,000 多個卡片向量，
+    存成 JSON 光載入就要 5 秒，而召回是每句話都要跑的。
+    """
+    global _VECTORS
+    if _VECTORS is not None:
+        return _VECTORS
+    _VECTORS = {}
+
+    meta_path = Path(os.getenv("XKB_SEMANTIC_INDEX",
+                               str(xkb_paths.BOOKMARKS_DIR / "semantic_index.json")))
+    bin_path = meta_path.with_suffix(".bin")
+    if meta_path.exists() and bin_path.exists():
+        try:
+            import array
+            with meta_path.open(encoding="utf-8") as fh:
+                meta = json.load(fh)
+            dims, keys = int(meta["dims"]), list(meta["keys"])
+            packed = array.array("f")
+            packed.frombytes(bin_path.read_bytes())
+            _VECTORS = {
+                key: packed[i * dims:(i + 1) * dims].tolist()
+                for i, key in enumerate(keys)
+            }
+            return _VECTORS
+        except (OSError, ValueError, KeyError):
+            _VECTORS = {}
+
+    # 退路：直接讀完整索引（慢，但至少能動）
+    try:
+        with xkb_paths.VECTOR_FILE.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        _VECTORS = {
+            k: v for k, v in (data.get("vectors") or {}).items()
+            if any(k.startswith(prefix) for prefix in SEMANTIC_PREFIXES)
+            and not k.startswith("memory/cards/")
+        }
+    except (OSError, ValueError):
+        pass
+    return _VECTORS
+
+
+def _load_embedding_env() -> None:
+    """把 openclaw.json 裡的 embedding 設定補進環境變數（已存在的不覆蓋）。"""
+    path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
+    if not path.exists():
+        return
+    try:
+        with path.open(encoding="utf-8") as fh:
+            env = (json.load(fh).get("env") or {})
+    except (OSError, ValueError):
+        return
+    for key in ("GEMINI_API_KEY", "EMBEDDING_PROVIDER", "EMBEDDING_MODEL",
+                "OPENAI_API_KEY", "OLLAMA_BASE_URL"):
+        if env.get(key) and not os.getenv(key):
+            os.environ[key] = str(env[key])
+    # 有 key 但沒指定供應商時，預設走 gemini——索引就是用它建的
+    if os.getenv("GEMINI_API_KEY") and not os.getenv("EMBEDDING_PROVIDER"):
+        os.environ["EMBEDDING_PROVIDER"] = "gemini"
+
+
+def _embed_query(query: str) -> list[float] | None:
+    """拿不到 embedding 就回 None，呼叫端會退回字串比對。"""
+    global _PROVIDER
+    if _PROVIDER is None:
+        try:
+            # MCP server 是被 OpenClaw 叫起來的，未必帶著這些環境變數。
+            # 沿用 xbrain_recall 的做法，從 openclaw.json 補上，否則語意召回會
+            # 在正式環境靜默退回字串比對——正是今天修了一整天的那種失敗方式。
+            _load_embedding_env()
+            sys.path.insert(0, str(xkb_paths.SKILL_DIR))
+            from tools.embedding_providers import get_provider
+            _PROVIDER = get_provider()
+        except Exception as exc:
+            print(f"（semantic recall unavailable: {exc}）", file=sys.stderr)
+            _PROVIDER = False
+    if not _PROVIDER:
+        return None
+    try:
+        return _PROVIDER.embed(query)
+    except Exception as exc:
+        print(f"（embedding failed: {exc}）", file=sys.stderr)
+        return None
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na * nb > 1e-9 else 0.0
+
+
+def _section_text(topic_file: str, section: str) -> str:
+    path = WIKI_TOPICS_DIR / topic_file
+    try:
+        content = re.sub(r"^---\n.*?\n---\n", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
+    except OSError:
+        return ""
+    for title, body in _split_into_sections(content):
+        if title == section:
+            return re.sub(r"\n+", " ", body).strip()
+    return ""
+
+
+def _memory_section_text(filename: str, section: str) -> str:
+    for base in (MEMORY_DIR, MEMORY_MD.parent):
+        path = base / filename
+        if not path.exists():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for title, body in _split_into_sections(content):
+            if title == section:
+                return re.sub(r"\s+", " ", body).strip()
+        return re.sub(r"\s+", " ", content).strip()
+    return ""
+
+
+def recall_semantic(query: str, top_k: int = 2) -> list[RecallResult] | None:
+    """向量召回。回傳 None 代表「語意能力不可用」，空 list 代表「真的沒有夠相關的」。
+
+    這兩者必須分得開：不可用要退回字串比對，沒有夠相關的就該安靜。
+    """
+    vectors = _load_semantic_vectors()
+    if not vectors:
+        return None
+    query_vector = _embed_query(query)
+    if query_vector is None:
+        return None
+
+    scored: list[tuple[float, str]] = []
+    for key, vec in vectors.items():
+        scored.append((_cosine(query_vector, vec), key))
+    scored.sort(reverse=True)
+
+    results: list[RecallResult] = []
+    seen_topics: set[str] = set()
+    for similarity, key in scored:
+        if similarity < WIKI_MIN_SIMILARITY or len(results) >= top_k:
+            break
+        prefix = next((p for p in SEMANTIC_PREFIXES if key.startswith(p)), "")
+        source_type = SEMANTIC_PREFIXES.get(prefix, "wiki_semantic")
+        rest, _, section = key[len(prefix):].partition("#")
+        if rest in seen_topics:            # 同一份文件只取最相關的一段
+            continue
+        seen_topics.add(rest)
+        is_wiki = source_type == "wiki_semantic"
+        excerpt = _section_text(rest, section) if is_wiki else _memory_section_text(rest, section)
+        results.append(RecallResult(
+            source_type=source_type,
+            source_file=f"{prefix}{rest}",
+            section=section,
+            excerpt=excerpt[:200],
+            score=round(similarity, 3),
+            url=f"wiki/topics/{Path(rest).stem}" if is_wiki else "",
+        ))
+    return results
+
+
+def recall_from_wiki(query: str, top_k: int = 2, semantic: bool = True) -> list[RecallResult]:
+    """Search wiki/topics/*.md for relevant content.
+
+    semantic=True 時優先用向量。語意可用但沒有夠相關的內容，就回空——
+    不再退回字串比對，否則剛擋掉的雜訊會從後門進來。
+    """
+    if semantic:
+        semantic_results = recall_semantic(query, top_k)
+        if semantic_results is not None:
+            return semantic_results
+
+    return _recall_from_wiki_keyword(query, top_k)
+
+
+def _recall_from_wiki_keyword(query: str, top_k: int = 2) -> list[RecallResult]:
+    """字串比對版本。語意不可用時的退路。"""
     tokens = tokenize(query)
     if not tokens or not WIKI_TOPICS_DIR.exists():
         return []
@@ -236,13 +431,23 @@ def recall_from_wiki(query: str, top_k: int = 2) -> list[RecallResult]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def recall(query: str, source: str = "both", top_k: int = 5) -> list[RecallResult]:
-    """Unified entry: search memory and/or wiki."""
+def recall(query: str, source: str = "both", top_k: int = 5,
+           semantic: bool = True) -> list[RecallResult]:
+    """Unified entry: search memory and/or wiki.
+
+    語意可用時，memory 與 wiki 都走同一次向量查詢——兩層的段落都在同一份索引裡，
+    分開查只會多打一次 embedding API。語意不可用才各自退回字串比對。
+    """
+    if semantic and source == "both":
+        semantic_results = recall_semantic(query, top_k=top_k)
+        if semantic_results is not None:
+            return semantic_results
+
     results: list[RecallResult] = []
     if source in ("memory", "both"):
         results.extend(recall_from_memory(query, top_k=3))
     if source in ("wiki", "both"):
-        results.extend(recall_from_wiki(query, top_k=2))
+        results.extend(recall_from_wiki(query, top_k=2, semantic=semantic))
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:top_k]
 
