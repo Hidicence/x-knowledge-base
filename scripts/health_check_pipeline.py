@@ -177,6 +177,61 @@ def check_recall_telemetry() -> dict:
     return result
 
 
+def check_semantic_index() -> dict:
+    """語意索引存不存在、跟得上不跟得上內容。
+
+    向量是離線建的：wiki 或記憶檔改了但沒重建索引，召回會用舊向量算相似度，
+    不會報錯，只會撈回過時的段落。二進位格式又沒有自我描述能力，
+    keys 與 .bin 不同步時切出來的向量是錯位的——同樣不會拋錯。
+    """
+    result = {"name": "semantic_index", "checks": []}
+    meta_path = Path(os.getenv("XKB_SEMANTIC_INDEX",
+                               str(BOOKMARKS_DIR / "semantic_index.json")))
+    bin_path = meta_path.with_suffix(".bin")
+
+    if not (meta_path.exists() and bin_path.exists()):
+        result["checks"].append({
+            "ok": False,
+            "msg": "semantic index missing — 召回會退回字串比對（中文命中率大幅下降）",
+        })
+        return result
+
+    try:
+        with meta_path.open(encoding="utf-8") as fh:
+            meta = json.load(fh)
+        indexed = int(meta.get("count", 0))
+        expected_bytes = int(meta.get("bytes", 0))
+    except (OSError, ValueError):
+        result["checks"].append({"ok": False, "msg": f"semantic index meta unreadable: {meta_path}"})
+        return result
+
+    actual_bytes = bin_path.stat().st_size
+    result["checks"].append({
+        "ok": actual_bytes == expected_bytes,
+        "msg": f"index integrity: {indexed} vectors, {actual_bytes} bytes"
+               + ("" if actual_bytes == expected_bytes else f" — 應為 {expected_bytes}，keys 與 .bin 不同步"),
+    })
+
+    # 內容比索引新 = 索引過時
+    newest = 0.0
+    for directory in (WIKI_TOPICS_DIR, WORKSPACE / "memory"):
+        if not directory.exists():
+            continue
+        for path in list(directory.glob("*.md"))[:400]:
+            newest = max(newest, path.stat().st_mtime)
+
+    if newest:
+        lag_hours = (newest - bin_path.stat().st_mtime) / 3600
+        max_lag = float(os.getenv("XKB_SEMANTIC_MAX_LAG_HOURS", "26"))
+        result["checks"].append({
+            "ok": lag_hours <= max_lag,
+            "msg": f"index freshness: 內容比索引新 {max(lag_hours, 0):.1f}h (threshold {max_lag:.0f}h)"
+                   + ("" if lag_hours <= max_lag else " — 重跑 build_vector_index.py --incremental"),
+        })
+
+    return result
+
+
 def check_staging_backlog() -> dict:
     """待審候選有沒有在無聲累積。
 
@@ -296,6 +351,7 @@ def main() -> int:
         check_recall_wiki_source(),
         check_recall_live(),
         check_recall_telemetry(),
+        check_semantic_index(),
         check_staging_backlog(),
         check_index_freshness(),
     ]

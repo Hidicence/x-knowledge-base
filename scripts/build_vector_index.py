@@ -230,9 +230,20 @@ def write_semantic_index(vectors: dict[str, list[float]], path: Path) -> None:
         norm = math.sqrt(sum(x * x for x in vec)) or 1.0
         packed.extend(x / norm for x in vec)
 
-    path.with_suffix(".bin").write_bytes(packed.tobytes())
-    path.write_text(json.dumps({"dims": dims, "keys": keys, "normalized": True},
-                               ensure_ascii=False), encoding="utf-8")
+    payload = packed.tobytes()
+    path.with_suffix(".bin").write_bytes(payload)
+    # 記下位元組序、每個浮點數幾個位元組、總筆數：
+    # 這三項任何一項對不上，切片出來的向量就是錯的，而且不會拋錯——
+    # 只會安靜地變成空向量或錯位資料，讀取端據此驗證後才敢用。
+    path.write_text(json.dumps({
+        "dims": dims,
+        "keys": keys,
+        "count": len(keys),
+        "normalized": True,
+        "byteorder": sys.byteorder,
+        "itemsize": packed.itemsize,
+        "bytes": len(payload),
+    }, ensure_ascii=False), encoding="utf-8")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

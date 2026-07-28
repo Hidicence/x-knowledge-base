@@ -215,13 +215,31 @@ def _load_semantic_vectors() -> dict[str, list[float]]:
                 meta = json.load(fh)
             dims, keys = int(meta["dims"]), list(meta["keys"])
             packed = array.array("f")
-            packed.frombytes(bin_path.read_bytes())
+            payload = bin_path.read_bytes()
+
+            # 二進位格式沒有自我描述能力，對不上時不會拋錯，只會安靜地
+            # 切出空的或錯位的向量——分數變成 0，看起來就像「知識庫沒東西」。
+            # 所以寧可大聲退回 JSON，也不要拿可能錯位的資料去算相似度。
+            problems = []
+            if meta.get("byteorder") and meta["byteorder"] != sys.byteorder:
+                problems.append(f"byteorder {meta['byteorder']} != {sys.byteorder}")
+            if meta.get("itemsize") and int(meta["itemsize"]) != packed.itemsize:
+                problems.append(f"itemsize {meta['itemsize']} != {packed.itemsize}")
+            expected = len(keys) * dims * packed.itemsize
+            if len(payload) != expected:
+                problems.append(f"size {len(payload)} != expected {expected}"
+                                f"（keys 與 .bin 不同步，可能只重建了其中一個）")
+            if problems:
+                raise ValueError("; ".join(problems))
+
+            packed.frombytes(payload)
             _VECTORS = {
                 key: packed[i * dims:(i + 1) * dims].tolist()
                 for i, key in enumerate(keys)
             }
             return _VECTORS
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"（semantic index unusable, falling back to JSON: {exc}）", file=sys.stderr)
             _VECTORS = {}
 
     # 退路：直接讀完整索引（慢，但至少能動）
