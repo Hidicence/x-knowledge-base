@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 書籤增強工具
-1. AI 濃縮 - 自動產生摘要（使用 MiniMax API）
+1. AI 濃縮 - 自動產生摘要（使用 XKB configured LLM）
 2. 交叉連結 - 自動建立 wiki-link
 """
 
@@ -21,95 +21,18 @@ from _card_prompt import build_prompt, find_related_context, llm_call as _llm_ca
 
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(Path.home() / ".openclaw" / "workspace" / "memory" / "bookmarks")))
 # ── LLM config ────────────────────────────────────────────────────────────────
-MINIMAX_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY", "")
-OPENCLAW_FALLBACK_ENABLED = os.getenv("OPENCLAW_MINIMAX_FALLBACK", "1") not in ("0", "false", "False")
-OPENCLAW_FALLBACK_SESSION = os.getenv("OPENCLAW_MINIMAX_SESSION", "xkb-summarizer")
-OPENCLAW_FALLBACK_AGENT = os.getenv("OPENCLAW_MINIMAX_AGENT", "")
+# Legacy variable name kept for old call sites; actual model routing is handled
+# by scripts/_card_prompt.py → scripts/_llm.py → config/llm.json.
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 
-def call_openclaw_minimax(prompt, system_prompt="你是一個專業的AI內容分析師，擅長產生簡潔的濃縮摘要。"):
-    """當沒有 MINIMAX_API_KEY 時，改走 OpenClaw agent（相容新版 CLI，避免 --model 參數錯誤）。"""
-    if not OPENCLAW_FALLBACK_ENABLED:
-        return None
-
-    user_msg = f"{system_prompt}\n\n{prompt}"
-    cmd = [
-        "openclaw", "agent",
-        "--session-id", OPENCLAW_FALLBACK_SESSION,
-        "--message", user_msg,
-        "--json",
-    ]
-    if OPENCLAW_FALLBACK_AGENT:
-        cmd.extend(["--agent", OPENCLAW_FALLBACK_AGENT])
-
+def call_configured_llm(prompt, system_prompt="你是一個專業的AI內容分析師，擅長產生簡潔的濃縮摘要。"):
+    """Call the configured XKB LLM. Falls back to local summary at caller level."""
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if p.returncode != 0:
-            print(f"❌ OpenClaw fallback 失敗: {p.stderr.strip()[:300]}")
-            return None
-
-        data = json.loads((p.stdout or "{}").strip() or "{}")
-        payloads = (((data.get("result") or {}).get("payloads")) or [])
-        text_chunks = [x.get("text") for x in payloads if isinstance(x, dict) and isinstance(x.get("text"), str)]
-        merged = "\n\n".join([t.strip() for t in text_chunks if t and t.strip()]).strip()
-        return merged or None
-    except Exception as e:
-        print(f"❌ OpenClaw fallback 異常: {e}")
-        return None
-
-
-def call_minimax(prompt, system_prompt="你是一個專業的AI內容分析師，擅長產生簡潔的濃縮摘要。"):
-    """呼叫 MiniMax API（優先環境變數，失敗再 fallback 到 OpenClaw minimax）"""
-    if not MINIMAX_API_KEY:
-        print("⚠️ 未設定 MINIMAX_API_KEY，嘗試走 OpenClaw minimax fallback")
-        return call_openclaw_minimax(prompt, system_prompt)
-
-    headers = {
-        "Authorization": f"Bearer {MINIMAX_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": MINIMAX_MODEL,
-        "messages": [
-            {"role": "user", "content": f"{system_prompt}\n\n{prompt}"}
-        ],
-        "temperature": 0.4,
-        "max_tokens": 800
-    }
-
-    try:
-        response = requests.post(MINIMAX_ENDPOINT, headers=headers, json=data, timeout=45)
-        if response.status_code >= 400:
-            print(f"❌ MiniMax API 錯誤 {response.status_code}: {response.text[:300]}")
-            print("  ↪ 改走 OpenClaw minimax fallback")
-            return call_openclaw_minimax(prompt, system_prompt)
-
-        result = response.json() if response.content else {}
-
-        # Anthropic-compatible 回應
-        if isinstance(result.get("content"), list):
-            text_chunks = []
-            for item in result.get("content", []):
-                if item.get("type") in ("text", "thinking"):
-                    val = item.get("text") or item.get("thinking")
-                    if val:
-                        text_chunks.append(val)
-            return "\n".join(text_chunks).strip() or None
-
-        # OpenAI-ish 回應
-        choices = result.get("choices") or []
-        if choices:
-            return (((choices[0] or {}).get("message") or {}).get("content") or "").strip() or None
-
-        print(f"❌ 無法解析 API 回應: {result}")
-        print("  ↪ 改走 OpenClaw minimax fallback")
-        return call_openclaw_minimax(prompt, system_prompt)
-    except Exception as e:
-        print(f"❌ 請求錯誤: {e}")
-        print("  ↪ 改走 OpenClaw minimax fallback")
-        return call_openclaw_minimax(prompt, system_prompt)
-
+        return _llm_call(prompt, LLM_API_KEY, max_tokens=2500)
+    except TypeError:
+        # Backward compatibility if imported helper signature changes.
+        return _llm_call(prompt)
 
 def generate_local_summary(bookmark):
     """無 API Key 時的本地摘要（規則式，省 token 且不中斷流程）"""
@@ -305,7 +228,7 @@ def generate_ai_summary(bookmark):
     if not url and re.fullmatch(r"\d{15,20}", card_id):
         url = f"https://x.com/i/status/{card_id}"
 
-    api_key = MINIMAX_API_KEY
+    api_key = LLM_API_KEY
     if not api_key:
         print("  ℹ️ 改用本地摘要模式（no API key）")
         return generate_local_summary(bookmark)
