@@ -253,7 +253,8 @@ def main() -> int:
 
     if args.json:
         print(json.dumps(sections, ensure_ascii=False, indent=2))
-        return 0
+        # 離開碼要反映健康狀態，--json 也一樣：排程是靠離開碼判斷要不要告警的
+        return 0 if all(c["ok"] for s in sections for c in s["checks"]) else 1
 
     print("🔍  XKB Pipeline Health Check")
     print(f"    {datetime.now().strftime('%Y-%m-%d %H:%M')}")
