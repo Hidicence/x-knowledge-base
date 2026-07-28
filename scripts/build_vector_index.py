@@ -153,6 +153,61 @@ def save_vector_index(data: dict, path: Path) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+# ── Wiki sections ─────────────────────────────────────────────────────────────
+
+# 一段太短的內容嵌入後幾乎沒有訊息量，只會製造假命中
+MIN_SECTION_CHARS = 80
+# 一段太長會把主題稀釋掉，超過就截斷
+MAX_SECTION_CHARS = 4000
+
+
+def wiki_section_docs() -> list[tuple[str, str, str]]:
+    """把 wiki 主題頁切段，每段一個向量。回傳 [(key, text, hash)]。
+
+    為什麼要做這件事：向量索引原本只涵蓋卡片。wiki——也就是使用者自己消化過、
+    訊號密度最高的那一層——完全沒有語意搜尋，只能靠字串比對撈。
+    中文沒有空格，字串比對本來就弱，於是「我們之前怎麼處理碳盤查的」會撈回
+    一堆只命中「之前」「怎麼」「處理」的無關結果。那不是門檻調不好，
+    是那一層根本沒有語意能力。
+
+    切到「段」而不是整頁：一頁 680K 的主題頁嵌成單一向量，等於什麼都不像。
+    """
+    topics_dir = xkb_paths.WIKI_TOPICS_DIR
+    if not topics_dir.exists():
+        return []
+
+    docs: list[tuple[str, str, str]] = []
+    for path in sorted(topics_dir.glob("*.md")):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        content = re.sub(r"^---\n.*?\n---\n", "", content, flags=re.DOTALL)
+
+        title = path.stem
+        section = ""
+        buffer: list[str] = []
+
+        def flush(section_name: str, lines: list[str]) -> None:
+            body = "\n".join(lines).strip()
+            if len(body) < MIN_SECTION_CHARS:
+                return
+            text = f"{title} — {section_name}\n{body}"[:MAX_SECTION_CHARS]
+            key = f"wiki/topics/{path.name}#{section_name or 'intro'}"
+            docs.append((key, text, hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
+
+        for line in content.splitlines():
+            if re.match(r"^#{1,3} .+", line):
+                flush(section, buffer)
+                section = re.sub(r"^#{1,3} ", "", line).strip()
+                buffer = []
+            else:
+                buffer.append(line)
+        flush(section, buffer)
+
+    return docs
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -186,6 +241,14 @@ def main() -> int:
     existing_hashes: dict = existing.get("text_hashes", {})
 
     to_embed = []
+
+    # wiki 段落：把消化過的那一層也納入語意搜尋
+    for wiki_key, wiki_text, wiki_hash in wiki_section_docs():
+        if not (args.incremental and wiki_key in existing_vectors
+                and existing_hashes.get(wiki_key) == wiki_hash):
+            to_embed.append((wiki_key, wiki_text, wiki_hash))
+    print(f"📖 Wiki sections queued: {len(to_embed)}")
+
     for item in items:
         key = item.get("relative_path") or item.get("path") or ""
         card_text = extract_card_text(item)
