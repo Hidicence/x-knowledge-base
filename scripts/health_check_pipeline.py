@@ -177,6 +177,54 @@ def check_recall_telemetry() -> dict:
     return result
 
 
+def check_staging_backlog() -> dict:
+    """待審候選有沒有在無聲累積。
+
+    2026-04-07 到 07-16 累積了 146 個檔案、470 條候選，被勾選過的只有 1 條——
+    對話裡談出來的結論三個半月都沒進知識庫，而且沒有任何地方會提到這件事。
+    擷取層有健檢、召回層有健檢，消化層原本什麼都沒有。
+    """
+    result = {"name": "staging_backlog", "checks": []}
+    staging_dir = WIKI_DIR / "_staging"
+
+    if not staging_dir.exists():
+        result["checks"].append({"ok": True, "msg": "no staging dir — nothing pending"})
+        return result
+
+    max_pending = int(os.getenv("XKB_STAGING_MAX_PENDING", "60"))
+    max_age_days = int(os.getenv("XKB_STAGING_MAX_AGE_DAYS", "30"))
+
+    pending = 0
+    oldest: str | None = None
+    for path in staging_dir.glob("*.md"):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for block in re.split(r"\n## Candidate \d+\n", content)[1:]:
+            if re.search(r"\*\*Status:\*\*.*\[x\]", block, re.IGNORECASE):
+                continue
+            pending += 1
+            m = re.search(r"\*\*Source date:\*\* (\d{4}-\d{2}-\d{2})", block)
+            if m and (oldest is None or m.group(1) < oldest):
+                oldest = m.group(1)
+
+    result["checks"].append({
+        "ok": pending <= max_pending,
+        "msg": f"pending candidates: {pending} (threshold {max_pending})"
+               + ("" if pending <= max_pending else " — 用 xkb_review.py 審核"),
+    })
+
+    if oldest:
+        age_days = (datetime.now(timezone.utc).date() - datetime.strptime(oldest, "%Y-%m-%d").date()).days
+        result["checks"].append({
+            "ok": age_days <= max_age_days,
+            "msg": f"oldest pending candidate: {oldest} ({age_days}d, threshold {max_age_days}d)",
+        })
+
+    return result
+
+
 def check_index_freshness() -> dict:
     """檢查 search_index 和 vector_index 的 summary 覆蓋率與更新時間。"""
     result = {"name": "index_freshness", "checks": []}
@@ -248,6 +296,7 @@ def main() -> int:
         check_recall_wiki_source(),
         check_recall_live(),
         check_recall_telemetry(),
+        check_staging_backlog(),
         check_index_freshness(),
     ]
 
