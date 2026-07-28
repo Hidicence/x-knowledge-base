@@ -28,11 +28,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Allow running from scripts/ directory or skill root
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SKILL_DIR))
 from tools.embedding_providers import get_provider
 
-WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"

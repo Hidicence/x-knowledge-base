@@ -17,13 +17,15 @@ import psycopg2.extras
 
 sys.path.insert(0, str(Path(__file__).parent))
 import distill_memory_to_wiki as distill
+import xkb_paths
 
 GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 QUEUE = "xkb-memory-distill"
 CHUNK_QUEUE = "xkb-memory-distill-chunk"
 LOCK_DURATION_S = 900
 POLL_INTERVAL_S = 15
-RUNTIME_DIR = Path(os.getenv("XKB_DISTILL_RUNTIME_DIR", str(Path.home() / ".openclaw" / "workspace" / "skills" / "x-knowledge-base" / "runtime" / "memory-distill")))
+RUNTIME_DIR = Path(os.getenv("XKB_DISTILL_RUNTIME_DIR",
+                             str(xkb_paths.SKILL_DIR / "runtime" / "memory-distill")))
 _shutdown = False
 
 

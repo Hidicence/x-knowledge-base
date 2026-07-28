@@ -19,7 +19,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 
 # Router resolution, most reliable first:
 # - Sibling:      the router always ships next to this file, whatever OPENCLAW_WORKSPACE

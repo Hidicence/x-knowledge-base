@@ -19,11 +19,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-SKILL_DIR = WORKSPACE / "skills" / "x-knowledge-base"
-BOOKMARKS_V2 = WORKSPACE / "memory" / "bookmarks"
-CARDS_V2 = WORKSPACE / "memory" / "cards"
-RUNTIME_V2 = WORKSPACE / "memory" / "x-knowledge-base"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
+SKILL_DIR = xkb_paths.SKILL_DIR
+BOOKMARKS_V2 = xkb_paths.BOOKMARKS_DIR
+CARDS_V2 = xkb_paths.CARDS_DIR
+RUNTIME_V2 = xkb_paths.XKB_DATA_DIR
 INDEX_V2 = BOOKMARKS_V2 / "search_index.json"
 VECTOR_V2 = BOOKMARKS_V2 / "vector_index.json"
 

@@ -12,12 +12,16 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-SKILL_DIR = WORKSPACE / "skills" / "x-knowledge-base"
-STATE_FILE = WORKSPACE / "memory" / "x-knowledge-base" / "graphql-bookmarks-crawl.json"
-BOOKMARKS_V2 = WORKSPACE / "memory" / "bookmarks"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
+SKILL_DIR = xkb_paths.SKILL_DIR
+STATE_FILE = xkb_paths.XKB_DATA_DIR / "graphql-bookmarks-crawl.json"
+BOOKMARKS_V2 = xkb_paths.BOOKMARKS_DIR
 INBOX = BOOKMARKS_V2 / "inbox"
 TMP_IDS = "/tmp/graphql_bookmarks_v2_ids.txt"
 

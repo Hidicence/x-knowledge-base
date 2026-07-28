@@ -14,12 +14,16 @@ import os
 import re
 import time
 import urllib.parse
+import sys
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 SECRETS_FILE = WORKSPACE / ".secrets" / "x-knowledge-base.env"
 STATE_FILE = WORKSPACE / "memory" / "x-knowledge-base" / "graphql-bookmarks-crawl.json"
 BOOKMARKS_QUERY = "qToeLeMs43Q8cr7tRYXmaQ"
