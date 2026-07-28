@@ -22,12 +22,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-
-WORKSPACE = xkb_paths.WORKSPACE
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = xkb_paths.WIKI_DIR
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))
@@ -341,11 +338,11 @@ def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -
     if section_header in content:
         content = content.replace(
             section_header,
-            f"{section_header}\n\n- {entry} *(memory/{source_date}.md)*",
+            f"{section_header}\n\n- {entry} *(self-derived · memory/{source_date}.md)*",
             1,
         )
     else:
-        content = content.rstrip() + f"\n\n{section_header}\n\n- {entry} *(memory/{source_date}.md)*\n"
+        content = content.rstrip() + f"\n\n{section_header}\n\n- {entry} *(self-derived · memory/{source_date}.md)*\n"
 
     content = re.sub(r"(last_updated:\s*)\S+", f"\\g<1>{today}", content)
     topic_path.write_text(content)

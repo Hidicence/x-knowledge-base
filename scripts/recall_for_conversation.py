@@ -12,17 +12,17 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-import xkb_text
-
-WORKSPACE_DIR = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
-INDEX_FILE = xkb_paths.INDEX_FILE
-VECTOR_FILE = xkb_paths.VECTOR_FILE
-TOPIC_PROFILE_FILE = xkb_paths.TOPIC_PROFILE_FILE
-_SKILL_DIR = xkb_paths.SKILL_DIR
-WIKI_TOPICS_DIR = xkb_paths.WIKI_TOPICS_DIR
+WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
+_index_default = BOOKMARKS_DIR / "search_index.json"
+_vector_default = BOOKMARKS_DIR / "vector_index.json"
+INDEX_FILE = Path(os.getenv("INDEX_FILE", str(_index_default)))
+VECTOR_FILE = Path(os.getenv("VECTOR_INDEX_PATH", os.getenv("VECTOR_FILE", str(_vector_default))))
+TOPIC_PROFILE_FILE = Path(
+    os.getenv("XKB_TOPIC_PROFILE_PATH", str(WORKSPACE_DIR / "memory" / "x-knowledge-base" / "topic_profile.json"))
+)
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+WIKI_TOPICS_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki"))) / "topics"
 GENERIC_CATEGORIES = {"general", "99-general", "other", "misc", "uncategorized"}
 LOW_SIGNAL_SUMMARIES = {"（待整理）", "待整理", "todo", "tbd", "n/a"}
 LOW_SIGNAL_TITLES = {"(untitled)", "untitled", "tweet"}
@@ -43,7 +43,8 @@ def load_index(index_file: Path) -> Dict[str, Any]:
 
 
 def tokenize(text: str) -> List[str]:
-    return xkb_text.tokenize(text, STOPWORDS)
+    raw = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", text.lower())
+    return [t for t in raw if t not in STOPWORDS]
 
 
 def clean_summary(text: str) -> str:
@@ -274,6 +275,23 @@ def _category_penalty(item: Dict[str, Any]) -> float:
     return -0.08 if category in GENERIC_CATEGORIES else 0.0
 
 
+# 回音室防護（TODOS 2026-07-13）：對話蒸餾而來的知識（self-derived）召回時降權，
+# 避免「收藏 → 召回 → 討論 → 再入庫」閉環讓既有觀點自我強化。
+SELF_DERIVED_PENALTY = float(os.getenv("XKB_SELF_DERIVED_PENALTY", "-0.15"))
+_SELF_DERIVED_RE = re.compile(r"self-derived|\(memory/\d{4}-\d{2}-\d{2}")
+
+
+def _provenance_penalty(item: Dict[str, Any]) -> float:
+    if (item.get("provenance") or "").strip().lower() == "self-derived":
+        return SELF_DERIVED_PENALTY
+    text = " ".join(
+        str(item.get(k) or "") for k in ("summary", "content", "source_file", "section_text")
+    )
+    if _SELF_DERIVED_RE.search(text):
+        return SELF_DERIVED_PENALTY
+    return 0.0
+
+
 def _should_filter_result(item: Dict[str, Any], source_url: str) -> bool:
     title = (item.get("title") or "").strip()
     summary = clean_summary(item.get("summary") or "")
@@ -311,6 +329,7 @@ def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) ->
     title_bonus = _title_quality(item.get("title") or "")
     source_bonus = _source_quality(item)
     category_penalty = _category_penalty(item)
+    provenance_penalty = _provenance_penalty(item)
 
     return {
         "topic_bonus": topic_bonus,
@@ -318,7 +337,8 @@ def _ranking_adjustments(item: Dict[str, Any], topic_matches: Dict[str, Any]) ->
         "title_bonus": title_bonus,
         "source_bonus": source_bonus,
         "category_penalty": category_penalty,
-        "total_adjustment": round(topic_bonus + summary_bonus + title_bonus + source_bonus + category_penalty, 4),
+        "provenance_penalty": provenance_penalty,
+        "total_adjustment": round(topic_bonus + summary_bonus + title_bonus + source_bonus + category_penalty + provenance_penalty, 4),
     }
 
 
@@ -528,12 +548,15 @@ def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
         print(f"⚠️  Embedding failed: {e}", file=sys.stderr)
         return []
 
-    # Compute cosine similarity for all cards
-    scored = []
-    for rel_path, vec in normalized_vectors.items():
+    # Compute cosine similarity, then aggregate to card level
+    # （論點級向量鍵為 relpath#kpN，同卡取最高分 — TODOS 2026-07-13）
+    best: dict[str, float] = {}
+    for key, vec in normalized_vectors.items():
         sim = _cosine_similarity(query_vec, vec)
-        scored.append((rel_path, sim))
-    scored.sort(key=lambda x: x[1], reverse=True)
+        base = key.split("#", 1)[0]
+        if sim > best.get(base, -1.0):
+            best[base] = sim
+    scored = sorted(best.items(), key=lambda x: x[1], reverse=True)
     top = scored[:limit * 2]  # fetch extra to allow filtering
 
     # Load search index for metadata

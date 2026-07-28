@@ -82,8 +82,8 @@ with open(path) as f:
 env = cfg.setdefault("env", {})
 env["gbrain_dir"] = gbrain_dir
 # Only set LLM defaults if not already present
-env.setdefault("LLM_API_URL", "https://api.minimax.io/anthropic/v1")
-env.setdefault("LLM_MODEL",   "MiniMax-M2.7")
+env.setdefault("LLM_API_URL", "")
+env.setdefault("LLM_MODEL",   "sub2api-gpt/gpt-5.5")
 with open(path, "w") as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)
 print(f"  gbrain_dir = {gbrain_dir}")

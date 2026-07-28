@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import gbrain_put as _gbrain_put
+from _card_prompt import condense_long_content
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
@@ -283,9 +284,11 @@ def process_file(
         print(f"  [SKIP] 空檔案：{path.name}")
         return None
 
-    truncated = content[:MAX_CONTENT_CHARS]
+    # 長文 map-reduce（TODOS 2026-07-13）：取代硬截斷，保留全文重點；失敗自動退回截斷
     if len(content) > MAX_CONTENT_CHARS:
-        truncated += f"\n\n[內容截斷，原始長度 {len(content)} 字元]"
+        truncated = condense_long_content(content, verbose=True)
+    else:
+        truncated = content
 
     print(f"  📄 {path.name} ({len(content)} 字元)")
 

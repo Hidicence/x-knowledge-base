@@ -5,8 +5,7 @@
 # Use HOME-relative default instead of hardcoded /root/
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 WORKSPACE="${OPENCLAW_WORKSPACE:-$OPENCLAW_HOME/workspace}"
-# skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
-SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SKILL_DIR="${SKILL_DIR:-$WORKSPACE/skills/x-knowledge-base}"
 LOG_FILE="${XKB_YOUTUBE_LOG:-/tmp/xkb-youtube-sync.log}"
 
 # Add user-local bin to PATH (yt-dlp is often installed there)
@@ -20,8 +19,8 @@ fi
 
 # 讀取 openclaw.json 的 API keys（如果 env var 未設定）
 OPENCLAW_JSON="${OPENCLAW_JSON:-$OPENCLAW_HOME/openclaw.json}"
-if [[ -z "$MINIMAX_API_KEY" && -f "$OPENCLAW_JSON" ]]; then
-    export MINIMAX_API_KEY=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON'))['env'].get('MINIMAX_API_KEY',''))" 2>/dev/null)
+if [[ -z "$LLM_API_KEY" && -f "$OPENCLAW_JSON" ]]; then
+    export LLM_API_KEY=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON')).get('env',{}).get('LLM_API_KEY',''))" 2>/dev/null)
 fi
 if [[ -z "$GEMINI_API_KEY" && -f "$OPENCLAW_JSON" ]]; then
     export GEMINI_API_KEY=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON'))['env'].get('GEMINI_API_KEY',''))" 2>/dev/null)

@@ -28,14 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Allow running from scripts/ directory or skill root
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SKILL_DIR))
 from tools.embedding_providers import get_provider
 
-WORKSPACE_DIR = xkb_paths.WORKSPACE
+WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
@@ -43,14 +40,31 @@ VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
+def _resolve_md_path(item: dict) -> Path | None:
+    """索引項路徑解析：relative_path 是相對 workspace（如 memory/cards/x.md），
+    舊程式誤用 BOOKMARKS_DIR 拼接導致永遠讀不到卡片（2026-07-14 修正）。"""
+    abs_path = item.get("path") or ""
+    if abs_path and Path(abs_path).exists():
+        return Path(abs_path)
+    rel = item.get("relative_path") or ""
+    if not rel:
+        return None
+    for base in (WORKSPACE_DIR, BOOKMARKS_DIR):
+        p = base / rel
+        if p.exists():
+            return p
+    return None
+
+
 def _extract_key_points_from_md(md_path: Path) -> str:
-    """Extract the 三個重點 section from a card markdown file."""
+    """Extract the 關鍵論點/三個重點 section from a card markdown file.
+    （2026-07-14：新版 9-section 卡片段落名為「關鍵論點」，一併支援舊名）"""
     if not md_path.exists():
         return ""
     try:
         content = md_path.read_text(encoding="utf-8")
         m = re.search(
-            r'##\s+[\U00000000-\U0010FFFF]*\s*三個重點\s*\n(.+?)(?=\n##|\Z)',
+            r'##\s+[^\n]*(?:關鍵論點|三個重點)[^\n]*\n(.+?)(?=\n##|\Z)',
             content, re.DOTALL
         )
         if m:
@@ -59,6 +73,16 @@ def _extract_key_points_from_md(md_path: Path) -> str:
     except Exception:
         pass
     return ""
+
+
+def _extract_key_point_list(md_path: Path) -> list[str]:
+    """論點級 embedding（TODOS 2026-07-13）：回傳「三個重點」逐條列表，
+    每條將單獨成向量（鍵 relpath#kpN），召回粒度從卡片級升到論點級。"""
+    text = _extract_key_points_from_md(md_path)
+    if not text:
+        return []
+    points = [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 10]
+    return points[:5]
 
 
 def extract_card_text(item: dict) -> str:
@@ -70,9 +94,8 @@ def extract_card_text(item: dict) -> str:
     summary = (item.get("summary") or "").strip()
     key_points = ""
 
-    rel_path = item.get("relative_path") or item.get("path") or ""
-    if rel_path:
-        md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+    md_path = _resolve_md_path(item)
+    if md_path:
         if not summary:
             summary = _extract_summary_from_md(md_path)
         key_points = _extract_key_points_from_md(md_path)
@@ -167,14 +190,25 @@ def main() -> int:
             print(f"  ⚠️  No text for: {key}")
             continue
         text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
-        if args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash:
-            continue
-        to_embed.append((key, card_text, text_hash))
+        if not (args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash):
+            to_embed.append((key, card_text, text_hash))
+
+        # 論點級 embedding（TODOS 2026-07-13）：每條「關鍵論點」單獨成向量
+        md_path = _resolve_md_path(item)
+        if md_path:
+            title = (item.get("title") or "").strip()
+            for pi, point in enumerate(_extract_key_point_list(md_path), 1):
+                pkey = f"{key}#kp{pi}"
+                ptext = (f"{title}. {point}" if title else point)[:500]
+                phash = hashlib.md5(ptext.encode("utf-8")).hexdigest()[:12]
+                if args.incremental and pkey in existing_vectors and existing_hashes.get(pkey) == phash:
+                    continue
+                to_embed.append((pkey, ptext, phash))
 
     # Alias for downstream use
     texts = [t for _, t, _ in to_embed]
 
-    skipped = len(items) - len(to_embed)
+    skipped = sum(1 for k in existing_vectors if k not in {e[0] for e in to_embed})
     print(f"🔢 To embed: {len(to_embed)}  |  Skipped (incremental): {skipped}")
 
     if args.dry_run:
@@ -229,6 +263,7 @@ def main() -> int:
             "model": getattr(provider, "model", ""),
             "dims": len(vectors_list[0][1]) if vectors_list else existing.get("meta", {}).get("dims", 0),
             "total": len(new_vectors),
+            "point_vectors": sum(1 for k in new_vectors if "#kp" in k),
             "built_at": datetime.now(timezone.utc).isoformat(),
         },
         "vectors": new_vectors,

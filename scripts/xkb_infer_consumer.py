@@ -136,7 +136,7 @@ def main():
 
             request_file = data.get("request_file", "")
             result_file = data.get("result_file", "")
-            model = data.get("model") or "MiniMax-M2.7"
+            model = data.get("model") or "sub2api-gpt/gpt-5.5"
             timeout_seconds = max(60, min(LOCK_TTL_SECONDS - 30, 600))
 
             # Re-derive result_file from the request artifact so old jobs with

@@ -30,16 +30,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-
-WORKSPACE = xkb_paths.WORKSPACE
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 
 
 def _get_api_key() -> str:
-    for env_key in ("LLM_API_KEY", "MINIMAX_API_KEY"):
+    for env_key in ("LLM_API_KEY",):
         key = os.environ.get(env_key, "")
         if key:
             return key
@@ -48,7 +45,7 @@ def _get_api_key() -> str:
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
             env = config.get("env", {})
-            return env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or ""
+            return env.get("LLM_API_KEY") or ""
         except Exception:
             pass
     return ""

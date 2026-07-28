@@ -2,17 +2,13 @@
 """XKB Minion Worker"""
 from __future__ import annotations
 import argparse, json, os, re, signal, sys, time, uuid
-import sys
 from pathlib import Path
 import psycopg2, psycopg2.extras
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-
-WORKSPACE = xkb_paths.WORKSPACE
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
 GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 XKB_QUEUE = "xkb"
@@ -26,7 +22,7 @@ def _handle_signal(sig, frame):
     _shutdown = True
 
 def _get_api_key():
-    for k in ("LLM_API_KEY", "MINIMAX_API_KEY"):
+    for k in ("LLM_API_KEY",):
         v = os.environ.get(k, "")
         if v: return v
     cfg = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
@@ -34,7 +30,7 @@ def _get_api_key():
         try:
             d = json.loads(cfg.read_text())
             e = d.get("env", {})
-            return e.get("LLM_API_KEY") or e.get("MINIMAX_API_KEY") or ""
+            return e.get("LLM_API_KEY") or ""
         except: pass
     return ""
 

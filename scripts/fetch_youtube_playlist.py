@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
+    condense_long_content,
 )
 SOURCE_LABELS["youtube"] = "YouTube 影片"   # ensure registered
 
@@ -42,9 +43,8 @@ INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 YOUTUBE_DIR = BOOKMARKS_DIR / "youtube"
 COOKIES_FILE = Path.home() / ".config" / "yt-dlp" / "cookies.txt"
 
-# ── LLM (MiniMax, Anthropic-compatible API) ───────────────────────────────────
-MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
-MINIMAX_MODEL    = "MiniMax-M2.5"
+# ── LLM ─────────────────────────────────────────────────────────────────────
+# Model routing is handled by _card_prompt.py → _llm.py → config/llm.json.
 
 CARD_CATEGORIES = [
     "ai-tools", "seo-marketing", "workflows", "video",
@@ -132,7 +132,8 @@ def generate_card(title: str, video_id: str, transcript: str, lang: str,
     """Generate 9-section knowledge card for a YouTube video."""
     source_url = f"https://www.youtube.com/watch?v={video_id}"
     card_id    = f"youtube-{video_id}"
-    content    = f"標題: {title}\n字幕語言: {lang or 'unknown'}\n\n{transcript[:4000]}"
+    # 長文 map-reduce（TODOS 2026-07-13）：長字幕分段濃縮，取代硬截 4000 字元
+    content    = f"標題: {title}\n字幕語言: {lang or 'unknown'}\n\n{condense_long_content(transcript)}"
     related    = find_related_context(content, existing_items)
     prompt     = build_prompt(
         content=content,
@@ -185,16 +186,8 @@ def main():
         print("❌ 請設定 YOUTUBE_PLAYLIST_URL 環境變數或傳入 --playlist 參數", file=sys.stderr)
         return 1
 
-    # Load API key
-    config_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    api_key = ""
-    if config_path.exists():
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        api_key = config.get("env", {}).get("MINIMAX_API_KEY", "")
-    api_key = api_key or os.environ.get("MINIMAX_API_KEY", "")
-    if not api_key:
-        print("❌ MINIMAX_API_KEY 未設定", file=sys.stderr)
-        return 1
+    # LLM auth/model routing is handled by the OpenClaw model helper.
+    api_key = os.environ.get("LLM_API_KEY", "")
 
     YOUTUBE_DIR.mkdir(parents=True, exist_ok=True)
 

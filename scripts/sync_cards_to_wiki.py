@@ -32,12 +32,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import xkb_paths
-
-WORKSPACE = xkb_paths.WORKSPACE
+WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = xkb_paths.WIKI_DIR
+WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))
@@ -71,7 +68,7 @@ SOURCES_SECTION_RE = re.compile(r"\n## 來源\n(.*)$", re.DOTALL)
 # LLM helpers
 # ---------------------------------------------------------------------------
 
-def _call_minimax(api_key: str, system: str, user: str) -> str:
+def _call_configured_llm(api_key: str, system: str, user: str) -> str:
     return _llm_backend(system, user)
 
 
@@ -112,7 +109,7 @@ def llm_absorb_judgment(
     )
 
     try:
-        response = _call_minimax(api_key, system, user)
+        response = _call_configured_llm(api_key, system, user)
         # Strip <think>...</think> blocks if present
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
         # Extract JSON with greedy match (handles full object)

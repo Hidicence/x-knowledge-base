@@ -75,7 +75,13 @@ Quality principles: conservative > hallucination, understanding > summary, struc
 
 # ── Unified 9-section card template ──────────────────────────────────────────
 CARD_PROMPT = """\
-以下是一份知識來源的內容，請生成一張 9-section 知識卡片。
+以下是一份知識來源的內容，請生成一張知識卡片。
+
+如果內容包含 `## 10. Media Evidence`、`### OCR` 或 `### Vision Notes`：
+- 必須把圖片視為一級來源，不是裝飾。
+- 若圖片內有 prompt、表格、截圖文字或前後對比，請在卡片中保留可複用 pattern。
+- 不要捏造圖片文字；OCR/vision notes 標示不確定時，卡片也要保守標示。
+- 圖片證據請整合到各 section，並在最後保留 Media Evidence 摘要。
 
 來源類型: {source_type_label}
 來源網址: {source_url}
@@ -144,6 +150,14 @@ EN: <15-30 word English summary of the core finding>
 ## 9. 原始來源
 - 來源: {source_url}
 - Links: （列出內容中出現的其他連結，如有）
+
+## 10. Media Evidence（如有）
+如果原文提供圖片 / OCR / Vision Notes，請列出：
+- 圖片角色：prompt screenshot / result image / comparison / diagram / product mockup / unknown
+- 圖片中最重要的可讀文字或 prompt 摘要
+- 圖像 pattern：可複用的版面、風格、構圖、prompt 寫法
+- 不確定處：不可讀文字、疑似誤辨、需要人工複核的地方
+如果沒有圖片證據：無
 """
 
 # Human-readable labels per source_type
@@ -169,6 +183,45 @@ def llm_call(prompt: str, api_key: str = "", max_tokens: int = 2000,
     """api_key kept for backwards compatibility but is no longer used.
     Model is configured via config/llm.json."""
     return _llm_call(system or "", prompt)
+
+
+# ── 長文 map-reduce 濃縮（TODOS 2026-07-13）─────────────────────────────────
+# 卡片生成原本硬截 4000 字元，論文/長影片後半段直接丟失且不可逆。
+# 超過門檻的內容改為：分段摘要（map）→ 合併（reduce），保留全文重點。
+
+MAPREDUCE_THRESHOLD = int(os.getenv("XKB_MAPREDUCE_THRESHOLD", "4000"))
+MAPREDUCE_CHUNK = int(os.getenv("XKB_MAPREDUCE_CHUNK", "6000"))
+MAPREDUCE_MAX_CHUNKS = int(os.getenv("XKB_MAPREDUCE_MAX_CHUNKS", "12"))
+
+_MAP_PROMPT = (
+    "以下是一份長文件的第 {i}/{n} 段。請用繁體中文濃縮這一段的關鍵資訊"
+    "（論點、數據、結論），400 字以內，保留專有名詞原文。只輸出濃縮內容：\n\n{chunk}"
+)
+
+
+def condense_long_content(content: str, verbose: bool = False) -> str:
+    """長文 map-reduce：超過門檻的內容分段摘要後合併，取代硬截斷。
+    LLM 失敗時退回舊行為（截斷），絕不阻斷 ingest 主流程。"""
+    if len(content) <= MAPREDUCE_THRESHOLD:
+        return content
+    chunks = [content[i:i + MAPREDUCE_CHUNK]
+              for i in range(0, len(content), MAPREDUCE_CHUNK)][:MAPREDUCE_MAX_CHUNKS]
+    summaries = []
+    for i, chunk in enumerate(chunks, 1):
+        try:
+            s = llm_call(_MAP_PROMPT.format(i=i, n=len(chunks), chunk=chunk),
+                         max_tokens=600, system=None)
+            summaries.append(s.strip())
+            if verbose:
+                print(f"  [map-reduce] chunk {i}/{len(chunks)} → {len(s)} chars")
+        except Exception as e:
+            if verbose:
+                print(f"  [map-reduce] chunk {i} failed ({e}), falling back to truncation")
+            return content[:MAPREDUCE_THRESHOLD]
+    head = content[:800]
+    reduced = "（以下為長文件分段濃縮，原文 %d 字元）\n\n%s\n\n--- 原文開頭 ---\n%s" % (
+        len(content), "\n\n".join(summaries), head)
+    return reduced
 
 
 # ── Summary extraction ────────────────────────────────────────────────────────
