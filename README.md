@@ -65,6 +65,18 @@ mkdir -p \
   "$OPENCLAW_WORKSPACE/memory/bookmarks"
 ```
 
+Record where your data lives. The scripts locate their own code from their file
+location, so the only thing they need told is the data directory:
+
+```bash
+python3 scripts/xkb_init.py                  # prompts, defaults to the path above
+python3 scripts/xkb_init.py --show           # show what is currently resolved
+```
+
+This writes `.xkb.json` next to the scripts. It is machine-local and gitignored —
+your clone can sit anywhere, and the data can sit somewhere else entirely.
+Environment variables (`XKB_DATA_DIR`, `OPENCLAW_WORKSPACE`) still override it.
+
 ### 2. Configure an LLM
 
 If you already use OpenClaw, select any model available to your OpenClaw installation in `config/llm.json`.
