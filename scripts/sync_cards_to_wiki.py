@@ -172,8 +172,20 @@ def load_search_items() -> list[dict]:
 
 
 def load_topic_map() -> dict:
+    """回傳分類對應，並把標籤規則掛在 `__tags__` 這個保留鍵下。
+
+    標籤規則不能放進 mapping 本身——那個 dict 是用分類名稱查的，
+    混進去會讓某個叫 "seedance" 的分類意外命中標籤規則。
+    """
     raw = load_json(TOPIC_MAP_PATH)
-    return raw.get("mapping", {})  # type: ignore
+    mapping = dict(raw.get("mapping", {}))  # type: ignore
+    tag_rules = raw.get("tag_mapping", {})  # type: ignore
+    if tag_rules:
+        mapping["__tags__"] = {
+            str(k).strip().lower(): (v.get("topics", []) if isinstance(v, dict) else list(v))
+            for k, v in tag_rules.items()
+        }
+    return mapping
 
 
 def load_review_file() -> dict:
@@ -285,6 +297,24 @@ def collect_topic_existing_urls() -> dict[str, set[str]]:
     return result
 
 
+def topics_from_tags(card: Card, topic_map: dict) -> list[str]:
+    """用標籤補分類的漏。回傳對應到的主題（去重、保持順序）。
+
+    只認語意明確的標籤。像 `visual-ai`（408 張）、`prompt`（391 張）這種
+    幾乎每張卡都有的標籤刻意不對應——那不是主題，是整個知識庫的底色，
+    對應下去等於把幾百張卡片一次倒進同一頁。
+    """
+    rules = topic_map.get("__tags__", {})
+    if not rules:
+        return []
+    topics: list[str] = []
+    for tag in card.tags:
+        for topic in rules.get(str(tag).strip().lower(), []):
+            if topic not in topics:
+                topics.append(topic)
+    return topics
+
+
 def iter_mapped_cards(
     items: list[dict],
     topic_map: dict,
@@ -298,9 +328,13 @@ def iter_mapped_cards(
         if not card:
             continue
         mapping = topic_map.get(card.category)
-        if not mapping:
-            continue
-        topics = mapping.get("topics")
+        topics = mapping.get("topics") if mapping else None
+        if not topics:
+            # 分類欄位不可靠：99-general 的 125 張裡有 123 張其實可分類，
+            # inbox 的 372 張全部可分類（2026-07-29 盤點）。近 500 張卡片
+            # 因為分類是「未分類」而被擋在 wiki 之外，但它們的標籤很明確。
+            # 分類漏掉的用標籤補。
+            topics = topics_from_tags(card, topic_map)
         if not topics:
             continue
         for topic in topics:
