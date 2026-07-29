@@ -45,7 +45,9 @@ SCRIPTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from conversation_state_parser import parse as parse_state, ParseResult
-from continuity_recall import recall as continuity_recall, recall_from_wiki, format_chat as format_continuity_chat
+from continuity_recall import (recall as continuity_recall, recall_from_wiki,
+                               format_chat as format_continuity_chat,
+                               card_similarities, CARD_MIN_SIMILARITY)
 from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
 from action_recall import recall as action_recall, format_hint as format_action_hint
 
@@ -130,6 +132,39 @@ def _results_to_dicts(results: list) -> list[dict]:
 
 
 # ── Associative recall via recall_for_conversation.py ─────────────────────────
+
+
+def _drop_irrelevant_cards(query: str, results: list[dict]) -> list[dict]:
+    """用真實相似度濾掉不相關的卡片。
+
+    gbrain 回的 score 是 RRF 排名分數：它說的是「這張排第幾」，
+    不是「這張多相關」。名次第一永遠約 0.88，即使問的主題整個知識庫都沒有。
+    這裡把候選的真實餘弦相似度算出來，低於門檻就丟掉。
+
+    無法判斷時（沒有卡片索引、拿不到 embedding）原樣放行——
+    寧可多給幾筆讓 agent 自己判斷，也不要因為索引沒建好就把所有卡片濾光。
+    """
+    cards = [r for r in results if r.get("source_type") in ("card", "bookmark")]
+    if not cards:
+        return results
+
+    scores = card_similarities(query, [str(r.get("source_file", "")) for r in cards])
+    if scores is None:
+        return results
+
+    kept: list[dict] = []
+    for r in results:
+        if r.get("source_type") not in ("card", "bookmark"):
+            kept.append(r)
+            continue
+        similarity = scores.get(str(r.get("source_file", "")))
+        if similarity is None or similarity >= CARD_MIN_SIMILARITY:
+            if similarity is not None:
+                # 用真實相似度取代排名分數，這樣跨層排序才有意義
+                r["score"] = round(similarity, 3)
+            kept.append(r)
+    return kept
+
 
 def _format_assoc_chat(results: list[dict]) -> str:
     if not results:
@@ -261,6 +296,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # 就是卡片（wiki 只有十幾個 topic，卡片上千張）。原本這條路徑只查 wiki 與記憶檔，
         # 等於問「之前怎麼做的」反而查不到主要的知識來源。
         assoc_text, assoc_results = run_associative_recall(query, limit=2)
+        assoc_results = _drop_irrelevant_cards(message, assoc_results)
         assoc_results, _ = _dedup_filter_new(assoc_results)
         if assoc_results:
             result_dicts += assoc_results
@@ -319,6 +355,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             assoc_text, assoc_results = "", []
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
+            assoc_results = _drop_irrelevant_cards(message, assoc_results)
             assoc_results, _ = _dedup_filter_new(assoc_results)
 
         # Contrarian recall (supplement — max 1 result, only on high-confidence soft)

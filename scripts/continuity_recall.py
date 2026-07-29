@@ -256,6 +256,117 @@ def _load_semantic_vectors() -> dict[str, list[float]]:
     return _VECTORS
 
 
+_CARD_KEYS: dict[str, int] | None = None
+_CARD_DIMS = 0
+
+# 卡片相關度下限。gbrain 回的是 RRF 排名分數，不是相關度——
+# 名次第一永遠約 0.88，即使整個知識庫裡沒有一張卡跟問題有關。
+# 實測「量子力學的波函數塌縮」（知識庫裡完全沒有的主題）照樣拿到 0.855，
+# 而且第一名是一段 Bilibili 導覽選單的爬蟲殘渣。
+#
+# 換成真實餘弦相似度後兩者分得很開（2026-07-29 實測，各取前三名）：
+#     seedance 工作流程        0.60 0.64 0.67
+#     gpt image 2 人像 prompt  0.66 0.74 0.65
+#     碳盤查                   0.49 0.48 0.51
+#     量子力學的波函數塌縮      0.49 0.50 0.57
+#     幫我訂明天的餐廳          0.47 0.48 0.53
+# 相關的落在 0.60~0.74，不相關的落在 0.47~0.57，門檻取中間。
+CARD_MIN_SIMILARITY = float(os.getenv("XKB_CARD_MIN_SIMILARITY", "0.58"))
+
+
+def _card_index_paths() -> tuple[Path, Path]:
+    meta = Path(os.getenv("XKB_CARDS_INDEX",
+                          str(xkb_paths.BOOKMARKS_DIR / "cards_index.json")))
+    return meta, meta.with_suffix(".bin")
+
+
+def _find_card_row(key: str) -> int | None:
+    """同一張卡在不同來源有不同前綴，比對時要把它們對起來。
+
+    索引鍵是 `01-openclaw-workflows/X.md` 或 `memory/cards/X.md`，
+    gbrain 回的是 `cards/01-openclaw-workflows/X.md`。
+    直接字串比對永遠對不上——而對不上的後果是靜默的：
+    算不出相似度就不過濾，等於這個功能沒生效卻沒人知道。
+    """
+    assert _CARD_KEYS is not None
+    if key in _CARD_KEYS:
+        return _CARD_KEYS[key]
+
+    stem = key
+    for prefix in ("cards/", "memory/cards/", "memory/"):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix):]
+            break
+    for candidate in (stem, f"cards/{stem}", f"memory/cards/{stem}"):
+        if candidate in _CARD_KEYS:
+            return _CARD_KEYS[candidate]
+
+    # 論點級向量的鍵是 relpath#kpN，卡片級找不到時取第一條論點
+    for candidate in (key, stem):
+        row = next((i for k, i in _CARD_KEYS.items() if k.startswith(f"{candidate}#")), None)
+        if row is not None:
+            return row
+
+    # 最後退路：只比對檔名。分類目錄改過名時仍能對上。
+    name = stem.rsplit("/", 1)[-1]
+    return next((i for k, i in _CARD_KEYS.items() if k.rsplit("/", 1)[-1] == name), None)
+
+
+def lookup_card_vectors(keys: list[str]) -> dict[str, list[float]]:
+    """只取指定卡片的向量，用 seek 讀單筆。
+
+    卡片有 6,000 多個向量、100MB，全部載入要好幾秒——但我們只需要驗證
+    gbrain 挑出來的那三五張。定長記錄的好處就是可以直接算出位移，
+    讀 12KB 而不是 100MB。
+    """
+    global _CARD_KEYS, _CARD_DIMS
+    meta_path, bin_path = _card_index_paths()
+    if _CARD_KEYS is None:
+        _CARD_KEYS = {}
+        try:
+            with meta_path.open(encoding="utf-8") as fh:
+                meta = json.load(fh)
+            _CARD_DIMS = int(meta["dims"])
+            _CARD_KEYS = {k: i for i, k in enumerate(meta["keys"])}
+        except (OSError, ValueError, KeyError):
+            _CARD_KEYS = {}
+    if not _CARD_KEYS or not bin_path.exists():
+        return {}
+
+    import array
+    row_bytes = _CARD_DIMS * 4
+    out: dict[str, list[float]] = {}
+    try:
+        with bin_path.open("rb") as fh:
+            for key in keys:
+                row = _find_card_row(key)
+                if row is None:
+                    continue
+                fh.seek(row * row_bytes)
+                chunk = fh.read(row_bytes)
+                if len(chunk) != row_bytes:
+                    continue
+                vec = array.array("f")
+                vec.frombytes(chunk)
+                out[key] = vec.tolist()
+    except OSError:
+        return {}
+    return out
+
+
+def card_similarities(query: str, keys: list[str]) -> dict[str, float] | None:
+    """回傳每張卡片與問題的真實相似度。None 代表無法判斷（不該據此過濾）。"""
+    if not keys:
+        return {}
+    vectors = lookup_card_vectors(keys)
+    if not vectors:
+        return None
+    query_vector = _embed_query(query)
+    if query_vector is None:
+        return None
+    return {k: _cosine(query_vector, v) for k, v in vectors.items()}
+
+
 def _load_embedding_env() -> None:
     """把 openclaw.json 裡的 embedding 設定補進環境變數（已存在的不覆蓋）。"""
     path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))

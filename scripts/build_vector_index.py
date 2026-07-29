@@ -43,6 +43,10 @@ VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
 # 但它們混在 8,000 多個卡片向量裡，載入整個 62MB 檔案要 5.4 秒——
 # 而召回是每句話都要跑的。分開存之後只需要載入十分之一。
 SEMANTIC_FILE = BOOKMARKS_DIR / "semantic_index.json"
+# 卡片向量另存一份。它不像 wiki/記憶檔那樣要整份掃過——
+# 卡片是先由 gbrain 挑出候選，我們只需要驗證那幾張的相關度，
+# 所以讀取端用 seek 取單筆，不必把整份載進來。
+CARDS_FILE = BOOKMARKS_DIR / "cards_index.json"
 
 
 # ── Text extraction ───────────────────────────────────────────────────────────
@@ -388,6 +392,13 @@ def main() -> int:
         semantic_path = Path(os.getenv("XKB_SEMANTIC_INDEX", str(SEMANTIC_FILE)))
         write_semantic_index(semantic_vectors, semantic_path)
         print(f"✅ Saved {len(semantic_vectors)} semantic vectors → {semantic_path.with_suffix('.bin')}")
+
+    card_vectors = {k: v for k, v in output.get("vectors", {}).items()
+                    if k not in semantic_vectors}
+    if card_vectors:
+        cards_path = Path(os.getenv("XKB_CARDS_INDEX", str(CARDS_FILE)))
+        write_semantic_index(card_vectors, cards_path)
+        print(f"✅ Saved {len(card_vectors)} card vectors → {cards_path.with_suffix('.bin')}")
 
     print(f"\n✅ Saved {len(new_vectors)} vectors → {vector_path}")
     print(f"   Provider : {output['meta']['provider']} / {output['meta']['model']}")
