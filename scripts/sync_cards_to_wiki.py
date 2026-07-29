@@ -415,7 +415,16 @@ def update_topic_file(
         return False, f"skip {topic}: not seeded yet"
 
     content = path.read_text(encoding="utf-8")
-    frontmatter, body = parse_frontmatter(content)
+    try:
+        frontmatter, body = parse_frontmatter(content)
+    except ValueError:
+        # 一個頁面沒有 frontmatter，不該讓整輪吸收全部中斷。
+        # 實際遇到的是 redirect 頁（gpt-image-2-private-taxonomy、
+        # visual-ai-workflow-node-catalog 都只寫著「Redirect: 視覺 AI 私有軍火庫」），
+        # 它們不是吸收目標，往裡面寫等於寫進一個沒人會讀的殼。
+        return False, f"skip {topic}: 缺 frontmatter（redirect 或未初始化的頁面）"
+    if "Redirect:" in content[:200]:
+        return False, f"skip {topic}: 是 redirect 頁，內容應寫進它指向的主題"
     existing_urls = parse_existing_sources(content)
     new_cards = [c for c in approved_cards if c.url not in existing_urls]
     if not new_cards:
