@@ -9,7 +9,6 @@
         "agent swarm",
         "subagent",
         "mission control",
-        "memory",
         "mcp",
         "obsidian",
         "notebooklm",
@@ -17,7 +16,12 @@
         "automation workflow",
         "agent workflow",
         "claude code",
-        "codex"
+        "codex",
+        "代理",
+        "智能體",
+        "工作流",
+        "編排",
+        "多代理"
       ]
     },
     {
@@ -28,19 +32,18 @@
         "aeo",
         "ai seo",
         "search optimization",
-        "google",
         "discover",
         "ranking",
-        "traffic",
         "keyword",
         "serp",
         "chatgpt seo",
         "search console",
         "backlink",
-        "行銷",
         "排名",
-        "流量",
-        "關鍵字"
+        "關鍵字",
+        "搜尋優化",
+        "關鍵字排名",
+        "生成式引擎"
       ]
     },
     {
@@ -53,17 +56,17 @@
         "cinema",
         "storyboard",
         "shot",
-        "prompt",
-        "prompts",
         "json prompt",
-        "visual",
         "image to video",
         "影片",
         "視頻",
         "短劇",
         "分鏡",
-        "提示詞",
-        "生成"
+        "短片",
+        "運鏡",
+        "鏡頭",
+        "剪輯",
+        "動畫"
       ]
     },
     {
@@ -71,40 +74,30 @@
       "keywords": [
         "agent",
         "ai agent",
-        "tool",
-        "tools",
         "skill",
         "skills",
         "cursor",
         "kimi",
-        "claude",
         "opus",
-        "gemini",
         "banana",
         "xhunt",
-        "reader",
-        "dashboard",
         "automation",
-        "frontend",
-        "ui",
-        "coding",
         "vibe coding",
         "ai工具",
-        "工具",
         "代理",
-        "技能"
+        "技能",
+        "外掛",
+        "推論"
       ]
     },
     {
       "category": "05-startup-business",
       "keywords": [
         "startup",
-        "business",
         "saas",
         "revenue",
         "founder",
         "marketing",
-        "growth",
         "sales",
         "lead gen",
         "lead generation",
@@ -112,12 +105,37 @@
         "monetize",
         "profit",
         "創業",
-        "商業",
         "營收",
         "定價",
-        "成長",
-        "銷售"
+        "銷售",
+        "商業模式",
+        "募資"
+      ]
+    },
+    {
+      "category": "06-visual-ai-prompts",
+      "keywords": [
+        "gpt-image",
+        "gpt image",
+        "midjourney",
+        "nano banana",
+        "flux",
+        "image generation",
+        "text-to-image",
+        "prompt library",
+        "圖像生成",
+        "生圖",
+        "出圖",
+        "提示詞",
+        "海報",
+        "插畫",
+        "視覺",
+        "構圖",
+        "配色",
+        "設定卡",
+        "角色一致性"
       ]
     }
-  ]
+  ],
+  "note": "規則由具體到泛用排序，先命中即停。刻意不放 prompt / visual / 工具 / 記憶 這類幾乎每張卡都有的字——它們不是主題，是知識庫的底色，放進任何分類都會讓那個分類變成萬用桶。"
 }
