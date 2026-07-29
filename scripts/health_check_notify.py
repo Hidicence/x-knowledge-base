@@ -124,6 +124,7 @@ def main() -> int:
         hc.check_recall_live(),
         hc.check_recall_telemetry(),
         hc.check_semantic_index(),
+        hc.check_topic_map(),
         hc.check_staging_backlog(),
         hc.check_index_freshness(),
     ]

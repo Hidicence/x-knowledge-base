@@ -232,6 +232,53 @@ def check_semantic_index() -> dict:
     return result
 
 
+def check_topic_map() -> dict:
+    """卡片→wiki 的對應表是不是真的在對應東西。
+
+    2026-05-04 的 productization cleanup 把真實對應表換成了 repo 裡的範本
+    （your-category-slug → your-wiki-topic-slug）。之後 sync_cards_to_wiki
+    每次都回報「No mapped cards found」就結束，離開碼 0，看起來完全正常——
+    卡片進 wiki 這條路空轉了三個月沒有人發現。
+
+    範本值是可以直接認出來的，認出來就該報錯。
+    """
+    result = {"name": "topic_map", "checks": []}
+    path = WIKI_DIR / "topic-map.json"
+
+    if not path.exists():
+        result["checks"].append({"ok": False, "msg": f"topic-map.json not found: {path}"})
+        return result
+
+    try:
+        with path.open(encoding="utf-8") as fh:
+            mapping = (json.load(fh) or {}).get("mapping", {})
+    except (OSError, ValueError) as exc:
+        result["checks"].append({"ok": False, "msg": f"topic-map unreadable: {exc}"})
+        return result
+
+    placeholders = {"your-category-slug", "another-category", "topic-a", "topic-b",
+                    "your-wiki-topic-slug"}
+    found = [k for k in mapping if k in placeholders]
+    if found:
+        result["checks"].append({
+            "ok": False,
+            "msg": f"topic-map 仍是範本（{', '.join(found)}）— 卡片無法進 wiki，這條路等於停擺",
+        })
+        return result
+
+    # 對應到的主題必須真的存在，否則吸收時會寫到不存在的頁面
+    topics = {p.stem for p in WIKI_TOPICS_DIR.glob("*.md")} if WIKI_TOPICS_DIR.exists() else set()
+    dangling = sorted({t for v in mapping.values()
+                       for t in (v.get("topics", []) if isinstance(v, dict) else [])
+                       if t not in topics})
+    result["checks"].append({
+        "ok": bool(mapping) and not dangling,
+        "msg": f"topic-map: {len(mapping)} 個分類對應"
+               + ("" if not dangling else f" — 指向不存在的主題: {', '.join(dangling)}"),
+    })
+    return result
+
+
 def check_staging_backlog() -> dict:
     """待審候選有沒有在無聲累積。
 
@@ -358,6 +405,7 @@ def main() -> int:
         check_recall_live(),
         check_recall_telemetry(),
         check_semantic_index(),
+        check_topic_map(),
         check_staging_backlog(),
         check_index_freshness(),
     ]

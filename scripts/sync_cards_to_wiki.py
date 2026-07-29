@@ -50,6 +50,10 @@ REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
 SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 
 _llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
+# 閘門判斷失敗的次數。這個數字必須在跑完時被看見——
+# 2026-04 的紀錄顯示 123 筆決策有 120 筆是 LLM 失敗後直接放行，
+# 而當時沒有任何輸出提到這件事。
+_llm_failures = 0
 
 
 @dataclass
@@ -134,7 +138,19 @@ def llm_absorb_judgment(
         reason = str(parsed.get("reason", ""))
         result = (include, dimension, reason)
     except Exception as e:
-        result = (True, "new_case", f"[llm_error: {e}] fallback include")
+        # 判斷不了就不放行。
+        #
+        # 原本這裡是 `(True, "new_case", "fallback include")`——閘門遇到錯誤
+        # 選擇放行。實際後果：review-decisions.json 裡 123 筆決策有 120 筆是
+        # `[llm_error: HTTP Error 401: Unauthorized] fallback include`，
+        # 也就是 120 張卡片沒經過任何判斷就進了 wiki。而真的判斷過的那 3 筆
+        # 全部判 skip——閘門是有效的，只是它幾乎沒被執行過。
+        #
+        # 品質閘門在故障時放行，等於閘門不存在，而且沒有人會發現。
+        # 改成不放行，並把失敗計數往上報，讓這件事在跑完時看得見。
+        global _llm_failures
+        _llm_failures += 1
+        result = (False, "none", f"[llm_error: {e}] gate unavailable, not absorbed")
 
     _llm_cache[cache_key] = result
     return result
@@ -796,6 +812,13 @@ def main() -> int:
         if args.apply and decision_records:
             save_absorb_decisions(decision_records)
         print("\nNo topics needed updates.")
+
+    if _llm_failures:
+        # 大聲說出來，並用離開碼讓排程也知道。
+        # 這些卡片本次沒有被吸收，但它們還在——LLM 恢復後重跑會再評一次。
+        print(f"\n⚠️  吸收閘門有 {_llm_failures} 次判斷失敗（LLM 不可用）。"
+              f"\n    這些卡片本次未吸收，等 LLM 恢復後重跑即可。")
+        return 2
 
     return 0
 
