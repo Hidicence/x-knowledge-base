@@ -64,6 +64,13 @@ def _call_gemini(key: str, prompt: str, retries: int = 3) -> str:
 
 
 def _embed(key: str, text: str) -> list[float]:
+    """單筆 embedding。目前沒有呼叫端——分析一律沿用 build_vector_index 的成果。
+
+    要重新啟用前先注意：這裡用的是 text-embedding-004（768 維），
+    而索引是 gemini-embedding-2-preview（3072 維）。兩者混用時
+    cosine_similarity 的 zip() 會直接截斷到較短的那個，不會拋錯，
+    只會算出無意義的分數——又是一個安靜出錯的路徑。
+    """
     payload = json.dumps({"model": "models/text-embedding-004", "content": {"parts": [{"text": text[:2000]}]}}).encode()
     url = f"{GEMINI_EMBED_URL}?key={key}"
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -92,22 +99,46 @@ def load_cards(category: str | None) -> list[dict]:
 
 # ── 1. Conflict Detection ─────────────────────────────────────────────────────
 
+def load_card_embeddings(cards: list[dict]) -> tuple[list, int]:
+    """沿用 build_vector_index 已經算好的向量。回傳 (embeddings, 命中數)。
+
+    這支原本對每張有 summary 的卡片重打一次 embedding API——1,300 次呼叫、
+    約 13 分鐘，然後跑完就丟掉。但那些向量 build_vector_index 早就算過並存起來了。
+    分析工具的職責是「用既有的成果做判斷」，不是把產生成果的過程重跑一遍。
+
+    索引裡沒有的卡片回 None，由呼叫端決定要不要補算——寧可少算幾張，
+    也不要每次分析都重跑整個嵌入流程。
+    """
+    vectors: dict = {}
+    try:
+        with xkb_paths.VECTOR_FILE.open(encoding="utf-8") as fh:
+            vectors = json.load(fh).get("vectors", {})
+    except (OSError, ValueError):
+        pass
+
+    embeddings = []
+    hits = 0
+    for card in cards:
+        key_path = card.get("relative_path") or card.get("path") or ""
+        vec = vectors.get(key_path)
+        if vec is None:
+            # 論點級向量的鍵是 relpath#kpN，卡片級找不到時退而求其次
+            vec = next((v for k, v in vectors.items()
+                        if k.startswith(f"{key_path}#")), None)
+        embeddings.append(vec)
+        hits += 1 if vec is not None else 0
+    return embeddings, hits
+
+
 def detect_conflicts(cards: list[dict], key: str, threshold: float = 0.82) -> list[dict]:
     """Find pairs with high semantic similarity, then check for conflicts."""
-    print(f"\n📊 衝突偵測：嵌入 {len(cards)} 張 cards...")
-
-    # Get embeddings for summaries
-    embeddings = []
-    for i, card in enumerate(cards):
-        summary = card.get("summary", "")[:500]
-        try:
-            emb = _embed(key, summary)
-            embeddings.append(emb)
-            if (i + 1) % 10 == 0:
-                print(f"   {i+1}/{len(cards)} embedded...")
-            time.sleep(0.1)  # Rate limit
-        except Exception as e:
-            embeddings.append(None)
+    embeddings, hits = load_card_embeddings(cards)
+    print(f"\n📊 衝突偵測：{len(cards)} 張 cards，沿用既有向量 {hits} 張")
+    if hits == 0:
+        print("   索引裡沒有可用向量——先跑 build_vector_index.py")
+        return []
+    if hits < len(cards):
+        print(f"   {len(cards) - hits} 張不在索引裡，本次略過（重跑 build_vector_index.py --incremental 可補上）")
 
     # Find high-similarity pairs
     similar_pairs = []

@@ -309,17 +309,23 @@ def check_index_freshness() -> dict:
         "msg": f"search_index last updated: {age_hours:.1f}h ago"
     })
 
-    # vector_index
+    # vector_index：檢查新鮮度就好，不要把 62MB 讀進來數個數。
+    # 健檢是每天自動跑的，成本要跟「確認狀態」相稱，不是重做一次工作。
+    # 原本 json.loads 整份檔案在 VPS 上要 7 秒（冷快取時更久），
+    # 而它換來的只是一個向量數字——那個數字在 semantic_index.json 的 meta 裡就有。
     if not VECTOR_FILE.exists():
-        result["checks"].append({"ok": False, "msg": "vector_index.json not found — semantic recall disabled"})
-    else:
-        vdata = json.loads(VECTOR_FILE.read_text(encoding="utf-8"))
-        vectors = vdata.get("vectors", {})
-        v_mtime = VECTOR_FILE.stat().st_mtime
-        v_age_hours = (datetime.now().timestamp() - v_mtime) / 3600
+        # 語意召回讀的是 semantic_index.bin，不是這一份。
+        # 這份只是重建索引時的中間產物，缺了不影響召回。
         result["checks"].append({
-            "ok": len(vectors) > 0 and v_age_hours < 26,
-            "msg": f"vector_index: {len(vectors)} vectors, last updated {v_age_hours:.1f}h ago"
+            "ok": True,
+            "msg": "vector_index.json absent — 召回讀 semantic_index，此檔僅為重建用中間產物",
+        })
+    else:
+        size_mb = VECTOR_FILE.stat().st_size / 1e6
+        v_age_hours = (datetime.now().timestamp() - VECTOR_FILE.stat().st_mtime) / 3600
+        result["checks"].append({
+            "ok": size_mb > 0.1 and v_age_hours < 26,
+            "msg": f"vector_index: {size_mb:.0f}MB, last updated {v_age_hours:.1f}h ago"
         })
 
     # cards vs index coverage
