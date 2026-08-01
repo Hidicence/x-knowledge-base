@@ -52,7 +52,7 @@ def files_for(root: Path) -> list[Path]:
 
 
 def source_kind(path: Path) -> str:
-    s = str(path)
+    s = path.as_posix()
     if "/_staging/" in s:
         return "wiki_staging"
     if "/dreaming/" in s:
