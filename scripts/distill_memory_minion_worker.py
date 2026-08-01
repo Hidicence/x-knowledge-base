@@ -170,6 +170,8 @@ def process_job(job, conn):
 
     content = memory_path.read_text(encoding="utf-8")
     cleaned = distill.extract_conversation_content(content)
+    print(f"[worker] source_date={data['source_date']} raw_chars={len(content)} cleaned_chars={len(cleaned)}", flush=True)
+
     # The scheduled path creates chunk jobs directly, so it must explicitly
     # include the same immutable L1 snapshots as the standalone distiller.
     # Keep the source date boundary to avoid mixing separate daily runs.
@@ -181,7 +183,6 @@ def process_job(job, conn):
     if l1_entries:
         cleaned = "\n\n".join([cleaned, *l1_entries]).strip()
         print(f"[worker] source_date={data['source_date']} included_l1_snapshots={len(l1_entries)}", flush=True)
-    print(f"[worker] source_date={data['source_date']} raw_chars={len(content)} cleaned_chars={len(cleaned)}", flush=True)
     chunks = [cleaned[i:i + distill.CHUNK_SIZE] for i in range(0, max(len(cleaned), 1), distill.CHUNK_SIZE) if cleaned[i:i + distill.CHUNK_SIZE].strip()]
     runtime_dir = RUNTIME_DIR / data["source_date"]
     runtime_dir.mkdir(parents=True, exist_ok=True)
