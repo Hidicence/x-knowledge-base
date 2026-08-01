@@ -21,9 +21,13 @@ import os
 import re
 from collections import Counter
 from datetime import datetime, timezone
+import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(WORKSPACE / "memory" / "x-knowledge-base" / "wiki")))
 TOPICS_DIR = WIKI_DIR / "topics"

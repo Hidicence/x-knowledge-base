@@ -19,14 +19,23 @@ import subprocess
 import sys
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
 
-# Dual-mode path resolution:
+WORKSPACE = xkb_paths.WORKSPACE
+
+# Router resolution, most reliable first:
+# - Sibling:      the router always ships next to this file, whatever OPENCLAW_WORKSPACE
+#                 points at. Required when code and data live in different trees, which
+#                 is what the README's MCP setup actually produces.
 # - Local/direct: OPENCLAW_WORKSPACE = repo root  → WORKSPACE/scripts/recall_router.py
 # - OpenClaw:     OPENCLAW_WORKSPACE = ~/.openclaw/workspace → WORKSPACE/skills/x-knowledge-base/scripts/recall_router.py
-_direct = WORKSPACE / "scripts" / "recall_router.py"
-_oc = WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py"
-ROUTER_SCRIPT = _direct if _direct.exists() else _oc
+_candidates = [
+    Path(__file__).resolve().parent / "recall_router.py",
+    WORKSPACE / "scripts" / "recall_router.py",
+    WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py",
+]
+ROUTER_SCRIPT = next((p for p in _candidates if p.exists()), _candidates[-1])
 
 SERVER_INFO = {
     "name": "xkb-recall",
@@ -41,9 +50,17 @@ TOOL_DEF = {
         "personal knowledge base (XKB). Topics include but are not limited to: projects, strategies, "
         "decisions, how-to questions, case studies, roadmaps, people, tools, workflows, AI, SEO, startups, "
         "products, or any domain the user works in. "
-        "Returns relevant excerpts from MEMORY.md, wiki topics, or knowledge cards if a match is found. "
+        "Returns excerpts from MEMORY.md, wiki topics, or knowledge cards. "
         "Returns empty string for purely casual chat (greetings, weather, jokes). "
-        "The router decides internally whether recall is needed — you just call it and use the result."
+        "The router decides internally whether recall is needed — you just call it. "
+        "\n\n"
+        "IMPORTANT — the results are CANDIDATES, not an answer. They come from keyword and "
+        "vector matching, which is cheap and runs on every message but cannot judge whether a "
+        "result is actually about what the user asked. That judgement is yours: read each "
+        "candidate and silently drop the ones that are not genuinely related. "
+        "Surfacing an unrelated card as if it were the user's own knowledge is worse than "
+        "returning nothing — it makes the knowledge base look wrong. "
+        "Use `relevance` and `unified_score` in the metadata as hints, never as a verdict."
     ),
     "inputSchema": {
         "type": "object",
@@ -58,12 +75,32 @@ TOOL_DEF = {
 }
 
 
+# A router failure and an honest "nothing matched" used to be indistinguishable:
+# both surfaced as results=[]. That turned a missing-import bug into a 12-week
+# silent outage (2026-05-04 → 2026-07-26). Every return path now carries an
+# explicit `status`, and failures say so loudly enough for the agent to repeat
+# it back to the user.
+def _empty(status: str = "ok", error: str = "") -> dict:
+    return {"trigger_class": "suppress", "state": "suppress", "delivery_mode": "none",
+            "results": [], "confidence": 0.0, "formatted_text": "", "query": "",
+            "status": status, "error": error}
+
+
+def _failure(reason: str) -> dict:
+    """A recall that could not run at all — never mistakable for 'no results'."""
+    return {**_empty("failed", reason),
+            "formatted_text": (
+                "【XKB 知識庫查詢失敗】\n"
+                f"原因:{reason}\n"
+                "注意:這不代表知識庫沒有相關內容,而是查詢本身沒有執行成功。"
+                "請明確告訴使用者這次回答並未使用知識庫。"
+            )}
+
+
 def _run_recall_structured(message: str) -> dict:
     """Call recall_router.py --json and return structured result."""
-    empty = {"trigger_class": "suppress", "state": "suppress", "delivery_mode": "none",
-             "results": [], "confidence": 0.0, "formatted_text": "", "query": ""}
     if not ROUTER_SCRIPT.exists():
-        return {**empty, "formatted_text": f"[xkb_recall] router not found at {ROUTER_SCRIPT}"}
+        return _failure(f"router not found at {ROUTER_SCRIPT}")
     try:
         result = subprocess.run(
             [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
@@ -75,11 +112,24 @@ def _run_recall_structured(message: str) -> dict:
             env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
                  "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         )
-        return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return empty
+        return _failure("router timed out after 30s")
     except Exception as e:
-        return {**empty, "formatted_text": f"[xkb_recall error: {e}]"}
+        return _failure(f"router could not be launched: {e}")
+
+    if result.returncode != 0:
+        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
+        return _failure(f"router exited {result.returncode}: {stderr_tail or 'no stderr'}")
+
+    try:
+        structured = json.loads(result.stdout)
+    except Exception as e:
+        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
+        return _failure(f"router returned unparseable output ({e}): {stderr_tail or 'no stderr'}")
+
+    structured.setdefault("status", "ok")
+    structured.setdefault("error", "")
+    return structured
 
 
 def _respond(req_id, result=None, error=None):
@@ -138,13 +188,21 @@ def handle(req: dict):
         structured = _run_recall_structured(message)
         # formatted_text for human-readable context injection
         text_output = structured.get("formatted_text", "")
+        # 提示放在回傳內容裡，不只放在 tool description——description 可能被截斷或忽略，
+        # 而這句話決定了 agent 會不會把不相關的卡片當成使用者的知識講出來。
+        if text_output:
+            text_output = (
+                "（以下是候選，不是答案。撈取用的是關鍵字與向量比對，判斷不了語意相關性——"
+                "請自行略過與問題無關的項目，不要當成使用者的知識引用。）\n\n"
+                + text_output
+            )
         # Full structured data as JSON annotation (agent can use it for routing decisions)
         _respond(req_id, {
             "content": [
                 {"type": "text", "text": text_output},
                 {"type": "text", "text": f"[xkb_recall_meta] {json.dumps(structured, ensure_ascii=False)}"},
             ],
-            "isError": False,
+            "isError": structured.get("status") == "failed",
         })
         return
 

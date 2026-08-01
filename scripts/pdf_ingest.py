@@ -32,8 +32,11 @@ except ImportError:
     print("Error: pymupdf not installed. Run: pip install pymupdf --break-system-packages")
     sys.exit(1)
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
-SCRIPTS_DIR = WORKSPACE / "skills" / "x-knowledge-base" / "scripts"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
+SCRIPTS_DIR = xkb_paths.SCRIPTS_DIR
 
 def _get_gemini_key() -> str:
     cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))

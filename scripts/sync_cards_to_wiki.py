@@ -32,9 +32,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
+WIKI_DIR = xkb_paths.WIKI_DIR
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))
@@ -47,6 +50,10 @@ REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
 SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 
 _llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
+# 閘門判斷失敗的次數。這個數字必須在跑完時被看見——
+# 2026-04 的紀錄顯示 123 筆決策有 120 筆是 LLM 失敗後直接放行，
+# 而當時沒有任何輸出提到這件事。
+_llm_failures = 0
 
 
 @dataclass
@@ -68,7 +75,7 @@ SOURCES_SECTION_RE = re.compile(r"\n## 來源\n(.*)$", re.DOTALL)
 # LLM helpers
 # ---------------------------------------------------------------------------
 
-def _call_minimax(api_key: str, system: str, user: str) -> str:
+def _call_configured_llm(api_key: str, system: str, user: str) -> str:
     return _llm_backend(system, user)
 
 
@@ -109,7 +116,7 @@ def llm_absorb_judgment(
     )
 
     try:
-        response = _call_minimax(api_key, system, user)
+        response = _call_configured_llm(api_key, system, user)
         # Strip <think>...</think> blocks if present
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
         # Extract JSON with greedy match (handles full object)
@@ -131,7 +138,19 @@ def llm_absorb_judgment(
         reason = str(parsed.get("reason", ""))
         result = (include, dimension, reason)
     except Exception as e:
-        result = (True, "new_case", f"[llm_error: {e}] fallback include")
+        # 判斷不了就不放行。
+        #
+        # 原本這裡是 `(True, "new_case", "fallback include")`——閘門遇到錯誤
+        # 選擇放行。實際後果：review-decisions.json 裡 123 筆決策有 120 筆是
+        # `[llm_error: HTTP Error 401: Unauthorized] fallback include`，
+        # 也就是 120 張卡片沒經過任何判斷就進了 wiki。而真的判斷過的那 3 筆
+        # 全部判 skip——閘門是有效的，只是它幾乎沒被執行過。
+        #
+        # 品質閘門在故障時放行，等於閘門不存在，而且沒有人會發現。
+        # 改成不放行，並把失敗計數往上報，讓這件事在跑完時看得見。
+        global _llm_failures
+        _llm_failures += 1
+        result = (False, "none", f"[llm_error: {e}] gate unavailable, not absorbed")
 
     _llm_cache[cache_key] = result
     return result
@@ -153,8 +172,20 @@ def load_search_items() -> list[dict]:
 
 
 def load_topic_map() -> dict:
+    """回傳分類對應，並把標籤規則掛在 `__tags__` 這個保留鍵下。
+
+    標籤規則不能放進 mapping 本身——那個 dict 是用分類名稱查的，
+    混進去會讓某個叫 "seedance" 的分類意外命中標籤規則。
+    """
     raw = load_json(TOPIC_MAP_PATH)
-    return raw.get("mapping", {})  # type: ignore
+    mapping = dict(raw.get("mapping", {}))  # type: ignore
+    tag_rules = raw.get("tag_mapping", {})  # type: ignore
+    if tag_rules:
+        mapping["__tags__"] = {
+            str(k).strip().lower(): (v.get("topics", []) if isinstance(v, dict) else list(v))
+            for k, v in tag_rules.items()
+        }
+    return mapping
 
 
 def load_review_file() -> dict:
@@ -266,6 +297,24 @@ def collect_topic_existing_urls() -> dict[str, set[str]]:
     return result
 
 
+def topics_from_tags(card: Card, topic_map: dict) -> list[str]:
+    """用標籤補分類的漏。回傳對應到的主題（去重、保持順序）。
+
+    只認語意明確的標籤。像 `visual-ai`（408 張）、`prompt`（391 張）這種
+    幾乎每張卡都有的標籤刻意不對應——那不是主題，是整個知識庫的底色，
+    對應下去等於把幾百張卡片一次倒進同一頁。
+    """
+    rules = topic_map.get("__tags__", {})
+    if not rules:
+        return []
+    topics: list[str] = []
+    for tag in card.tags:
+        for topic in rules.get(str(tag).strip().lower(), []):
+            if topic not in topics:
+                topics.append(topic)
+    return topics
+
+
 def iter_mapped_cards(
     items: list[dict],
     topic_map: dict,
@@ -279,9 +328,13 @@ def iter_mapped_cards(
         if not card:
             continue
         mapping = topic_map.get(card.category)
-        if not mapping:
-            continue
-        topics = mapping.get("topics")
+        topics = mapping.get("topics") if mapping else None
+        if not topics:
+            # 分類欄位不可靠：99-general 的 125 張裡有 123 張其實可分類，
+            # inbox 的 372 張全部可分類（2026-07-29 盤點）。近 500 張卡片
+            # 因為分類是「未分類」而被擋在 wiki 之外，但它們的標籤很明確。
+            # 分類漏掉的用標籤補。
+            topics = topics_from_tags(card, topic_map)
         if not topics:
             continue
         for topic in topics:
@@ -362,7 +415,16 @@ def update_topic_file(
         return False, f"skip {topic}: not seeded yet"
 
     content = path.read_text(encoding="utf-8")
-    frontmatter, body = parse_frontmatter(content)
+    try:
+        frontmatter, body = parse_frontmatter(content)
+    except ValueError:
+        # 一個頁面沒有 frontmatter，不該讓整輪吸收全部中斷。
+        # 實際遇到的是 redirect 頁（gpt-image-2-private-taxonomy、
+        # visual-ai-workflow-node-catalog 都只寫著「Redirect: 視覺 AI 私有軍火庫」），
+        # 它們不是吸收目標，往裡面寫等於寫進一個沒人會讀的殼。
+        return False, f"skip {topic}: 缺 frontmatter（redirect 或未初始化的頁面）"
+    if "Redirect:" in content[:200]:
+        return False, f"skip {topic}: 是 redirect 頁，內容應寫進它指向的主題"
     existing_urls = parse_existing_sources(content)
     new_cards = [c for c in approved_cards if c.url not in existing_urls]
     if not new_cards:
@@ -793,6 +855,13 @@ def main() -> int:
         if args.apply and decision_records:
             save_absorb_decisions(decision_records)
         print("\nNo topics needed updates.")
+
+    if _llm_failures:
+        # 大聲說出來，並用離開碼讓排程也知道。
+        # 這些卡片本次沒有被吸收，但它們還在——LLM 恢復後重跑會再評一次。
+        print(f"\n⚠️  吸收閘門有 {_llm_failures} 次判斷失敗（LLM 不可用）。"
+              f"\n    這些卡片本次未吸收，等 LLM 恢復後重跑即可。")
+        return 2
 
     return 0
 

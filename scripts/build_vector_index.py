@@ -28,26 +28,54 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Allow running from scripts/ directory or skill root
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SKILL_DIR))
 from tools.embedding_providers import get_provider
 
-WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
+# wiki/memory 的向量另外存一份小檔。召回時只需要這 ~1,900 個向量，
+# 但它們混在 8,000 多個卡片向量裡，載入整個 62MB 檔案要 5.4 秒——
+# 而召回是每句話都要跑的。分開存之後只需要載入十分之一。
+SEMANTIC_FILE = BOOKMARKS_DIR / "semantic_index.json"
+# 卡片向量另存一份。它不像 wiki/記憶檔那樣要整份掃過——
+# 卡片是先由 gbrain 挑出候選，我們只需要驗證那幾張的相關度，
+# 所以讀取端用 seek 取單筆，不必把整份載進來。
+CARDS_FILE = BOOKMARKS_DIR / "cards_index.json"
 
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
+def _resolve_md_path(item: dict) -> Path | None:
+    """索引項路徑解析：relative_path 是相對 workspace（如 memory/cards/x.md），
+    舊程式誤用 BOOKMARKS_DIR 拼接導致永遠讀不到卡片（2026-07-14 修正）。"""
+    abs_path = item.get("path") or ""
+    if abs_path and Path(abs_path).exists():
+        return Path(abs_path)
+    rel = item.get("relative_path") or ""
+    if not rel:
+        return None
+    for base in (WORKSPACE_DIR, BOOKMARKS_DIR):
+        p = base / rel
+        if p.exists():
+            return p
+    return None
+
+
 def _extract_key_points_from_md(md_path: Path) -> str:
-    """Extract the 三個重點 section from a card markdown file."""
+    """Extract the 關鍵論點/三個重點 section from a card markdown file.
+    （2026-07-14：新版 9-section 卡片段落名為「關鍵論點」，一併支援舊名）"""
     if not md_path.exists():
         return ""
     try:
         content = md_path.read_text(encoding="utf-8")
         m = re.search(
-            r'##\s+[\U00000000-\U0010FFFF]*\s*三個重點\s*\n(.+?)(?=\n##|\Z)',
+            r'##\s+[^\n]*(?:關鍵論點|三個重點)[^\n]*\n(.+?)(?=\n##|\Z)',
             content, re.DOTALL
         )
         if m:
@@ -56,6 +84,16 @@ def _extract_key_points_from_md(md_path: Path) -> str:
     except Exception:
         pass
     return ""
+
+
+def _extract_key_point_list(md_path: Path) -> list[str]:
+    """論點級 embedding（TODOS 2026-07-13）：回傳「三個重點」逐條列表，
+    每條將單獨成向量（鍵 relpath#kpN），召回粒度從卡片級升到論點級。"""
+    text = _extract_key_points_from_md(md_path)
+    if not text:
+        return []
+    points = [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 10]
+    return points[:5]
 
 
 def extract_card_text(item: dict) -> str:
@@ -67,9 +105,8 @@ def extract_card_text(item: dict) -> str:
     summary = (item.get("summary") or "").strip()
     key_points = ""
 
-    rel_path = item.get("relative_path") or item.get("path") or ""
-    if rel_path:
-        md_path = BOOKMARKS_DIR / rel_path if not rel_path.startswith("/") else Path(rel_path)
+    md_path = _resolve_md_path(item)
+    if md_path:
         if not summary:
             summary = _extract_summary_from_md(md_path)
         key_points = _extract_key_points_from_md(md_path)
@@ -124,6 +161,95 @@ def save_vector_index(data: dict, path: Path) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+# ── Wiki sections ─────────────────────────────────────────────────────────────
+
+# 一段太短的內容嵌入後幾乎沒有訊息量，只會製造假命中
+MIN_SECTION_CHARS = 80
+# 一段太長會把主題稀釋掉，超過就截斷
+MAX_SECTION_CHARS = 4000
+
+
+def knowledge_section_docs() -> list[tuple[str, str, str]]:
+    """把 wiki 主題頁與記憶檔切段，每段一個向量。回傳 [(key, text, hash)]。
+
+    為什麼要做這件事：向量索引原本只涵蓋卡片。wiki——也就是使用者自己消化過、
+    訊號密度最高的那一層——完全沒有語意搜尋，只能靠字串比對撈。
+    中文沒有空格，字串比對本來就弱，於是「我們之前怎麼處理碳盤查的」會撈回
+    一堆只命中「之前」「怎麼」「處理」的無關結果。那不是門檻調不好，
+    是那一層根本沒有語意能力。
+
+    切到「段」而不是整頁：一頁 680K 的主題頁嵌成單一向量，等於什麼都不像。
+    """
+    sources: list[tuple[Path, str]] = []
+    if xkb_paths.WIKI_TOPICS_DIR.exists():
+        sources += [(p, "wiki/topics") for p in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))]
+    # 記憶檔也要語意化：hard trigger（「我們之前怎麼…」）查的就是這一層，
+    # 而它原本同樣只有字串比對，靠功能詞就能命中。
+    if xkb_paths.DATA_DIR.exists():
+        sources += [(p, "memory") for p in sorted(xkb_paths.DATA_DIR.glob("*.md"))]
+    if xkb_paths.MEMORY_MD.exists():
+        sources.append((xkb_paths.MEMORY_MD, "memory"))
+
+    docs: list[tuple[str, str, str]] = []
+    for path, prefix in sources:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        content = re.sub(r"^---\n.*?\n---\n", "", content, flags=re.DOTALL)
+
+        title = path.stem
+        section = ""
+        buffer: list[str] = []
+
+        def flush(section_name: str, lines: list[str]) -> None:
+            body = "\n".join(lines).strip()
+            if len(body) < MIN_SECTION_CHARS:
+                return
+            text = f"{title} — {section_name}\n{body}"[:MAX_SECTION_CHARS]
+            key = f"{prefix}/{path.name}#{section_name or 'intro'}"
+            docs.append((key, text, hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
+
+        for line in content.splitlines():
+            if re.match(r"^#{1,3} .+", line):
+                flush(section, buffer)
+                section = re.sub(r"^#{1,3} ", "", line).strip()
+                buffer = []
+            else:
+                buffer.append(line)
+        flush(section, buffer)
+
+    return docs
+
+
+def write_semantic_index(vectors: dict[str, list[float]], path: Path) -> None:
+    """寫出 <path>.bin（float32 單位向量）與 <path>（keys + dims 的 JSON）。"""
+    import array
+
+    keys = sorted(vectors)
+    dims = len(vectors[keys[0]])
+    packed = array.array("f")
+    for key in keys:
+        vec = vectors[key]
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        packed.extend(x / norm for x in vec)
+
+    payload = packed.tobytes()
+    path.with_suffix(".bin").write_bytes(payload)
+    # 記下位元組序、每個浮點數幾個位元組、總筆數：
+    # 這三項任何一項對不上，切片出來的向量就是錯的，而且不會拋錯——
+    # 只會安靜地變成空向量或錯位資料，讀取端據此驗證後才敢用。
+    path.write_text(json.dumps({
+        "dims": dims,
+        "keys": keys,
+        "count": len(keys),
+        "normalized": True,
+        "byteorder": sys.byteorder,
+        "itemsize": packed.itemsize,
+        "bytes": len(payload),
+    }, ensure_ascii=False), encoding="utf-8")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -157,6 +283,14 @@ def main() -> int:
     existing_hashes: dict = existing.get("text_hashes", {})
 
     to_embed = []
+
+    # wiki 段落：把消化過的那一層也納入語意搜尋
+    for wiki_key, wiki_text, wiki_hash in knowledge_section_docs():
+        if not (args.incremental and wiki_key in existing_vectors
+                and existing_hashes.get(wiki_key) == wiki_hash):
+            to_embed.append((wiki_key, wiki_text, wiki_hash))
+    print(f"📖 Wiki/memory sections queued: {len(to_embed)}")
+
     for item in items:
         key = item.get("relative_path") or item.get("path") or ""
         card_text = extract_card_text(item)
@@ -164,14 +298,25 @@ def main() -> int:
             print(f"  ⚠️  No text for: {key}")
             continue
         text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
-        if args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash:
-            continue
-        to_embed.append((key, card_text, text_hash))
+        if not (args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash):
+            to_embed.append((key, card_text, text_hash))
+
+        # 論點級 embedding（TODOS 2026-07-13）：每條「關鍵論點」單獨成向量
+        md_path = _resolve_md_path(item)
+        if md_path:
+            title = (item.get("title") or "").strip()
+            for pi, point in enumerate(_extract_key_point_list(md_path), 1):
+                pkey = f"{key}#kp{pi}"
+                ptext = (f"{title}. {point}" if title else point)[:500]
+                phash = hashlib.md5(ptext.encode("utf-8")).hexdigest()[:12]
+                if args.incremental and pkey in existing_vectors and existing_hashes.get(pkey) == phash:
+                    continue
+                to_embed.append((pkey, ptext, phash))
 
     # Alias for downstream use
     texts = [t for _, t, _ in to_embed]
 
-    skipped = len(items) - len(to_embed)
+    skipped = sum(1 for k in existing_vectors if k not in {e[0] for e in to_embed})
     print(f"🔢 To embed: {len(to_embed)}  |  Skipped (incremental): {skipped}")
 
     if args.dry_run:
@@ -226,12 +371,34 @@ def main() -> int:
             "model": getattr(provider, "model", ""),
             "dims": len(vectors_list[0][1]) if vectors_list else existing.get("meta", {}).get("dims", 0),
             "total": len(new_vectors),
+            "point_vectors": sum(1 for k in new_vectors if "#kp" in k),
             "built_at": datetime.now(timezone.utc).isoformat(),
         },
         "vectors": new_vectors,
         "text_hashes": new_hashes,
     }
     save_vector_index(output, vector_path)
+
+    # 另存召回用的索引，二進位格式。
+    # 存 JSON 的話 1,868 個 3072 維向量要 76MB，光 json.loads 就要 5 秒——
+    # 而召回是每句話都要跑的。float32 打包後只有 23MB，載入約 0.1 秒。
+    # 順便先做單位化，查詢時只要點積，不必每次算平方根。
+    semantic_vectors = {
+        k: v for k, v in output.get("vectors", {}).items()
+        if (k.startswith("wiki/topics/") or k.startswith("memory/"))
+        and not k.startswith("memory/cards/")
+    }
+    if semantic_vectors:
+        semantic_path = Path(os.getenv("XKB_SEMANTIC_INDEX", str(SEMANTIC_FILE)))
+        write_semantic_index(semantic_vectors, semantic_path)
+        print(f"✅ Saved {len(semantic_vectors)} semantic vectors → {semantic_path.with_suffix('.bin')}")
+
+    card_vectors = {k: v for k, v in output.get("vectors", {}).items()
+                    if k not in semantic_vectors}
+    if card_vectors:
+        cards_path = Path(os.getenv("XKB_CARDS_INDEX", str(CARDS_FILE)))
+        write_semantic_index(card_vectors, cards_path)
+        print(f"✅ Saved {len(card_vectors)} card vectors → {cards_path.with_suffix('.bin')}")
 
     print(f"\n✅ Saved {len(new_vectors)} vectors → {vector_path}")
     print(f"   Provider : {output['meta']['provider']} / {output['meta']['model']}")

@@ -31,7 +31,7 @@ _DIRECT_API_URL = os.getenv("LLM_API_URL", "")
 _DIRECT_API_KEY = os.getenv("LLM_API_KEY", "")
 
 # Fallback: read LLM config from ~/.openclaw/openclaw.json
-# Priority: env vars > openclaw.json (MiniMax) > Gemini
+# Priority: env vars > openclaw.json generic LLM > Gemini
 if not _DIRECT_API_URL or not _DIRECT_API_KEY:
     try:
         _oclaw_cfg = Path.home() / ".openclaw" / "openclaw.json"
@@ -57,9 +57,9 @@ def _load_model() -> str:
         return _ENV_MODEL
     try:
         cfg = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
-        return cfg.get("model", "MiniMax-M2.7")
+        return cfg.get("model", "sub2api-gpt/gpt-5.5")
     except Exception:
-        return "MiniMax-M2.7"
+        return "sub2api-gpt/gpt-5.5"
 
 
 def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
@@ -71,10 +71,10 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
     if not _DIRECT_API_URL or not _DIRECT_API_KEY:
         raise RuntimeError(
             "openclaw is not installed and LLM_API_URL / LLM_API_KEY are not set.\n"
-            "Set them to use a direct API fallback:\n"
-            "  export LLM_API_URL=https://api.minimax.io/anthropic\n"
+            "Set them to use a direct OpenAI-compatible API fallback:\n"
+            "  export LLM_API_URL=https://your-openai-compatible-endpoint/v1\n"
             "  export LLM_API_KEY=your-key\n"
-            "  export LLM_MODEL=MiniMax-M2.5"
+            "  export LLM_MODEL=sub2api-gpt/gpt-5.5"
         )
 
     model = _load_model()
@@ -168,7 +168,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         choices = data.get("choices", [])
         if choices:
             text = choices[0].get("message", {}).get("content", "") or ""
-            # Strip <think>...</think> blocks (MiniMax M2.7 reasoning prefix)
+            # Strip <think>...</think> blocks from reasoning-style providers
             import re as _re
             text = _re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
             return text

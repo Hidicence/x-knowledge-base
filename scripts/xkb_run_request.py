@@ -4,12 +4,12 @@ XKB Request Runner
 ==================
 Consumes a request artifact and produces a result artifact.
 
-Delegates all inference to _llm.call() — model routing (MiniMax / OpenClaw / Gemini)
+Delegates all inference to _llm.call() — model routing (OpenClaw / generic LLM / Gemini)
 is handled there. No adapter selection needed here.
 
 Usage:
     python3 xkb_run_request.py --request runtime/memory-distill/2026-04-19/requests/chunk-0001.json
-    python3 xkb_run_request.py --request ... --model MiniMax-M2.7
+    python3 xkb_run_request.py --request ... --model sub2api-gpt/gpt-5.5
     python3 xkb_run_request.py --request ... --timeout 120
 """
 
@@ -32,7 +32,7 @@ def load_config() -> dict:
     try:
         return json.loads(cfg.read_text(encoding="utf-8"))
     except Exception:
-        return {"model": "MiniMax-M2.7"}
+        return {"model": "sub2api-gpt/gpt-5.5"}
 
 
 def main():
@@ -65,7 +65,7 @@ def main():
     else:
         out_path = results_dir / f"chunk-{chunk_index:04d}.json"
 
-    model = args.model or request.get("meta", {}).get("model") or load_config().get("model", "MiniMax-M2.7")
+    model = args.model or request.get("meta", {}).get("model") or load_config().get("model", "sub2api-gpt/gpt-5.5")
     system = request.get("input", {}).get("system", "")
     user = request.get("input", {}).get("user", "")
 
@@ -78,17 +78,8 @@ def main():
     error_info = None
 
     try:
-        if model.lower().startswith("minimax"):
-            adapter = GenericHTTPAdapter()
-            adapter_result = adapter.run(str(request_path))
-            ok = adapter_result.get("ok", False)
-            if ok:
-                raw_text = adapter_result.get("raw_text", "")
-            else:
-                error_info = adapter_result.get("error") or {"type": "adapter_error", "message": "unknown adapter failure"}
-        else:
-            raw_text = llm_call(system, user, model=model, timeout=args.timeout)
-            ok = True
+        raw_text = llm_call(system, user, model=model, timeout=args.timeout)
+        ok = True
     except Exception as e:
         error_info = {"type": type(e).__name__, "message": str(e)[:500]}
         print(f"[runner] ERROR: {error_info}", file=sys.stderr)

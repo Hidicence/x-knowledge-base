@@ -13,14 +13,14 @@ class GenericHTTPAdapter(XKBInferenceAdapter):
     """Generic HTTP API adapter for OpenAI-compatible endpoints.
 
     Reads LLM_API_URL / LLM_API_KEY from environment or ~/.openclaw/openclaw.json.
-    Works with any OpenAI-compatible endpoint (MiniMax, Groq, local models, etc.).
+    Works with any OpenAI-compatible endpoint (OpenAI-compatible, Groq, local models, etc.).
     """
 
     name = "http-api"
 
     def run(self, request_path: str) -> dict[str, Any]:
         request = json.loads(Path(request_path).read_text(encoding="utf-8"))
-        model = request.get("meta", {}).get("model") or "MiniMax-M2.7"
+        model = request.get("meta", {}).get("model") or "sub2api-gpt/gpt-5.5"
         system = request.get("input", {}).get("system", "")
         user = request.get("input", {}).get("user", "")
 

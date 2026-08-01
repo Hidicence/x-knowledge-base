@@ -22,10 +22,14 @@ import json
 import os
 import re
 from collections import defaultdict
+import sys
 from pathlib import Path
 from typing import Any
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = WORKSPACE / "memory" / "bookmarks"
 INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
 

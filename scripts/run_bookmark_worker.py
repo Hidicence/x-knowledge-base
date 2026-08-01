@@ -20,7 +20,10 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))

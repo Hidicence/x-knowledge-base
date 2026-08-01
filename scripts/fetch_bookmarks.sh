@@ -14,7 +14,8 @@ MAX_PAGES="${MAX_PAGES:-5}"
 SKIP_DEDUP="${SKIP_DEDUP:-0}"
 
 # 從環境變數讀取；若工作區有 secrets 檔則一併載入
-SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
+# skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECRETS_FILE="${SECRETS_FILE:-$WORKSPACE_DIR/.secrets/x-knowledge-base.env}"
 if [[ -f "$SECRETS_FILE" ]]; then
   source "$SECRETS_FILE"

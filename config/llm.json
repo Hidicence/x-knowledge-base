@@ -1,8 +1,10 @@
 {
-  "_comment": "XKB unified LLM config. Change 'model' here to switch all scripts at once.",
-  "model": "MiniMax-M2.7",
+  "_comment": "XKB unified LLM config. Change model here to switch all scripts at once.",
+  "_note": "2026-07-14 cost fix: gpt-5.5 -> gpt-5.4-mini (enrichment/card tasks dont need flagship). Backup: llm.json.bak-20260714",
+  "model": "sub2api-claude/claude-sonnet-4-6",
   "_examples": {
-    "minimax":     "MiniMax-M2.7",
-    "gpt_5_4":     "openai-codex/gpt-5.4"
+    "gpt_5_5": "sub2api-gpt/gpt-5.5",
+    "gpt_5_4": "openai-codex/gpt-5.4",
+    "gpt_5_4_mini": "sub2api-gpt/gpt-5.4-mini"
   }
 }

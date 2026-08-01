@@ -95,8 +95,11 @@ def _make_subprocess_env(semantic: bool) -> dict[str, str]:
             env["OPENCLAW_JSON"] = str(cfg)
     if semantic and GEMINI_API_KEY:
         env["GEMINI_API_KEY"] = GEMINI_API_KEY
+        # gbrain v0.42+ gateway 的 google recipe 讀這個變數名
+        env["GOOGLE_GENERATIVE_AI_API_KEY"] = GEMINI_API_KEY
     elif not semantic:
         env.pop("GEMINI_API_KEY", None)
+        env.pop("GOOGLE_GENERATIVE_AI_API_KEY", None)
         env.pop("OPENAI_API_KEY", None)
     return env
 
@@ -154,7 +157,10 @@ def xbrain_query(
     try:
         items = json.loads(raw)
     except json.JSONDecodeError:
-        return []
+        # gbrain v0.42+ 移除了 query --json，輸出為「[分數] slug -- 內文」行格式
+        items = _parse_line_format(raw)
+        if not items:
+            return []
 
     results = []
     for item in items:
@@ -175,6 +181,28 @@ def xbrain_query(
             "stale": item.get("stale", False),
         })
     return results
+
+
+def _parse_line_format(raw: str) -> list[dict[str, Any]]:
+    """解析 gbrain v0.42+ 的行格式輸出：`[0.9102] slug -- chunk text`。
+    非結果行（gateway 警告等）自動略過。"""
+    import re
+    items: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        m = re.match(r"^\[(\d+\.\d+)\]\s+(\S+)\s+--\s?(.*)$", line.strip())
+        if m:
+            items.append({
+                "slug": m.group(2),
+                "title": "",
+                "type": "",
+                "chunk_text": m.group(3),
+                "score": float(m.group(1)),
+                "stale": False,
+            })
+        elif items and line.strip() and not line.startswith("["):
+            # 多行 chunk 內文的續行,併回最後一筆
+            items[-1]["chunk_text"] += "\n" + line
+    return items
 
 
 def _extract_source_url(text: str) -> str:

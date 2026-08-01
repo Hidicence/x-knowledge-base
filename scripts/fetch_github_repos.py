@@ -59,10 +59,10 @@ def load_env_key() -> str:
     try:
         cfg = json.loads(cfg_path.read_text())
         env = cfg.get("env", {})
-        return (env.get("LLM_API_KEY") or env.get("MINIMAX_API_KEY") or
-                os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or "")
+        return (env.get("LLM_API_KEY") or
+                os.getenv("LLM_API_KEY") or "")
     except Exception:
-        return os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or ""
+        return os.getenv("LLM_API_KEY") or ""
 
 
 # llm_call imported from _card_prompt as _llm_call

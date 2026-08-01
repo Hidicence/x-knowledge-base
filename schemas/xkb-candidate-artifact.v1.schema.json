@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xkb.local/schemas/xkb-candidate-artifact.v1.schema.json",
+  "title": "XKB Candidate Artifact v1",
+  "description": "Read-only Stage 2 artifact for an observed candidate. This schema does not authorize promotion or mutation of production memory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "artifact_id", "candidate_key", "status", "provenance", "evidence", "decision"],
+  "properties": {
+    "schema": { "const": "xkb-candidate-artifact.v1" },
+    "artifact_id": { "type": "string", "pattern": "^candidate:[a-z0-9][a-z0-9._:-]{2,200}$" },
+    "candidate_key": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "candidate_label": { "type": "string", "maxLength": 1000 },
+    "status": { "enum": ["observed", "aggregated", "review_ready", "hold", "rejected", "expired"] },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "evidence_type", "source_path", "source_sha256"],
+      "properties": {
+        "source_kind": { "enum": ["daily_memory", "conversation", "dreaming", "wiki_staging", "external_source"] },
+        "evidence_type": { "enum": ["conversation_or_note", "assistant_output", "system", "pipeline_instruction", "derived_dreaming", "derived_staging", "external_attested"] },
+        "source_path": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "source_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "source_url": { "type": "string", "format": "uri" },
+        "captured_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "episode": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["episode_id", "id_kind"],
+      "properties": {
+        "episode_id": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "id_kind": { "enum": ["episode_id", "session_id"] },
+        "agent_id": { "type": "string", "maxLength": 200 },
+        "namespace": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "excerpt", "evidence_sha256", "induction_eligible"],
+        "properties": {
+          "evidence_id": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "excerpt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "evidence_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "induction_eligible": { "type": "boolean" },
+          "role": { "enum": ["support", "contradiction", "context", "system_echo"] }
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eligible_episode_count": { "type": "integer", "minimum": 0 },
+        "eligible_evidence_count": { "type": "integer", "minimum": 0 },
+        "system_evidence_count": { "type": "integer", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "reason", "automatic_promotion"],
+      "properties": {
+        "label": { "enum": ["REVIEW_READY", "HOLD", "REJECT_SYSTEM_ECHO", "EXPIRED"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "automatic_promotion": { "const": false }
+      }
+    }
+  }
+}

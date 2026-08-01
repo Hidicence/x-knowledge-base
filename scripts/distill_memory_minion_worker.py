@@ -17,13 +17,15 @@ import psycopg2.extras
 
 sys.path.insert(0, str(Path(__file__).parent))
 import distill_memory_to_wiki as distill
+import xkb_paths
 
 GBRAIN_DB_URL = os.environ["GBRAIN_DATABASE_URL"]  # required: set in env, no fallback
 QUEUE = "xkb-memory-distill"
 CHUNK_QUEUE = "xkb-memory-distill-chunk"
 LOCK_DURATION_S = 900
 POLL_INTERVAL_S = 15
-RUNTIME_DIR = Path(os.getenv("XKB_DISTILL_RUNTIME_DIR", str(Path.home() / ".openclaw" / "workspace" / "skills" / "x-knowledge-base" / "runtime" / "memory-distill")))
+RUNTIME_DIR = Path(os.getenv("XKB_DISTILL_RUNTIME_DIR",
+                             str(xkb_paths.SKILL_DIR / "runtime" / "memory-distill")))
 _shutdown = False
 
 
@@ -168,6 +170,17 @@ def process_job(job, conn):
 
     content = memory_path.read_text(encoding="utf-8")
     cleaned = distill.extract_conversation_content(content)
+    # The scheduled path creates chunk jobs directly, so it must explicitly
+    # include the same immutable L1 snapshots as the standalone distiller.
+    # Keep the source date boundary to avoid mixing separate daily runs.
+    l1_entries = [
+        trace_content
+        for trace_date, trace_content in distill.load_recent_l1_traces(3650)
+        if trace_date == data["source_date"]
+    ]
+    if l1_entries:
+        cleaned = "\n\n".join([cleaned, *l1_entries]).strip()
+        print(f"[worker] source_date={data['source_date']} included_l1_snapshots={len(l1_entries)}", flush=True)
     print(f"[worker] source_date={data['source_date']} raw_chars={len(content)} cleaned_chars={len(cleaned)}", flush=True)
     chunks = [cleaned[i:i + distill.CHUNK_SIZE] for i in range(0, max(len(cleaned), 1), distill.CHUNK_SIZE) if cleaned[i:i + distill.CHUNK_SIZE].strip()]
     runtime_dir = RUNTIME_DIR / data["source_date"]

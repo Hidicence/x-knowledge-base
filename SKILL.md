@@ -16,6 +16,8 @@ From saved fragments to a reusable, proactive knowledge system.
 
 > XKB 從 X/Twitter 書籤出發，現在已演化成多來源知識生命週期系統：ingest → card/index → recall → wiki → ClawHub release.
 >
+> **圖文卡原則**：XKB knowledge card 可以是 multimodal。圖片不是附件裝飾，而是 source evidence；對 X/Twitter 這類 prompt screenshot、結果圖、對比圖，先用 `scripts/media_ingest.py` 下載圖片並產生 `## 10. Media Evidence`（OCR + Vision Notes），再進 card/index/wiki。
+>
 > **發佈原則**：`skills/x-knowledge-base/` 只放 reusable skill code；個人資料與執行期資料放在 `memory/x-knowledge-base/`、`memory/cards/`、`memory/bookmarks/`。要對外發佈時，優先確認 release package 不含私密資料，再用 ClawHub 同步版本。詳見 `docs/RUNTIME_PATHS.md`。
 
 ## Personal data paths
@@ -43,7 +45,7 @@ From saved fragments to a reusable, proactive knowledge system.
 
 ### 9-Section Card Format
 
-每張卡固定包含：
+每張卡固定包含 9 個主 section；若來源含圖片，追加第 10 節 `Media Evidence`：
 
 1. 核心問題與結論
 2. Claim 等級（Attested / Scholarship / Inference）
@@ -54,8 +56,31 @@ From saved fragments to a reusable, proactive knowledge system.
 7. 雙語摘要（ZH + EN，用於 search index）
 8. 對使用者的價值
 9. 原始來源
+10. Media Evidence（如有）：圖片來源、local path、OCR、vision notes、可複用圖像 / prompt pattern、不確定處
 
----
+### Multimodal Media Ingest
+
+對 X/Twitter 圖文來源，先把圖片變成可索引文字證據：
+
+```bash
+# 對單一 bookmark/card 補上圖片 OCR + vision notes
+python3 scripts/media_ingest.py memory/bookmarks/03-video-prompts/2049049884284858826.md --limit 4
+
+# 已有 Media Evidence 時重跑
+python3 scripts/media_ingest.py memory/bookmarks/03-video-prompts/2049049884284858826.md --force --limit 4
+
+# 只檢查圖片 URL，不下載、不呼叫 vision
+python3 scripts/media_ingest.py memory/bookmarks/03-video-prompts/2049049884284858826.md --dry-run
+```
+
+輸出會寫回原 markdown：
+
+- `## 10. Media Evidence`
+- `### OCR`：圖片內可讀 prompt / UI / 表格 / 文字
+- `### Vision Notes`：圖像類型、版面結構、可複用 pattern、風險與不確定
+
+圖片本體存到：`memory/x-knowledge-base/media/<source-id>/`。
+
 
 ## Main Entry Points
 

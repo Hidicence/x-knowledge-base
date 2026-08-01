@@ -22,9 +22,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.getenv("OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+WORKSPACE = xkb_paths.WORKSPACE
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
+WIKI_DIR = xkb_paths.WIKI_DIR
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(_SKILL_DIR / "scripts"))
@@ -63,6 +66,85 @@ def load_recent_memory(days: int) -> list[tuple[str, str]]:
         fname = MEMORY_DIR / f"{d}.md"
         if fname.exists():
             entries.append((str(d), fname.read_text()))
+    return entries
+
+
+L1_TRACE_DIR = xkb_paths.XKB_DATA_DIR / "runtime" / "l1-traces"
+
+
+def _trace_message_text(message: object) -> str:
+    """Convert an L1 message into compact, distillable conversation text.
+
+    L1 traces intentionally retain tool calls and metadata for provenance, but
+    those are noise for the daily curator. Keep human-readable user/assistant
+    text and skip tool-call payloads here; the original trace remains on disk.
+    """
+    if not isinstance(message, dict):
+        return ""
+    role = str(message.get("role") or "").strip()
+    if role not in {"user", "assistant"}:
+        return ""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        text = content.strip()
+    elif isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                value = str(item.get("text") or "").strip()
+                if value:
+                    parts.append(value)
+        text = "\n".join(parts)
+    else:
+        text = ""
+    return f"{role}: {text}" if text else ""
+
+
+def load_recent_l1_traces(days: int) -> list[tuple[str, str]]:
+    """Load the newest complete trace per session for the recent date window.
+
+    agent_end traces are cumulative snapshots of a session, so loading every
+    file would repeat the same conversation many times. The newest snapshot per
+    episode is the canonical input; source files remain immutable evidence.
+    """
+    if not L1_TRACE_DIR.exists():
+        return []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    newest_by_episode: dict[str, tuple[datetime, Path, dict]] = {}
+    for path in L1_TRACE_DIR.glob("*.json"):
+        try:
+            trace = json.loads(path.read_text(encoding="utf-8"))
+            observed = datetime.fromisoformat(str(trace.get("observed_at", "")).replace("Z", "+00:00"))
+            if observed < cutoff or trace.get("schema") != "xkb-l1-trace.v1":
+                continue
+            episode = str(trace.get("episode_id") or trace.get("session_id") or path.name)
+            previous = newest_by_episode.get(episode)
+            if previous is None or observed > previous[0]:
+                newest_by_episode[episode] = (observed, path, trace)
+        except (OSError, ValueError, json.JSONDecodeError, TypeError):
+            continue
+
+    entries: list[tuple[str, str]] = []
+    for observed, path, trace in sorted(newest_by_episode.values(), key=lambda item: item[0]):
+        messages = trace.get("content", [])
+        if not isinstance(messages, list):
+            continue
+        rendered = [line for message in messages if (line := _trace_message_text(message))]
+        if not rendered:
+            continue
+        source_date = observed.date().isoformat()
+        header = f"[L1 trace: {path.name}; episode: {trace.get('episode_id') or trace.get('session_id')}]"
+        entries.append((source_date, header + "\n" + "\n".join(rendered)))
+    return entries
+
+
+def load_recent_inputs(days: int) -> list[tuple[str, str]]:
+    """Return daily memory plus complete recent L1 conversation snapshots."""
+    entries = load_recent_memory(days)
+    traces = load_recent_l1_traces(days)
+    if traces:
+        print(f"Loaded {len(traces)} recent L1 trace snapshot(s)")
+        entries.extend(traces)
     return entries
 
 
@@ -338,11 +420,11 @@ def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -
     if section_header in content:
         content = content.replace(
             section_header,
-            f"{section_header}\n\n- {entry} *(memory/{source_date}.md)*",
+            f"{section_header}\n\n- {entry} *(self-derived · memory/{source_date}.md)*",
             1,
         )
     else:
-        content = content.rstrip() + f"\n\n{section_header}\n\n- {entry} *(memory/{source_date}.md)*\n"
+        content = content.rstrip() + f"\n\n{section_header}\n\n- {entry} *(self-derived · memory/{source_date}.md)*\n"
 
     content = re.sub(r"(last_updated:\s*)\S+", f"\\g<1>{today}", content)
     topic_path.write_text(content)
@@ -409,11 +491,11 @@ def main() -> None:
         entries = [(today_str, content)]
         print(f"Input mode: file {input_path.name} ({len(content)} chars)")
     else:
-        entries = load_recent_memory(args.days)
+        entries = load_recent_inputs(args.days)
         if not entries:
-            print(f"No memory files found for last {args.days} days.")
+            print(f"No memory files or L1 traces found for last {args.days} days.")
             return
-        print(f"Loaded {len(entries)} file(s): {[e[0] for e in entries]}")
+        print(f"Loaded {len(entries)} input item(s): {[e[0] for e in entries]}")
 
     if args.no_llm:
         for date, content in entries:

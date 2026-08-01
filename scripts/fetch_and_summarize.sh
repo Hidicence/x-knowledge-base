@@ -6,7 +6,8 @@ set -euo pipefail
 trap 'pkill -f openclaw-infer 2>/dev/null || true' EXIT TERM INT
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}}"
-SKILL_DIR="${SKILL_DIR:-$WORKSPACE_DIR/skills/x-knowledge-base}"
+# skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BOOKMARKS_DIR="${BOOKMARKS_DIR:-$WORKSPACE_DIR/memory/bookmarks}"
 CARDS_DIR="${CARDS_DIR:-$WORKSPACE_DIR/memory/cards}"
 RUNTIME_DIR="${RUNTIME_DIR:-$WORKSPACE_DIR/memory/x-knowledge-base}"
@@ -17,7 +18,7 @@ INDEX_FILE="${INDEX_FILE:-$DEFAULT_INDEX_FILE}"
 VECTOR_INDEX_PATH="${VECTOR_INDEX_PATH:-$DEFAULT_VECTOR_INDEX_PATH}"
 QUEUE_PATH="${XKB_QUEUE_PATH:-$DEFAULT_QUEUE_PATH}"
 INBOX_DIR="$BOOKMARKS_DIR/inbox"
-MINIMAX_API_KEY="${MINIMAX_API_KEY:-}"
+LLM_API_KEY="${LLM_API_KEY:-}"
 PREPARE_ONLY="${PREPARE_ONLY:-0}"
 export BOOKMARKS_DIR CARDS_DIR RUNTIME_DIR INDEX_FILE VECTOR_INDEX_PATH XKB_QUEUE_PATH="$QUEUE_PATH"
 
@@ -251,6 +252,11 @@ PY
             echo "    ⏭️ Agent Reach / xreach 不可用，略過補完"
         fi
 
+        if [[ "${XKB_MEDIA_INGEST:-0}" == "1" ]]; then
+            echo "    🖼️ Media ingest: 下載圖片並產生 OCR / Vision Notes..."
+            python3 "$SKILL_DIR/scripts/media_ingest.py" "$filepath" --limit "${XKB_MEDIA_LIMIT:-4}" || true
+        fi
+
         ((NEW_COUNT++)) || true
     done < "$NEW_BOOKMARKS_FILE"
 fi
@@ -279,7 +285,7 @@ while true; do
     echo "=== 批次 $((TOTAL_PROCESSED / BATCH_SIZE + 1))：剩餘 $inbox_count 條 ==="
 
     export BOOKMARKS_DIR
-    export MINIMAX_API_KEY
+    export LLM_API_KEY
     python3 tools/bookmark_enhancer.py $BATCH_SIZE
 
     echo ""

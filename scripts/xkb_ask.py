@@ -34,6 +34,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_backend
 
 # ── gbrain bridge (optional) ──────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
 _GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
 _GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 if not _GEMINI_KEY:
@@ -54,7 +57,7 @@ BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "
 INDEX_FILE     = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE    = BOOKMARKS_DIR / "vector_index.json"
 _SKILL_DIR     = Path(__file__).resolve().parent.parent
-WIKI_DIR       = Path(os.getenv("XKB_WIKI_DIR", str(Path(os.getenv("OPENCLAW_WORKSPACE", os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))) / "memory" / "x-knowledge-base" / "wiki")))
+WIKI_DIR       = xkb_paths.WIKI_DIR
 TOPICS_DIR     = WIKI_DIR / "topics"
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
@@ -415,7 +418,7 @@ _SIMPLIFIED_TO_TRAD = str.maketrans(
 )
 
 def _fix_simplified(text: str) -> str:
-    """Best-effort fix for common simplified Chinese characters that MiniMax M2.7 occasionally outputs."""
+    """Best-effort fix for common simplified Chinese characters that some LLM providers occasionally output."""
     return text.translate(_SIMPLIFIED_TO_TRAD)
 
 

@@ -13,7 +13,8 @@
 set -uo pipefail
 
 WORKSPACE="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}"
-SKILL_DIR="$WORKSPACE/skills/x-knowledge-base"
+# skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$SKILL_DIR/scripts/fetch_github_repos.py"
 LOG_FILE="/tmp/xkb-github-sync.log"
 
