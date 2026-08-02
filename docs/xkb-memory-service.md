@@ -37,6 +37,7 @@ GET  /v1/cards/{card_id}
 GET  /v1/cards/{card_id}/relations
 GET  /v1/wiki/topics/{topic_id}
 GET  /v1/ingest/status
+GET  /v1/knowledge/cold?min_considered=5
 GET  /v1/pipeline/snapshot?days=7
 GET  /v1/pipeline/jobs?stage=index&status=failed&limit=50
 POST /v1/pipeline/jobs/events
@@ -77,6 +78,34 @@ user turn
 - `keyword_fallback`：semantic backend 不可用或無結果，已明確降級
 
 不能在 semantic backend 不可用時假稱完成向量搜尋。
+
+### 相關度門檻與意圖閘門
+
+召回不會把前十名照單全收。backend 回的分數是 **RRF 排名分數**——
+它說的是「這筆排第幾」，不是「這筆多相關」，所以第一名永遠在 0.88 附近，
+即使知識庫裡根本沒有相關內容（實測「今天天氣如何」0.863、「碳盤查的計算方式」0.862，
+分不出來）。因此 service 會重新計算**真實的餘弦相似度**，
+低於 `XKB_SERVICE_MIN_RELEVANCE`（預設 0.55）的直接丟掉。
+
+回應中的 `score` 是實測相似度，原本的排名分數保留在 `rank_score`。
+被丟掉幾筆記在 `dropped_as_irrelevant`。
+
+另外，純粹的招呼與確認（「好」「謝謝」「早安」）會**完全跳過召回**
+（`retrieval_mode: "skipped"`），連 embedding 都不呼叫。
+
+實測效果：每則訊息平均注入從 2,067 字元降到 394 字元。
+
+### 知識退場（唯讀報告）
+
+`GET /v1/knowledge/cold?min_considered=5` 列出**被召回多次、卻從來沒有一次
+相關到值得注入**的紀錄。
+
+XKB 沒有「任務成功與否」的訊號，所以不照抄 Memmy 的獎勵模型——
+一張講運鏡的卡片沒有成功或失敗可言，硬給分數會產生假的依據。
+可以誠實測量的是：這筆知識被撈出來之後，有沒有任何一次夠格被使用。
+
+**只報告，不自動封存或刪除。** XKB 的價值是來源可追溯，
+為了整潔而丟掉證據是本末倒置。
 
 ### 為什麼召回不到：ACL 過濾統計
 
