@@ -8,11 +8,11 @@
 
 <p align="center">
   <a href="#quick-start"><strong>Quick start</strong></a> ·
-  <a href="#connect-an-agent"><strong>Connect an agent</strong></a> ·
-  <a href="#how-recall-decides"><strong>How recall decides</strong></a> ·
-  <a href="./docs/xkb-memory-service.md"><strong>Service API</strong></a> ·
-  <a href="./docs/data-flow.md"><strong>Privacy</strong></a> ·
-  <a href="https://youtu.be/JWgm6ky_pys"><strong>Pitch video</strong></a>
+  <a href="#how-it-works"><strong>How it works</strong></a> ·
+  <a href="#the-nine-section-card"><strong>Card schema</strong></a> ·
+  <a href="#four-ways-it-recalls"><strong>Recall layers</strong></a> ·
+  <a href="#share-it-across-agents"><strong>Share across agents</strong></a> ·
+  <a href="./docs/data-flow.md"><strong>Privacy</strong></a>
 </p>
 
 <p align="center">
@@ -21,11 +21,13 @@
   <img alt="Local-first" src="https://img.shields.io/badge/data-local--first-59D8C8">
 </p>
 
-## Every agent starts cold
+## Knowledge should not disappear after you save it
 
-You run more than one coding agent. Each opens with no idea what you decided last week, which approach already failed, or what you have been reading for six months. So you re-explain, and they re-derive.
+Bookmarks, notes, transcripts, papers and repositories pile up. Saving them was never the hard part — getting the right one back, with its evidence, while you are actually working, is.
 
-**XKB is one knowledge layer they share.** It turns your sources into evidence cards with traceable provenance, distils durable conclusions into a wiki, and serves all of it back through a single local-first API — so Claude Code, OpenClaw and Codex are reading the same memory instead of each keeping their own.
+**XKB is a local-first knowledge lifecycle.** It turns many kinds of source into one structured card format, retrieves them semantically, distils the durable parts into a human-readable wiki, and surfaces what matters during a conversation.
+
+And because your agents keep starting cold, it now serves all of that through **one shared API** — so Claude Code, OpenClaw and Codex read the same memory instead of each keeping their own.
 
 ---
 
@@ -47,19 +49,84 @@ $ curl -s localhost:18972/v1/recall -H "Authorization: Bearer $TOKEN" \
       "rank_score": 0.888,                 // what the backend ranked on
       "source_url": "https://…" }
   ],
-  "filtered_counts": { "total": 0, "by_layer": { "card": 0, "wiki": 0 } },
   "warnings": ["5 semantic results dropped below the relevance floor"]
 }
 ```
 
-Ask it something your library has nothing on and it says so, instead of returning the ten least-bad rows:
+Ask something your library has nothing on and it says so, instead of returning the ten least-bad rows:
 
 ```jsonc
 { "count": 0, "retrieval_mode": "keyword_fallback",
   "warnings": ["semantic results found but 10 dropped below the relevance floor"] }
 ```
 
-That distinction is the point. A silent empty result and a broken retrieval backend look identical, and telling them apart after the fact is very hard.
+A silent empty result and a broken retrieval backend look identical from the outside. Telling them apart is most of what makes a knowledge base trustworthy.
+
+---
+
+## How it works
+
+```text
+Sources
+  local notes · X bookmarks · YouTube · GitHub · PDF / PubMed · conversations
+       │
+       ▼
+One card contract
+  source adapters → scripts/_card_prompt.py → scripts/_llm.py
+       │
+       ▼
+Evidence cards
+  nine sections · source link · claim level · bilingual summary
+       │
+       ├──────────────►  hybrid retrieval (vector + keyword + RRF)
+       ├──────────────►  flat vector index          ── fallback
+       ├──────────────►  keyword index              ── fallback
+       │
+       ▼
+Absorb gate
+  cards + conversations → staging → review → durable wiki topics
+       │
+       ▼
+Recall
+  four layers, measured relevance, answers carry their sources
+       │
+       ▼
+Knowledge service
+  one HTTP API · token-scoped · shared by every connected agent
+```
+
+Each stage is a script you can run alone; nothing is a black box.
+
+### The nine-section card
+
+Every supported source produces the same structure, so retrieval has a stable unit instead of a pile of source-specific summaries:
+
+1. Core question and conclusion
+2. **Claim level** — `Attested`, `Scholarship`, or `Inference`
+3. Key arguments
+4. False friends — terms whose technical meaning differs from common usage
+5. Surprises
+6. Relationship to existing knowledge
+7. Bilingual summary, used by the search index
+8. Value to the reader
+9. Original source and links
+
+Image-bearing sources get a tenth **Media Evidence** section with OCR and vision notes via `scripts/media_ingest.py`.
+
+Claim level is the part that pays off later: when a card resurfaces months on, you can see whether it was something demonstrated, something published, or something inferred.
+
+### Four ways it recalls
+
+Recall is not one search. Depending on what you are doing, XKB draws on different layers:
+
+| Layer | Looks in | Answers |
+| --- | --- | --- |
+| **Continuity** | wiki topics, daily memory | *What did we already decide or establish?* |
+| **Associative** | evidence cards, bookmarks | *What have I collected that touches this?* |
+| **Contrarian** | wiki, memory | *What argues against this — limits, conflicts, past failures?* |
+| **Action** | scripts, roadmaps, TODO sections | *What can I run, and what was next?* |
+
+The contrarian layer exists because a knowledge base that only ever agrees with you is a liability. When you are converging fast on a plan, it surfaces the counter-evidence you already saved.
 
 ---
 
@@ -67,15 +134,11 @@ That distinction is the point. A silent empty result and a broken retrieval back
 
 ### Relevance is measured, not assumed
 
-Hybrid search returns a **rank** score: it says *this came first*, not *this is relevant*. On a real library, the top hit sits near `0.88` whether or not anything on the subject exists — measured here, an off-topic question scored `0.863` against an on-topic one at `0.862`. XKB recomputes the true query/document cosine and drops whatever falls below the floor, so an unrelated question returns nothing and costs nothing.
-
-### Every claim keeps its receipt
-
-Sources become a nine-section card carrying its origin URL and a **claim level** — `Attested`, `Scholarship`, or `Inference`. When a card comes back six months later you can see what kind of statement it was and who made it.
+Hybrid search returns a **rank** score: it says *this came first*, not *this is relevant*. On a real library the top hit sits near `0.88` whether or not anything on the subject exists — measured here, an off-topic question scored `0.863` against an on-topic one at `0.862`. XKB recomputes the true query/document cosine and drops what falls below the floor, so an unrelated question returns nothing and costs nothing.
 
 ### Distillation is gated, in both directions
 
-Cards are evidence; wiki topics are understanding. Nothing crosses that line automatically: an absorb gate scores topical fit and redundancy, and it **fails closed** — if the gate cannot run, nothing is absorbed. Conversations captured from agents become *candidates*, never knowledge, until they clear review.
+Cards are evidence; wiki topics are understanding. Nothing crosses that line by itself. The absorb gate scores topical fit and redundancy and **fails closed** — if it cannot run, nothing is absorbed. Conversations captured from agents become *candidates*, never knowledge, until they clear review.
 
 ### Knowledge is allowed to age out
 
@@ -117,7 +180,34 @@ Cards and indexes are written to your workspace, never into this repository.
 
 ---
 
-## Connect an agent
+## Add sources
+
+One card contract, many inputs:
+
+```bash
+python3 scripts/local_ingest.py ~/notes --category research    # Markdown / text
+python3 scripts/pdf_ingest.py paper.pdf                        # PDF / papers
+python3 scripts/fetch_youtube_playlist.py <playlist-url>       # transcripts
+python3 scripts/fetch_github_repos.py                          # stars and forks
+python3 scripts/media_ingest.py <card.md> --limit 4            # image OCR + vision
+```
+
+X/Twitter bookmark import, PubMed, and a queue-backed enrichment worker are included; see [`SKILL.md`](./SKILL.md).
+
+## Distil into durable knowledge
+
+```bash
+python3 scripts/absorb_gate_semantic.py --review               # what would be absorbed
+python3 scripts/sync_cards_to_wiki.py --apply                  # cards → wiki topics
+python3 scripts/distill_memory_to_wiki.py --stage              # conversations → staging
+python3 scripts/xkb_review.py --list                           # review the queue
+```
+
+Nothing reaches a wiki topic without passing the gate, and you can always see what it decided and why.
+
+---
+
+## Share it across agents
 
 Start the service, then install the hook. Recall and capture become automatic — the agent is not trusted to remember to call anything.
 
@@ -143,44 +233,7 @@ The service binds loopback and refuses to start on a public interface without to
 ssh -N -L 18972:127.0.0.1:18972 your-server
 ```
 
-Identity comes from a bearer token that pins a namespace and scopes; a request claiming a different namespace is refused, not quietly retargeted. With no token configured the service stays anonymous, which is the single-user default.
-
----
-
-## How recall decides
-
-```text
-message
-   │
-   ├─ acknowledgement or greeting ────────────────► skip entirely, no embedding call
-   │
-   ▼
-semantic search  ──►  measured cosine  ──►  below floor?  ──► dropped
-   │                                                              │
-   ▼                                                              ▼
-wiki topics · evidence cards · conversation traces      nothing, and it says why
-   │
-   ▼
-ACL by namespace (fail-closed)  ──►  context, with sources
-```
-
-Every response reports `retrieval_mode`, which layers the ACL filtered, and how much was dropped as irrelevant — so a thin result is always explainable rather than mysterious.
-
----
-
-## Sources
-
-One card contract, many inputs:
-
-```bash
-python3 scripts/local_ingest.py ~/notes --category research    # Markdown / text
-python3 scripts/pdf_ingest.py paper.pdf                        # PDF / papers
-python3 scripts/fetch_youtube_playlist.py <playlist-url>       # transcripts
-python3 scripts/fetch_github_repos.py                          # stars and forks
-python3 scripts/media_ingest.py <file.md> --limit 4            # image OCR + vision
-```
-
-X/Twitter bookmark import, PubMed, and a Minions-backed enrichment queue are included; see [`SKILL.md`](./SKILL.md).
+Identity comes from a bearer token that pins a namespace and scopes; a request claiming a different namespace is refused, not quietly retargeted. With no token configured the service stays anonymous, which is the single-user default. Full API in [`docs/xkb-memory-service.md`](./docs/xkb-memory-service.md).
 
 ---
 
@@ -203,9 +256,9 @@ Recall degrades in that order and always tells you which one ran.
 Being explicit is cheaper than disappointment:
 
 - **Not a hosted product.** It runs on your machine, against your files.
-- **Not automatic.** Nothing is promoted into wiki, and nothing is retired from it, without you.
+- **Not automatic.** Nothing is promoted into the wiki, and nothing is retired from it, without you.
 - **Not an agent framework.** It stores and returns knowledge; your agent does the thinking.
-- **Early.** The service, the cross-agent hooks, and the retirement signal are new. Interfaces will move.
+- **Early in places.** The knowledge service, cross-agent hooks and retirement signal are new. Those interfaces will move; the card and wiki layers are older and steadier.
 
 Cloud embeddings mean queries leave your machine; set `EMBEDDING_PROVIDER=ollama` to keep everything local. See [`docs/data-flow.md`](./docs/data-flow.md) for exactly what is sent where.
 
@@ -215,11 +268,12 @@ Cloud embeddings mean queries leave your machine; set `EMBEDDING_PROVIDER=ollama
 
 | Document | Contents |
 | --- | --- |
+| [`SKILL.md`](./SKILL.md) | Full command surface |
 | [`docs/xkb-memory-service.md`](./docs/xkb-memory-service.md) | Service API, auth, agent hooks, relevance floor |
 | [`docs/data-flow.md`](./docs/data-flow.md) | What leaves your machine, and how to stop it |
 | [`docs/RUNTIME_PATHS.md`](./docs/RUNTIME_PATHS.md) | Where code ends and your data begins |
-| [`SKILL.md`](./SKILL.md) | Full command surface |
 | [`wiki/WIKI-SCHEMA.md`](./wiki/WIKI-SCHEMA.md) | Wiki topic contract |
+| [`docs/xkb-vnext-roadmap-draft.md`](./docs/xkb-vnext-roadmap-draft.md) | Where this is going |
 
 ## License
 
