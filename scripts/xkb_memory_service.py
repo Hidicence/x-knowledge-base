@@ -408,6 +408,50 @@ class KnowledgeCatalog:
         records, self._last_irrelevant = self._drop_irrelevant(query, records)
         return records
 
+    def _wiki_search(self, query: str, limit: int, namespace: str = "private") -> list[dict[str, Any]]:
+        """Search distilled wiki topics and daily memory.
+
+        These already carry true cosine similarity, so they bypass the rank
+        score filter applied to the card backend — but not the ACL: a wiki
+        page belonging to another namespace must stay invisible here exactly
+        as it would through the card path.
+        """
+        try:
+            from continuity_recall import recall_semantic
+        except ImportError:
+            return []
+        try:
+            hits = recall_semantic(query, top_k=max(2, limit // 2))
+        except Exception:
+            return []
+        if not hits:            # None means unavailable, [] means nothing relevant
+            return []
+        allowed = []
+        for hit in hits:
+            topic = Path(hit.source_file).stem
+            path = self.wiki_topics_dir / f"{topic}.md"
+            metadata = self._frontmatter(path) if path.exists() else {}
+            if self._allowed(metadata, namespace):
+                allowed.append(hit)
+            else:
+                self._last_search_stats["by_layer"]["wiki"] = self._last_search_stats["by_layer"].get("wiki", 0) + 1
+                self._last_search_stats["total"] = self._last_search_stats.get("total", 0) + 1
+        hits = allowed
+        return [{
+            "schema": KNOWLEDGE_SCHEMA,
+            "record_type": "wiki_topic" if hit.source_type == "wiki_semantic" else "memory_note",
+            "id": hit.source_file,
+            "title": hit.section or Path(hit.source_file).stem,
+            "summary": hit.excerpt,
+            "source_url": hit.url,
+            "source_type": "wiki",
+            "memory_layer": "knowledge_product",
+            "visibility": "private",
+            "namespace": "private",
+            "score": hit.score,
+            "retrieval": "wiki_semantic",
+        } for hit in hits]
+
     def _drop_irrelevant(self, query: str, records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         """Replace rank scores with true similarity and drop what is not relevant.
 
@@ -465,6 +509,13 @@ class KnowledgeCatalog:
             "status": "available" if xbrain_query is not None else "unavailable",
         }
         semantic_records = self._semantic_search(query, limit, namespace)
+        # The card backend and the wiki index are two different stores. Cards
+        # live in gbrain; wiki topics and daily memory live in XKB's own
+        # semantic index and gbrain has never seen them — so searching only
+        # gbrain made the entire wiki invisible to this service, including a
+        # 700K arsenal page holding 320 named patterns. Recall returned card
+        # fragments and never the distilled conclusions written above them.
+        semantic_records += self._wiki_search(query, limit, namespace)
         semantic_backend["used"] = bool(semantic_records)
         if semantic_records:
             semantic_backend["status"] = "used"
