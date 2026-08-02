@@ -1,87 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
-  <title id="title">X Knowledge Base — Make knowledge reappear</title>
-  <desc id="desc">A project-native system map showing scattered sources becoming structured knowledge cards, distilled wiki topics, and active recall.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title desc">
+  <title id="title">XKB — one knowledge layer your agents share</title>
+  <desc id="desc">Claude Code, OpenClaw and Codex connect to a single local-first XKB service, which recalls from a shared plane of sourced evidence cards, distilled wiki topics, and captured conversation traces.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#07111A"/>
       <stop offset="1" stop-color="#0D1D29"/>
     </linearGradient>
-    <linearGradient id="rise" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0" stop-color="#59D8C8" stop-opacity="0.08"/>
-      <stop offset="1" stop-color="#59D8C8" stop-opacity="0.32"/>
-    </linearGradient>
     <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="12"/>
+      <feGaussianBlur stdDeviation="14"/>
     </filter>
   </defs>
 
-  <rect width="1200" height="420" rx="28" fill="url(#bg)"/>
-  <path d="M0 320 C210 286 365 360 560 319 C755 278 926 221 1200 248 L1200 420 L0 420 Z" fill="url(#rise)"/>
-  <path d="M0 320 C210 286 365 360 560 319 C755 278 926 221 1200 248" fill="none" stroke="#59D8C8" stroke-opacity="0.28" stroke-width="2"/>
+  <rect width="1200" height="470" rx="28" fill="url(#bg)"/>
 
-  <g transform="translate(64 54)">
-    <text x="0" y="0" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">PERSONAL KNOWLEDGE LIFECYCLE</text>
-    <text x="0" y="78" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="60" font-weight="760">X Knowledge Base</text>
-    <text x="0" y="126" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="30" font-weight="600">Make knowledge reappear.</text>
-    <text x="0" y="169" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">Turn scattered sources into structured cards,</text>
-    <text x="0" y="199" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">durable understanding, and timely active recall.</text>
+  <!-- ── left: title ───────────────────────────────────────────── -->
+  <g transform="translate(64 64)">
+    <text x="0" y="0" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">LOCAL-FIRST KNOWLEDGE INFRASTRUCTURE</text>
 
-    <g transform="translate(0 244)">
-      <rect width="126" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="63" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">MULTI-SOURCE</text>
-      <rect x="138" width="118" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="197" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">LOCAL-FIRST</text>
-      <rect x="268" width="138" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="337" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">AGENT-READY</text>
+    <text x="-4" y="104" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="104" font-weight="780" letter-spacing="-2">XKB</text>
+
+    <text x="0" y="158" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="31" font-weight="640">One knowledge layer your agents share.</text>
+
+    <text x="0" y="204" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">Semantic recall across your own sources — with</text>
+    <text x="0" y="232" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">provenance, and an honest answer when there is none.</text>
+
+    <g transform="translate(0 272)">
+      <rect width="150" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
+      <text x="75" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">CROSS-AGENT</text>
+      <rect x="162" width="118" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
+      <text x="221" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">LOCAL-FIRST</text>
+      <rect x="292" width="132" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
+      <text x="358" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">MULTI-SOURCE</text>
+    </g>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#6D8296">
+      <text x="0" y="352">Python · SQLite · vectors optional</text>
+      <text x="0" y="378">PolyForm Noncommercial 1.0.0</text>
     </g>
   </g>
 
-  <g transform="translate(748 76) scale(0.68)">
-    <circle cx="225" cy="164" r="152" fill="#59D8C8" opacity="0.055" filter="url(#soft)"/>
+  <!-- ── right: the actual structure ───────────────────────────── -->
+  <g transform="translate(646 58)">
+    <circle cx="240" cy="200" r="180" fill="#59D8C8" opacity="0.05" filter="url(#soft)"/>
 
+    <!-- agents -->
     <g fill="#102633" stroke="#2C4B5C" stroke-width="1.5">
-      <rect x="0" y="12" width="134" height="52" rx="12"/>
-      <rect x="0" y="78" width="134" height="52" rx="12"/>
-      <rect x="0" y="144" width="134" height="52" rx="12"/>
-      <rect x="0" y="210" width="134" height="52" rx="12"/>
+      <rect x="0" y="0" width="152" height="56" rx="12"/>
+      <rect x="168" y="0" width="152" height="56" rx="12"/>
+      <rect x="336" y="0" width="152" height="56" rx="12"/>
     </g>
-    <g fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
-      <text x="18" y="45">NOTES</text>
-      <text x="18" y="111">BOOKMARKS</text>
-      <text x="18" y="177">VIDEOS</text>
-      <text x="18" y="243">REPOS + PAPERS</text>
+    <g fill="#C8D5DE" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" text-anchor="middle">
+      <text x="76" y="34">Claude Code</text>
+      <text x="244" y="34">OpenClaw</text>
+      <text x="412" y="34">Codex</text>
     </g>
 
-    <g fill="none" stroke="#59D8C8" stroke-width="2" stroke-opacity="0.6">
-      <path d="M134 38 C190 38 178 111 232 111"/>
-      <path d="M134 104 C178 104 188 130 232 130"/>
-      <path d="M134 170 C178 170 188 149 232 149"/>
-      <path d="M134 236 C190 236 178 168 232 168"/>
+    <!-- converge into one service -->
+    <g fill="none" stroke="#3B6173" stroke-width="2">
+      <path d="M76 56 V84 H244"/>
+      <path d="M412 56 V84 H244"/>
+      <path d="M244 56 V84"/>
+    </g>
+    <path d="M244 84 V116" fill="none" stroke="#59D8C8" stroke-width="2.5"/>
+    <text x="262" y="108" fill="#6D8296" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">one HTTP service</text>
+
+    <!-- service -->
+    <g transform="translate(0 116)">
+      <rect width="488" height="74" rx="16" fill="#15313D" stroke="#59D8C8" stroke-width="2"/>
+      <text x="244" y="34" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">recall · capture · govern</text>
+      <text x="244" y="58" text-anchor="middle" fill="#8FA3B4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">token-scoped namespace · loopback by default</text>
     </g>
 
-    <g transform="translate(232 83)">
-      <rect width="168" height="122" rx="18" fill="#15313D" stroke="#59D8C8" stroke-width="2"/>
-      <text x="20" y="34" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">STRUCTURE</text>
-      <text x="20" y="69" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700">Knowledge</text>
-      <text x="20" y="98" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="700">Cards</text>
-    </g>
+    <path d="M244 190 V222" fill="none" stroke="#59D8C8" stroke-width="2.5"/>
 
-    <path d="M400 144 C448 144 442 83 486 83" fill="none" stroke="#FFB86B" stroke-width="2.5"/>
-    <path d="M400 144 C448 144 442 210 486 210" fill="none" stroke="#59D8C8" stroke-width="2.5"/>
+    <!-- shared plane -->
+    <g transform="translate(0 222)">
+      <rect width="488" height="164" rx="16" fill="#0C1B25" stroke="#2C4B5C"/>
+      <text x="20" y="30" fill="#6D8296" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="1.6">SHARED KNOWLEDGE PLANE</text>
 
-    <g transform="translate(486 42)">
-      <rect width="140" height="82" rx="16" fill="#2A2119" stroke="#FFB86B"/>
-      <text x="18" y="31" fill="#FFB86B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">DISTILL</text>
-      <text x="18" y="60" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Wiki</text>
-    </g>
-    <g transform="translate(486 169)">
-      <rect width="140" height="82" rx="16" fill="#102D2D" stroke="#59D8C8"/>
-      <text x="18" y="31" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">RETRIEVE</text>
-      <text x="18" y="60" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">Recall</text>
-    </g>
+      <g transform="translate(20 46)">
+        <rect width="142" height="98" rx="13" fill="#102D2D" stroke="#59D8C8" stroke-opacity="0.55"/>
+        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">evidence</text>
+        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">cards</text>
+        <text x="71" y="84" text-anchor="middle" fill="#7E93A6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">sourced, graded</text>
+      </g>
 
-    <path d="M556 251 C556 300 482 308 412 308" fill="none" stroke="#59D8C8" stroke-width="2" stroke-dasharray="7 7"/>
-    <circle cx="398" cy="308" r="7" fill="#59D8C8"/>
-    <text x="382" y="315" text-anchor="end" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19">REAPPEARS WHEN USEFUL</text>
+      <g transform="translate(173 46)">
+        <rect width="142" height="98" rx="13" fill="#2A2119" stroke="#FFB86B" stroke-opacity="0.6"/>
+        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">wiki</text>
+        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">topics</text>
+        <text x="71" y="84" text-anchor="middle" fill="#A8927A" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">gated intake</text>
+      </g>
+
+      <g transform="translate(326 46)">
+        <rect width="142" height="98" rx="13" fill="#102633" stroke="#3B6173"/>
+        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">conversation</text>
+        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">traces</text>
+        <text x="71" y="84" text-anchor="middle" fill="#7E93A6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">never auto-promoted</text>
+      </g>
+    </g>
   </g>
 </svg>

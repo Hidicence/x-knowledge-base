@@ -450,3 +450,44 @@ class KnowledgeRetirementTests(unittest.TestCase):
         with mock.patch.object(module, "card_similarities", return_value={"a/1.md": 0.9}):
             kept, dropped = catalog._drop_irrelevant("q", [{"id": "a/1", "score": 0.88}])
         self.assertEqual((len(kept), dropped), (1, 0))
+
+
+class QueryEmbeddingCacheTests(unittest.TestCase):
+    """The same query is embedded twice per recall: once by hybrid search,
+    once by the relevance filter. The second call is a wasted round trip."""
+
+    def test_repeated_query_is_embedded_once(self) -> None:
+        import continuity_recall as cr
+        cr._QUERY_VECTORS.clear()
+        calls = []
+
+        def fake(query):
+            calls.append(query)
+            return [0.1, 0.2]
+
+        with mock.patch.object(cr, "_embed_query_uncached", side_effect=fake):
+            first = cr._embed_query("same question")
+            second = cr._embed_query("same question")
+            cr._embed_query("different question")
+        self.assertEqual(first, second)
+        self.assertEqual(calls, ["same question", "different question"])
+        cr._QUERY_VECTORS.clear()
+
+    def test_failure_is_cached_too_so_a_dead_provider_is_not_retried(self) -> None:
+        import continuity_recall as cr
+        cr._QUERY_VECTORS.clear()
+        calls = []
+        with mock.patch.object(cr, "_embed_query_uncached", side_effect=lambda q: calls.append(q) or None):
+            self.assertIsNone(cr._embed_query("q"))
+            self.assertIsNone(cr._embed_query("q"))
+        self.assertEqual(len(calls), 1)
+        cr._QUERY_VECTORS.clear()
+
+    def test_cache_is_bounded(self) -> None:
+        import continuity_recall as cr
+        cr._QUERY_VECTORS.clear()
+        with mock.patch.object(cr, "_embed_query_uncached", return_value=[0.0]):
+            for i in range(cr._QUERY_VECTOR_LIMIT + 5):
+                cr._embed_query(f"q{i}")
+        self.assertLessEqual(len(cr._QUERY_VECTORS), cr._QUERY_VECTOR_LIMIT)
+        cr._QUERY_VECTORS.clear()

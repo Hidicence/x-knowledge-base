@@ -386,8 +386,25 @@ def _load_embedding_env() -> None:
         os.environ["EMBEDDING_PROVIDER"] = "gemini"
 
 
+# 同一句話在一次召回裡會被 embed 兩次：混合檢索先打一次，相關度過濾再打一次。
+# 查詢字串一模一樣，向量當然也一樣，第二次純粹是多付一趟網路來回。
+# 小快取就夠——一次召回內命中，而且行程結束就丟掉，不會拿到過期的向量。
+_QUERY_VECTORS: dict[str, list[float] | None] = {}
+_QUERY_VECTOR_LIMIT = 64
+
+
 def _embed_query(query: str) -> list[float] | None:
     """拿不到 embedding 就回 None，呼叫端會退回字串比對。"""
+    if query in _QUERY_VECTORS:
+        return _QUERY_VECTORS[query]
+    vector = _embed_query_uncached(query)
+    if len(_QUERY_VECTORS) >= _QUERY_VECTOR_LIMIT:
+        _QUERY_VECTORS.clear()
+    _QUERY_VECTORS[query] = vector
+    return vector
+
+
+def _embed_query_uncached(query: str) -> list[float] | None:
     global _PROVIDER
     if _PROVIDER is None:
         try:
