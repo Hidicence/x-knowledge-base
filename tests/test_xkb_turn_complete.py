@@ -23,7 +23,7 @@ class TurnCompleteTests(unittest.TestCase):
             "episode_id": "episode-1",
             "turn_id": "turn-1",
             "agent_id": "openclaw",
-            "namespace": "pan-private",
+            "namespace": "team-private",
             "user_message": "請查證這個決策",
             "assistant_message": "已查證，保留來源證據。",
             "tool_calls": [{"name": "read"}],

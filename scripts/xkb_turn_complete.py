@@ -49,7 +49,7 @@ def turn_to_trace_payload(turn: dict[str, Any]) -> dict[str, Any]:
         "episode_id": episode_id,
         "session_id": session_id,
         "agent_id": turn.get("agent_id", "openclaw"),
-        "namespace": turn.get("namespace", "pan-private"),
+        "namespace": turn.get("namespace", "private"),
         "source_type": "conversation",
         "source_id": turn_id or None,
         "content": content,

@@ -57,7 +57,9 @@ def capture_trace(payload: dict[str, Any], *, captured_at: str | None = None) ->
         "episode_id": episode_id or None,
         "session_id": session_id or None,
         "agent_id": _text(payload.get("agent_id")).strip() or "unknown",
-        "namespace": _text(payload.get("namespace")).strip() or "pan-private",
+        # Must match the service's ACL default ("private"): a trace written
+        # under a different default would never satisfy the namespace check.
+        "namespace": _text(payload.get("namespace")).strip() or "private",
     }
     stable_input = {
         "identity": identity,

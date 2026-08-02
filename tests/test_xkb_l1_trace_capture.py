@@ -20,7 +20,7 @@ class L1TraceCaptureTests(unittest.TestCase):
         payload = {
             "session_id": "session-123",
             "agent_id": "openclaw",
-            "namespace": "pan-private",
+            "namespace": "team-private",
             "source_type": "conversation",
             "source_id": "turn-9",
             "content": "Pan prefers evidence-first work.",
