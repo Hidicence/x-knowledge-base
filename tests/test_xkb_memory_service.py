@@ -370,16 +370,17 @@ class RelevanceAndIntentTests(unittest.TestCase):
         self.assertEqual(skip("我們之前怎麼處理碳盤查的"), "")
 
     def test_vector_key_maps_slug_onto_index_key(self) -> None:
-        self.assertEqual(self.module._vector_key("01-topic/12345"), "01-topic/12345.md")
-        self.assertEqual(self.module._vector_key("01-topic/12345.md"), "01-topic/12345.md")
-        self.assertEqual(self.module._vector_key("https://x.com/i/status/1"), "")
-        self.assertEqual(self.module._vector_key(""), "")
+        import xkb_relevance
+        self.assertEqual(xkb_relevance.vector_key("01-topic/12345"), "01-topic/12345.md")
+        self.assertEqual(xkb_relevance.vector_key("01-topic/12345.md"), "01-topic/12345.md")
+        self.assertEqual(xkb_relevance.vector_key("https://x.com/i/status/1"), "")
+        self.assertEqual(xkb_relevance.vector_key(""), "")
 
     def test_rank_score_is_replaced_by_measured_similarity(self) -> None:
         """The backend's score says "ranked first", not "is relevant"."""
         catalog = self.module.KnowledgeCatalog()
         records = [{"id": "a/1", "score": 0.88}, {"id": "a/2", "score": 0.87}]
-        with mock.patch.object(self.module, "card_similarities",
+        with mock.patch("xkb_relevance.similarities",
                                return_value={"a/1.md": 0.72, "a/2.md": 0.30}):
             kept, dropped = catalog._drop_irrelevant("q", records)
         self.assertEqual(dropped, 1)
@@ -391,7 +392,7 @@ class RelevanceAndIntentTests(unittest.TestCase):
         """A missing index must not silently delete every result."""
         catalog = self.module.KnowledgeCatalog()
         records = [{"id": "a/1", "score": 0.88}]
-        with mock.patch.object(self.module, "card_similarities", return_value=None):
+        with mock.patch("xkb_relevance.similarities", return_value=None):
             kept, dropped = catalog._drop_irrelevant("q", records)
         self.assertEqual((len(kept), dropped), (1, 0))
 
@@ -447,7 +448,7 @@ class KnowledgeRetirementTests(unittest.TestCase):
     def test_usage_accounting_never_breaks_recall(self) -> None:
         catalog = module.KnowledgeCatalog()
         catalog.usage_sink = lambda observations: (_ for _ in ()).throw(RuntimeError("db down"))
-        with mock.patch.object(module, "card_similarities", return_value={"a/1.md": 0.9}):
+        with mock.patch("xkb_relevance.similarities", return_value={"a/1.md": 0.9}):
             kept, dropped = catalog._drop_irrelevant("q", [{"id": "a/1", "score": 0.88}])
         self.assertEqual((len(kept), dropped), (1, 0))
 

@@ -35,10 +35,7 @@ try:
 except ImportError:  # pragma: no cover - semantic backend is optional
     xbrain_query = None
 
-try:
-    from continuity_recall import card_similarities
-except ImportError:  # pragma: no cover - relevance filtering is best-effort
-    card_similarities = None
+import xkb_relevance
 
 try:
     from conversation_state_parser import SUPPRESS_EXACT as ACK_ONLY
@@ -76,13 +73,6 @@ def _recall_warnings(knowledge: dict[str, Any], filtered_counts: dict[str, Any])
     return warnings
 
 
-def _vector_key(record_id: str) -> str:
-    """Map a backend slug onto the key the vector index uses."""
-    if not record_id or record_id.startswith(("http://", "https://", "semantic:")):
-        return ""
-    return record_id if record_id.endswith(".md") else f"{record_id}.md"
-
-
 def safe_read(path: Path, limit: int = 200_000) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")[:limit]
@@ -99,14 +89,6 @@ READ_SCOPE = "memory:read"
 WRITE_SCOPE = "memory:write"
 DEFAULT_SCOPES = (READ_SCOPE, WRITE_SCOPE)
 
-# Minimum true cosine similarity for a semantic hit to be worth injecting.
-#
-# The backend's own score is an RRF *rank* score: it says "this ranked first",
-# not "this is relevant", so rank 1 sits near 0.88 even when the knowledge base
-# holds nothing on the subject. Measured on this corpus, "今天天氣如何" scored
-# 0.863 while "碳盤查的計算方式" scored 0.862 — the score cannot tell them apart,
-# so filtering has to use the real query/document cosine instead.
-MIN_SEMANTIC_RELEVANCE = float(os.getenv("XKB_SERVICE_MIN_RELEVANCE", "0.55"))
 
 
 class Unauthorized(Exception):
@@ -428,44 +410,26 @@ class KnowledgeCatalog:
         the records pass through unchanged: losing recall because the index is
         missing would be a worse failure than showing a few weak results.
         """
-        if not records or card_similarities is None:
+        if not records:
             return records, 0
-        # The backend returns slugs ("01-topic/12345"); the vector index is
-        # keyed by the card's relative path, which carries the .md suffix.
-        keys = {str(item.get("id") or ""): _vector_key(str(item.get("id") or "")) for item in records}
-        try:
-            scores = card_similarities(query, [key for key in keys.values() if key])
-        except Exception:
-            return records, 0
-        if not scores:
-            return records, 0
-        kept = []
-        for item in records:
-            similarity = scores.get(keys.get(str(item.get("id") or "")) or "")
-            if similarity is None:
-                kept.append(item)
-                continue
-            if similarity < MIN_SEMANTIC_RELEVANCE:
-                continue
-            # Report the measured relevance, keeping the rank score it replaces
-            # so a caller can still see what the backend ordered on.
-            item["rank_score"] = item.get("score")
-            item["score"] = round(similarity, 4)
-            kept.append(item)
-        kept.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        kept, dropped, scores = xkb_relevance.filter_irrelevant(
+            query, records, key_of=lambda item: str(item.get("id") or ""))
+        keys = {str(item.get("id") or ""): xkb_relevance.vector_key(str(item.get("id") or ""))
+                for item in records}
         if self.usage_sink is not None:
             # Every candidate the backend surfaced, with the similarity it
             # actually achieved. This is the only honest "was it any use"
             # signal XKB has: a card retrieved many times that never once
             # clears the floor is not earning its place.
+            floor = xkb_relevance.min_similarity()
             try:
                 self.usage_sink([
-                    (record_id, scores.get(key), (scores.get(key) or 0) >= MIN_SEMANTIC_RELEVANCE)
+                    (record_id, scores.get(key), (scores.get(key) or 0) >= floor)
                     for record_id, key in keys.items() if key and scores.get(key) is not None
                 ])
             except Exception:
                 pass  # usage accounting must never break recall
-        return kept, len(records) - len(kept)
+        return kept, dropped
 
     @staticmethod
     def _acl_policy(namespace: str) -> dict[str, Any]:
@@ -815,7 +779,7 @@ class Store:
             "schema": SCHEMA,
             "read_only": True,
             "automatic_retirement": False,
-            "relevance_floor": MIN_SEMANTIC_RELEVANCE,
+            "relevance_floor": xkb_relevance.min_similarity(),
             "min_considered": min_considered,
             "tracked_records": totals["tracked"] or 0,
             "ever_useful": totals["ever_useful"] or 0,

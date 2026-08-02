@@ -62,6 +62,7 @@ except ImportError:
         pass
 
 import xkb_paths
+import xkb_relevance
 import xkb_score
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -135,35 +136,15 @@ def _results_to_dicts(results: list) -> list[dict]:
 
 
 def _drop_irrelevant_cards(query: str, results: list[dict]) -> list[dict]:
-    """用真實相似度濾掉不相關的卡片。
-
-    gbrain 回的 score 是 RRF 排名分數：它說的是「這張排第幾」，
-    不是「這張多相關」。名次第一永遠約 0.88，即使問的主題整個知識庫都沒有。
-    這裡把候選的真實餘弦相似度算出來，低於門檻就丟掉。
-
-    無法判斷時（沒有卡片索引、拿不到 embedding）原樣放行——
-    寧可多給幾筆讓 agent 自己判斷，也不要因為索引沒建好就把所有卡片濾光。
-    """
+    """用真實相似度濾掉不相關的卡片。判斷邏輯在 xkb_relevance，不要在這裡另寫一份。"""
     cards = [r for r in results if r.get("source_type") in ("card", "bookmark")]
     if not cards:
         return results
-
-    scores = card_similarities(query, [str(r.get("source_file", "")) for r in cards])
-    if scores is None:
-        return results
-
-    kept: list[dict] = []
-    for r in results:
-        if r.get("source_type") not in ("card", "bookmark"):
-            kept.append(r)
-            continue
-        similarity = scores.get(str(r.get("source_file", "")))
-        if similarity is None or similarity >= CARD_MIN_SIMILARITY:
-            if similarity is not None:
-                # 用真實相似度取代排名分數，這樣跨層排序才有意義
-                r["score"] = round(similarity, 3)
-            kept.append(r)
-    return kept
+    kept_cards, _, _ = xkb_relevance.filter_irrelevant(
+        query, cards, key_of=lambda r: str(r.get("source_file", "")))
+    keep = {id(r) for r in kept_cards}
+    return [r for r in results
+            if r.get("source_type") not in ("card", "bookmark") or id(r) in keep]
 
 
 def _format_assoc_chat(results: list[dict]) -> str:
