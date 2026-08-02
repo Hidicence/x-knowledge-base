@@ -239,6 +239,9 @@ class KnowledgeCatalog:
         self.status_files = [xkb_paths.XKB_DATA_DIR / "status-after-x-sync-20260726.json"]
         self._last_search_stats: dict[str, Any] = filter_stats()
         self._last_irrelevant = 0
+        # Set by Store so usage can be persisted; the catalog itself stays
+        # read-only over the knowledge plane.
+        self.usage_sink: Any = None
 
     def _index(self) -> list[dict[str, Any]]:
         try:
@@ -450,6 +453,18 @@ class KnowledgeCatalog:
             item["score"] = round(similarity, 4)
             kept.append(item)
         kept.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        if self.usage_sink is not None:
+            # Every candidate the backend surfaced, with the similarity it
+            # actually achieved. This is the only honest "was it any use"
+            # signal XKB has: a card retrieved many times that never once
+            # clears the floor is not earning its place.
+            try:
+                self.usage_sink([
+                    (record_id, scores.get(key), (scores.get(key) or 0) >= MIN_SEMANTIC_RELEVANCE)
+                    for record_id, key in keys.items() if key and scores.get(key) is not None
+                ])
+            except Exception:
+                pass  # usage accounting must never break recall
         return kept, len(records) - len(kept)
 
     @staticmethod
@@ -648,6 +663,7 @@ class Store:
     def __init__(self, path: Path):
         self.path = path
         self.catalog = KnowledgeCatalog()
+        self.catalog.usage_sink = self.record_usage
         self.lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -718,6 +734,17 @@ class Store:
                   ON candidates(candidate_key);
                 CREATE INDEX IF NOT EXISTS candidates_status
                   ON candidates(status, updated_at);
+                CREATE TABLE IF NOT EXISTS knowledge_usage (
+                  record_id TEXT PRIMARY KEY,
+                  considered_count INTEGER NOT NULL DEFAULT 0,
+                  injected_count INTEGER NOT NULL DEFAULT 0,
+                  best_similarity REAL NOT NULL DEFAULT 0,
+                  first_seen_at TEXT NOT NULL,
+                  last_considered_at TEXT NOT NULL,
+                  last_injected_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS knowledge_usage_cold
+                  ON knowledge_usage(injected_count, considered_count);
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(turns)").fetchall()}
@@ -731,6 +758,70 @@ class Store:
         db = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
         db.row_factory = sqlite3.Row
         return db
+
+    def record_usage(self, observations: list[tuple[str, float, bool]]) -> None:
+        """Accumulate how each record actually performed when retrieved.
+
+        XKB has no task-success signal, so Memmy's reward model cannot be
+        copied honestly — a card about camera moves is not "successful" or
+        "failed". What can be measured is whether a record, once surfaced,
+        was ever relevant enough to be worth injecting. A record retrieved
+        many times that has never cleared the floor is dead weight, and that
+        is a real observation rather than an invented score.
+        """
+        if not observations:
+            return
+        timestamp = now()
+        with self.lock, self.connect() as db:
+            for record_id, similarity, injected in observations:
+                db.execute(
+                    """
+                    INSERT INTO knowledge_usage(record_id, considered_count, injected_count,
+                                                best_similarity, first_seen_at, last_considered_at, last_injected_at)
+                    VALUES(?,1,?,?,?,?,?)
+                    ON CONFLICT(record_id) DO UPDATE SET
+                      considered_count = considered_count + 1,
+                      injected_count = injected_count + excluded.injected_count,
+                      best_similarity = MAX(best_similarity, excluded.best_similarity),
+                      last_considered_at = excluded.last_considered_at,
+                      last_injected_at = COALESCE(excluded.last_injected_at, last_injected_at)
+                    """,
+                    (record_id, 1 if injected else 0, float(similarity or 0.0),
+                     timestamp, timestamp, timestamp if injected else None),
+                )
+
+    def cold_knowledge(self, min_considered: int = 5, limit: int = 100) -> dict[str, Any]:
+        """Records repeatedly retrieved that never once cleared the relevance floor.
+
+        Reported only. Nothing is archived or deleted automatically: XKB's
+        value is provenance, and silently dropping evidence would trade that
+        away for tidiness.
+        """
+        min_considered = bounded_int(min_considered, name="min_considered", default=5, minimum=1, maximum=1000)
+        limit = bounded_int(limit, name="limit", default=100, minimum=1, maximum=1000)
+        with self.lock, self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM knowledge_usage
+                WHERE injected_count = 0 AND considered_count >= ?
+                ORDER BY considered_count DESC, best_similarity ASC LIMIT ?
+                """,
+                (min_considered, limit),
+            ).fetchall()
+            totals = db.execute(
+                "SELECT COUNT(*) AS tracked, SUM(injected_count > 0) AS ever_useful FROM knowledge_usage"
+            ).fetchone()
+        return {
+            "schema": SCHEMA,
+            "read_only": True,
+            "automatic_retirement": False,
+            "relevance_floor": MIN_SEMANTIC_RELEVANCE,
+            "min_considered": min_considered,
+            "tracked_records": totals["tracked"] or 0,
+            "ever_useful": totals["ever_useful"] or 0,
+            "count": len(rows),
+            "records": [dict(row) for row in rows],
+        }
 
     def record_job_event(self, body: dict[str, Any]) -> dict[str, Any]:
         """Persist an observed worker event; never executes the worker."""
@@ -1237,6 +1328,13 @@ class Handler(BaseHTTPRequestHandler):
                     stage=(params.get("stage") or [""])[0],
                     status=(params.get("status") or [""])[0],
                     limit=bounded_int((params.get("limit") or ["50"])[0], name="limit", default=50, minimum=1, maximum=200),
+                ))
+                return
+            if parsed.path == "/v1/knowledge/cold":
+                params = parse_qs(parsed.query)
+                self.send_json(200, self.store.cold_knowledge(
+                    min_considered=int((params.get("min_considered") or ["5"])[0]),
+                    limit=int((params.get("limit") or ["100"])[0]),
                 ))
                 return
             if parsed.path.startswith("/v1/artifacts/"):

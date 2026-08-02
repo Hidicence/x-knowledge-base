@@ -403,3 +403,50 @@ class RelevanceAndIntentTests(unittest.TestCase):
             {"retrieval_mode": "keyword_fallback", "dropped_as_irrelevant": 10}, {})
         self.assertIn("relevance floor", nothing_relevant[0])
         self.assertNotIn("unavailable", nothing_relevant[0])
+
+
+class KnowledgeRetirementTests(unittest.TestCase):
+    """Wiki and cards only ever grew; nothing ever aged out."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "memory.sqlite")
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_records_that_never_clear_the_floor_are_reported_as_cold(self) -> None:
+        for _ in range(6):
+            self.store.record_usage([("cold/1", 0.31, False), ("warm/1", 0.72, True)])
+        report = self.store.cold_knowledge(min_considered=5)
+        self.assertEqual([r["record_id"] for r in report["records"]], ["cold/1"])
+        self.assertEqual(report["tracked_records"], 2)
+        self.assertEqual(report["ever_useful"], 1)
+
+    def test_useful_records_are_never_listed_however_often_retrieved(self) -> None:
+        for _ in range(20):
+            self.store.record_usage([("warm/1", 0.40, False)])
+        self.store.record_usage([("warm/1", 0.80, True)])
+        report = self.store.cold_knowledge(min_considered=5)
+        self.assertEqual(report["records"], [])
+
+    def test_counters_accumulate_and_keep_the_best_similarity(self) -> None:
+        self.store.record_usage([("a/1", 0.30, False)])
+        self.store.record_usage([("a/1", 0.51, False)])
+        row = self.store.cold_knowledge(min_considered=1)["records"][0]
+        self.assertEqual(row["considered_count"], 2)
+        self.assertEqual(row["injected_count"], 0)
+        self.assertAlmostEqual(row["best_similarity"], 0.51, places=4)
+        self.assertIsNone(row["last_injected_at"])
+
+    def test_retirement_is_advisory_only(self) -> None:
+        """Provenance is the point; nothing may be deleted automatically."""
+        self.store.record_usage([("cold/1", 0.10, False)] * 1)
+        report = self.store.cold_knowledge(min_considered=1)
+        self.assertFalse(report["automatic_retirement"])
+        self.assertTrue(report["read_only"])
+
+    def test_usage_accounting_never_breaks_recall(self) -> None:
+        catalog = module.KnowledgeCatalog()
+        catalog.usage_sink = lambda observations: (_ for _ in ()).throw(RuntimeError("db down"))
+        with mock.patch.object(module, "card_similarities", return_value={"a/1.md": 0.9}):
+            kept, dropped = catalog._drop_irrelevant("q", [{"id": "a/1", "score": 0.88}])
+        self.assertEqual((len(kept), dropped), (1, 0))
