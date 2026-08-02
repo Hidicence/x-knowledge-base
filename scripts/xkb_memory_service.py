@@ -52,6 +52,15 @@ TRACE_SCHEMA = "xkb-l1-trace.v1"
 KNOWLEDGE_SCHEMA = "xkb-knowledge-record.v1"
 
 
+def _normalise(value: str) -> str:
+    """Collapse a statement to what it says, for grouping repeated observations.
+
+    Wording drifts between sessions; the claim is what has to match, so
+    whitespace and case are removed before hashing.
+    """
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
 def _recall_warnings(knowledge: dict[str, Any], filtered_counts: dict[str, Any]) -> list[str]:
     """Say why a result set is thin, distinguishing the three reasons.
 
@@ -999,13 +1008,43 @@ class Store:
             retrieval = json.loads(existing["retrieval_json"] or "{}")
             # Phase A+B boundary: persist an L1-backed distillation request, but
             # do not call an LLM or promote anything into stable memory here.
-            candidate_id = f"candidate:{digest({'trace_id': trace_id})[:24]}"
-            candidate_key = f"conversation:{trace_id}"
+            episode_id = text(body.get("episode_id") or body.get("episodeId")) or f"episode:{turn_id}"
+            # Key the candidate by what was said, not by which turn said it.
+            #
+            # Keying on trace_id gave every turn its own candidate holding
+            # exactly one episode — while the promotion gate requires two
+            # distinct episodes. Repetition could never accumulate, so nothing
+            # was ever eligible and the conversation-to-knowledge path was
+            # unreachable by construction.
+            #
+            # Namespace is part of the key so two tenants saying the same thing
+            # never merge into one candidate.
+            session_row = db.execute("SELECT namespace FROM sessions WHERE session_id=?", (existing["session_id"],)).fetchone()
+            namespace = (session_row["namespace"] if session_row else None) or "private"
+            candidate_key = f"conversation:{namespace}:{digest({'value': _normalise(answer)})[:32]}"
+            candidate_id = f"candidate:{digest({'key': candidate_key})[:24]}"
             timestamp = now()
-            db.execute(
-                "INSERT OR IGNORE INTO candidates(candidate_id,candidate_key,candidate_value,source_trace_ids_json,episode_ids_json,confidence,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (candidate_id, candidate_key, answer[:2000], json.dumps([trace_id]), json.dumps([text(body.get("episode_id") or body.get("episodeId")) or f"episode:{turn_id}"]), 0.0, "pending", timestamp, timestamp),
-            )
+            existing_candidate = db.execute(
+                "SELECT source_trace_ids_json, episode_ids_json FROM candidates WHERE candidate_key=?",
+                (candidate_key,),
+            ).fetchone()
+            if existing_candidate:
+                traces = sorted(set(json.loads(existing_candidate["source_trace_ids_json"] or "[]")) | {trace_id})
+                episodes = sorted(set(json.loads(existing_candidate["episode_ids_json"] or "[]")) | {episode_id})
+                # Only accumulate evidence; never revive something already
+                # rejected or already promoted.
+                db.execute(
+                    "UPDATE candidates SET source_trace_ids_json=?, episode_ids_json=?, updated_at=?"
+                    " WHERE candidate_key=? AND status IN ('pending','approved')",
+                    (json.dumps(traces, ensure_ascii=False), json.dumps(episodes, ensure_ascii=False), timestamp, candidate_key),
+                )
+            else:
+                db.execute(
+                    "INSERT OR IGNORE INTO candidates(candidate_id,candidate_key,candidate_value,source_trace_ids_json,episode_ids_json,confidence,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (candidate_id, candidate_key, answer[:2000], json.dumps([trace_id]), json.dumps([episode_id]), 0.0, "pending", timestamp, timestamp),
+                )
+            row = db.execute("SELECT candidate_id FROM candidates WHERE candidate_key=?", (candidate_key,)).fetchone()
+            candidate_id = row["candidate_id"] if row else candidate_id
             job_id = f"distill:{trace_id}"
             db.execute(
                 "INSERT OR IGNORE INTO jobs(job_id,stage,worker,status,input_ref,output_ref,retryable,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",

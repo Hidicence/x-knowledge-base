@@ -492,3 +492,56 @@ class QueryEmbeddingCacheTests(unittest.TestCase):
                 cr._embed_query(f"q{i}")
         self.assertLessEqual(len(cr._QUERY_VECTORS), cr._QUERY_VECTOR_LIMIT)
         cr._QUERY_VECTORS.clear()
+
+
+class CandidateAggregationTests(unittest.TestCase):
+    """Repetition across sessions has to accumulate onto one candidate.
+
+    Keying candidates by trace id gave every turn its own candidate holding
+    exactly one episode, while promotion requires two distinct ones — so
+    nothing could ever become eligible and the conversation-to-knowledge path
+    was unreachable by construction.
+    """
+
+    STATEMENT = "recall must report which retrieval actually ran"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Store(Path(self.tmp.name) / "memory.sqlite")
+
+    def _say(self, session_key: str, turn_id: str, answer: str = STATEMENT) -> dict:
+        session = self.store.open_session({"source": "fixture", "session_key": session_key})
+        self.store.start_turn({"session_id": session["session_id"], "turn_id": turn_id, "query": "q"})
+        return self.store.complete_turn(turn_id, {"query": "q", "answer": answer})
+
+    def _candidate(self) -> dict:
+        return self.store.query_candidates()["candidates"][0]
+
+    def test_same_statement_in_two_sessions_becomes_one_candidate(self) -> None:
+        self._say("s1", "t1")
+        self._say("s2", "t2")
+        candidates = self.store.query_candidates()["candidates"]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(len(set(candidates[0]["episode_ids"])), 2)
+        self.assertEqual(len(set(candidates[0]["source_trace_ids"])), 2)
+
+    def test_wording_drift_still_groups(self) -> None:
+        self._say("s1", "t1", self.STATEMENT)
+        self._say("s2", "t2", f"  {self.STATEMENT.upper()}  ")
+        self.assertEqual(self.store.query_candidates()["count"], 1)
+
+    def test_different_statements_stay_separate(self) -> None:
+        self._say("s1", "t1", "one thing")
+        self._say("s2", "t2", "an entirely different thing")
+        self.assertEqual(self.store.query_candidates()["count"], 2)
+
+    def test_a_rejected_candidate_is_not_revived_by_repetition(self) -> None:
+        self._say("s1", "t1")
+        with self.store.connect() as db:
+            db.execute("UPDATE candidates SET status='rejected'")
+            db.commit()
+        self._say("s2", "t2")
+        candidate = self._candidate()
+        self.assertEqual(candidate["status"], "rejected")
+        self.assertEqual(len(set(candidate["episode_ids"])), 1)
