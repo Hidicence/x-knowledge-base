@@ -10,12 +10,12 @@ wiki/ 是 **衍生知識層**，不是新的記憶系統。
 - `raw / memory` 是 source of truth
 - wiki 可重建，但不是唯讀；它會被 AI 持續維護
 
-### 終局定位（Pan Cognitive Layer）
+### 終局定位（使用者 Cognitive Layer）
 
-wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步成為 **Pan cognitive layer 的可讀成品層**。
+wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步成為 **使用者 cognitive layer 的可讀成品層**。
 
 意思是：
-- `MEMORY.md` / `memory/YYYY-MM-DD.md` 保留 Pan 與 APAN2 的工作記憶、偏好、事件與決策
+- `MEMORY.md` / `memory/YYYY-MM-DD.md` 保留 使用者與代理的工作記憶、偏好、事件與決策
 - `x-knowledge-base` 持續吸收外部知識（X / YouTube / article / cards）
 - `Dreaming` 負責把短期訊號做背景整理與提升
 - `wiki` 則負責把 **外部知識 + 內部經驗 / 決策 / workflow** 整理成可讀、可回用、可持續更新的主題頁
@@ -23,11 +23,11 @@ wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步
 換句話說：
 - Dreaming 是整理機制，不是知識成品
 - x-knowledge-base 是原料庫，不是人格知識本體
-- wiki 才是未來承接「像 Pan，但更能吸收與整合外部知識」這個願景的頁面層
+- wiki 才是未來承接「像 使用者，但更能吸收與整合外部知識」這個願景的頁面層
 
 因此後續設計原則是：
 1. 不把 wiki 當成純 xkb 摘要器
-2. 允許 wiki 吸收 Pan 已確認的觀點、workflow、技術決策
+2. 允許 wiki 吸收 使用者 已確認的觀點、workflow、技術決策
 3. 讓 wiki 成為高信號、低噪音、跨來源綜合後的認知成品層
 4. 若某條內容只屬於短期記憶整理，留在 memory / Dreaming，不強行進 wiki
 
@@ -80,7 +80,7 @@ wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步
 必須至少符合一項：
 - 有明確技術決策與理由
 - 有可重複使用的 workflow / 指令 /規則
-- 有經 Pan 確認的觀點、結論或原則
+- 有經 使用者 確認的觀點、結論或原則
 
 排除：
 - 流水帳
@@ -90,8 +90,8 @@ wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步
 
 ### 來自即時對話（query-filed）
 
-- Pan 明確說「存進 wiki」→ 可直接寫入 `topics/`
-- 若 APAN2 自判品質夠高，但 Pan 未明確要求 → 先進 `_staging/`
+- 使用者 明確說「存進 wiki」→ 可直接寫入 `topics/`
+- 若 代理自判品質夠高，但 使用者未明確要求 → 先進 `_staging/`
 
 ---
 
@@ -100,21 +100,21 @@ wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步
 ### Level 0（Phase C 初期）
 
 - distill 腳本只產出候選到 `wiki/_staging/YYYY-MM-DD-candidates.md`
-- APAN2 提示 Pan 有候選待確認
+- 代理 提示 使用者 有候選待確認
 - 只有 approved 的內容才可 upsert 到 `wiki/topics/`
 - 至少累積 30 次候選 review 後，才評估升級
 
-### Level 1（需 Pan 明確同意）
+### Level 1（需 使用者 明確同意）
 
 - 符合 Source Inclusion Policy 且 confidence 高的內容可自動寫入
-- 仍需產出 daily digest 給 Pan
-- Pan 可隨時要求降回 Level 0
+- 仍需產出 daily digest 給 使用者
+- 使用者 可隨時要求降回 Level 0
 
 ### Level 2（未來再議）
 
 - 全自動寫入
 - 只在 lint / 異常 / 衝突時提醒
-- 前提是 Level 1 長期穩定且 Pan 明確批准
+- 前提是 Level 1 長期穩定且 使用者 明確批准
 
 ---
 
@@ -129,8 +129,8 @@ wiki 的長期目標，不只是做成「整理後的知識頁」，而是逐步
    - 先保留雙方觀點，放入「矛盾與未解問題」
 
 3. Overwrite 條件
-   - Pan 明確說「這個過期了」
-   - 或 lint 標記 stale，且 Pan 確認可改
+   - 使用者 明確說「這個過期了」
+   - 或 lint 標記 stale，且 使用者 確認可改
 
 4. 每次修改 wiki 頁面後，必須同步：
    - 更新 frontmatter 的 `last_updated`
@@ -256,10 +256,10 @@ last_updated: 2026-04-05
 
 ### Wiki 更新觸發條件
 
-以下情況 APAN2 應主動判斷並更新 wiki：
+以下情況 代理 應主動判斷並更新 wiki：
 - 對話結束後，出現了可執行結論、技術決策、或確認的原則 → absorb 判斷是否入 wiki
 - x-knowledge-base 有新書籤卡，且 absorb 判斷有新維度 → 更新對應 topic 頁
-- Pan 明確說「記住這個」或「存進 wiki」→ 直接寫入，不需判斷
+- 使用者 明確說「記住這個」或「存進 wiki」→ 直接寫入，不需判斷
 
 ### 不應觸發 wiki 更新的情況
 - 對話只是問答，無新結論
@@ -277,11 +277,11 @@ last_updated: 2026-04-05
 | draft | 已在 index.md 註冊，但頁面空白或只有 frontmatter | 寫入至少 核心概念 + 1 個來源 |
 | seeded | 有基本內容（核心概念 + 案例 + 來源） | 有 2 次以上 absorb 更新且內容穩定 |
 | active | 持續有新內容 absorb 進來 | — |
-| stale | last_updated 超過 60 天，或主要來源已過期 | lint 提示後 Pan 確認是否保留 |
+| stale | last_updated 超過 60 天，或主要來源已過期 | lint 提示後 使用者 確認是否保留 |
 
 降級規則：
 - active → stale：60 天無更新自動標記
-- stale 頁面不刪除，等 Pan 決定是否 archive 或更新
+- stale 頁面不刪除，等 使用者 決定是否 archive 或更新
 
 
 

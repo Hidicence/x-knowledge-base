@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor one or more YouTube playlists and prepare transcript packages for APAN2/XKB card generation.
+"""Monitor one or more YouTube playlists and prepare transcript packages for agent/XKB card generation.
 
 This script intentionally does NOT call any LLM. It only:
 1. loads playlist configs
@@ -8,7 +8,7 @@ This script intentionally does NOT call any LLM. It only:
 4. downloads subtitles for new videos
 5. writes raw transcript JSON packages under memory/x-knowledge-base/youtube-raw/
 
-Card generation is handled by OpenClaw/APAN2 cron agent, not by a direct model provider.
+Card generation is handled by OpenClaw cron agent, not by a direct model provider.
 """
 
 from __future__ import annotations

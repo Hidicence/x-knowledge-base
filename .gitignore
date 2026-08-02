@@ -38,3 +38,4 @@ dist/
 # Machine-local service credentials (bearer tokens) - never commit
 scripts/xkb-agent-hook-config.json
 auth.json
+config/youtube-playlists.json

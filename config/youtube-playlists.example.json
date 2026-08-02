@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy to youtube-playlists.json and replace with your own playlists. The real file is gitignored so your subscriptions stay private.",
+  "playlists": [
+    {
+      "id": "example-playlist",
+      "title": "Example - AI tooling and agent workflows",
+      "url": "https://www.youtube.com/playlist?list=REPLACE_WITH_YOUR_PLAYLIST_ID",
+      "category": "ai-tools",
+      "tags": [
+        "claude-code",
+        "agent-workflows",
+        "automation"
+      ],
+      "notes": "What this playlist contributes to your knowledge base."
+    }
+  ]
+}

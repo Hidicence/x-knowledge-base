@@ -1,8 +1,0 @@
-{
-  "_comment": "XKB unified LLM config. Change 'model' here to switch all scripts at once.",
-  "model": "sub2api-gpt/gpt-5.5",
-  "_examples": {
-    "gpt_5_5":     "sub2api-gpt/gpt-5.5",
-    "gpt_5_4":     "openai-codex/gpt-5.4"
-  }
-}

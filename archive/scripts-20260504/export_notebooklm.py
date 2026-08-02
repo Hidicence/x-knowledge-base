@@ -66,7 +66,7 @@ def to_card(src: Path):
     tags_raw = extract_field(fm, 'tags')
     summary = extract_section(text, '## 📌 一句話摘要') or extract_section(text, '## 一句话摘要')
     points = extract_section(text, '## 🎯 三個重點') or extract_section(text, '## 三个重点')
-    pan_value = extract_section(text, '## 💡 對 Pan 的價值') or extract_section(text, '## 對 Pan 的可行動價值') or extract_section(text, '## 对 Pan 的价值')
+    pan_value = extract_section(text, '## 💡 對使用者的價值') or extract_section(text, '## 對使用者的可行動價值') or extract_section(text, '## 对使用者的价值')
     thread = extract_section(text, '## 🧵 Thread 全文') or extract_section(text, '## ✍️ 作者補充')
     links = extract_section(text, '## 🔗 外部連結摘錄')
 
