@@ -31,6 +31,44 @@ And because your agents keep starting cold, it now serves all of that through **
 
 ---
 
+## The loop
+
+Most knowledge tools are a funnel: things go in, and you go and fetch them. XKB closes the circle, and the closing is where the leverage is.
+
+```text
+        external sources                    ┌──────────────────────┐
+   notes · bookmarks · video · repos ──────►│                      │
+                                            │      evidence        │
+   ┌────────────────────────────────────────┤   nine-section cards │
+   │                                        │   source · claim     │
+   │  Claude Code · OpenClaw · Codex        └───────────┬──────────┘
+   │        │                    ▲                      │
+   │        │ work happens       │ recall               ▼
+   │        ▼                    │              ┌───────────────┐
+   │  conversation ──► candidate │              │  absorb gate  │
+   │                      │      │              └───────┬───────┘
+   │                      ▼      │                      ▼
+   │                 ┌────────────────┐         ┌──────────────┐
+   └────────────────►│   knowledge    │◄────────┤  wiki topics │
+                     │    service     │         └──────────────┘
+                     └────────────────┘
+```
+
+Read it as a cycle: **work produces evidence, evidence is governed into understanding, understanding comes back as recall, and better recall makes the next piece of work better.** An afternoon spent in Claude Code becomes something OpenClaw can draw on next week — without you copying anything across.
+
+### Why closed loops usually rot, and what stops it here
+
+A system that learns from its own output drifts. It recalls what it wrote, agrees with itself, and slowly turns opinion into fact. Four things hold the line:
+
+- **Provenance is typed.** Knowledge derived from your own conversations is marked as such and scored below externally sourced evidence on recall (`-0.15` by default). The loop can tell its own voice from the world's.
+- **Repetition is not evidence.** A candidate needs support across *distinct* episodes before it is even eligible for review. Saying something twice in one session proves nothing.
+- **Nothing promotes itself.** Conversations become candidates, never knowledge. The absorb gate stands between evidence and understanding, and it fails closed.
+- **Disagreement is recalled on purpose.** The contrarian layer surfaces the limits and failures you already recorded, so converging fast does not mean converging blind.
+
+The result is a loop that compounds rather than one that echoes — and every hop in it is inspectable: what was recalled, what was filtered, what was held, and why.
+
+---
+
 ## What a recall actually returns
 
 ```console
