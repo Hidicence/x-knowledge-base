@@ -35,9 +35,52 @@ try:
 except ImportError:  # pragma: no cover - semantic backend is optional
     xbrain_query = None
 
+try:
+    from continuity_recall import card_similarities
+except ImportError:  # pragma: no cover - relevance filtering is best-effort
+    card_similarities = None
+
+try:
+    from conversation_state_parser import SUPPRESS_EXACT as ACK_ONLY
+except ImportError:  # pragma: no cover - intent gating is best-effort
+    ACK_ONLY = {"ok", "好", "收到", "謝謝", "thanks", "好的", "嗯", "哦", "喔"}
+
+# Greetings only. Deliberately narrower than the parser's suppress list, which
+# also drops things like "^計算" — that would silence real questions.
+GREETING_PATTERNS = (r"^哈+$", r"^哈哈", r"^早安", r"^晚安", r"^午安",
+                     r"^你好$", r"^hi$", r"^hello$", r"^嗨$")
+
 SCHEMA = "xkb-knowledge-service.v1"
 TRACE_SCHEMA = "xkb-l1-trace.v1"
 KNOWLEDGE_SCHEMA = "xkb-knowledge-record.v1"
+
+
+def _recall_warnings(knowledge: dict[str, Any], filtered_counts: dict[str, Any]) -> list[str]:
+    """Say why a result set is thin, distinguishing the three reasons.
+
+    "The backend is broken", "the backend worked but nothing was relevant" and
+    "results existed but ACL removed them" produce the same empty list, and
+    conflating them is how XKB failures previously stayed invisible for weeks.
+    """
+    warnings = []
+    dropped = knowledge.get("dropped_as_irrelevant", 0)
+    if knowledge.get("retrieval_mode") != "xbrain_hybrid":
+        if dropped:
+            warnings.append(f"semantic results found but {dropped} dropped below the relevance floor")
+        else:
+            warnings.append("semantic_backend_unavailable_or_empty; keyword fallback used")
+    elif dropped:
+        warnings.append(f"{dropped} semantic results dropped below the relevance floor")
+    if filtered_counts.get("total"):
+        warnings.append("records_filtered_by_acl")
+    return warnings
+
+
+def _vector_key(record_id: str) -> str:
+    """Map a backend slug onto the key the vector index uses."""
+    if not record_id or record_id.startswith(("http://", "https://", "semantic:")):
+        return ""
+    return record_id if record_id.endswith(".md") else f"{record_id}.md"
 
 
 def safe_read(path: Path, limit: int = 200_000) -> str:
@@ -55,6 +98,15 @@ ACL_LAYERS = ("card", "wiki", "semantic", "conversation")
 READ_SCOPE = "memory:read"
 WRITE_SCOPE = "memory:write"
 DEFAULT_SCOPES = (READ_SCOPE, WRITE_SCOPE)
+
+# Minimum true cosine similarity for a semantic hit to be worth injecting.
+#
+# The backend's own score is an RRF *rank* score: it says "this ranked first",
+# not "this is relevant", so rank 1 sits near 0.88 even when the knowledge base
+# holds nothing on the subject. Measured on this corpus, "今天天氣如何" scored
+# 0.863 while "碳盤查的計算方式" scored 0.862 — the score cannot tell them apart,
+# so filtering has to use the real query/document cosine instead.
+MIN_SEMANTIC_RELEVANCE = float(os.getenv("XKB_SERVICE_MIN_RELEVANCE", "0.55"))
 
 
 class Unauthorized(Exception):
@@ -186,6 +238,7 @@ class KnowledgeCatalog:
         self.wiki_topics_dir = xkb_paths.WIKI_TOPICS_DIR
         self.status_files = [xkb_paths.XKB_DATA_DIR / "status-after-x-sync-20260726.json"]
         self._last_search_stats: dict[str, Any] = filter_stats()
+        self._last_irrelevant = 0
 
     def _index(self) -> list[dict[str, Any]]:
         try:
@@ -358,7 +411,46 @@ class KnowledgeCatalog:
         # The semantic backend does not report which knowledge layer a hit came
         # from, so ACL drops here can only be attributed to the channel.
         self._last_search_stats = filter_stats(semantic=filtered)
+        records, self._last_irrelevant = self._drop_irrelevant(query, records)
         return records
+
+    def _drop_irrelevant(self, query: str, records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+        """Replace rank scores with true similarity and drop what is not relevant.
+
+        Injecting ten results into every turn regardless of relevance is what
+        makes an unrelated question cost as much as a real one. Rank order
+        cannot decide this — only the actual query/document cosine can.
+
+        When similarity cannot be computed (no index, no embedding provider)
+        the records pass through unchanged: losing recall because the index is
+        missing would be a worse failure than showing a few weak results.
+        """
+        if not records or card_similarities is None:
+            return records, 0
+        # The backend returns slugs ("01-topic/12345"); the vector index is
+        # keyed by the card's relative path, which carries the .md suffix.
+        keys = {str(item.get("id") or ""): _vector_key(str(item.get("id") or "")) for item in records}
+        try:
+            scores = card_similarities(query, [key for key in keys.values() if key])
+        except Exception:
+            return records, 0
+        if not scores:
+            return records, 0
+        kept = []
+        for item in records:
+            similarity = scores.get(keys.get(str(item.get("id") or "")) or "")
+            if similarity is None:
+                kept.append(item)
+                continue
+            if similarity < MIN_SEMANTIC_RELEVANCE:
+                continue
+            # Report the measured relevance, keeping the rank score it replaces
+            # so a caller can still see what the backend ordered on.
+            item["rank_score"] = item.get("score")
+            item["score"] = round(similarity, 4)
+            kept.append(item)
+        kept.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        return kept, len(records) - len(kept)
 
     @staticmethod
     def _acl_policy(namespace: str) -> dict[str, Any]:
@@ -428,7 +520,9 @@ class KnowledgeCatalog:
             "request_namespace": namespace, "acl_policy": self._acl_policy(namespace),
             "records": records, "count": len(records), "context": context,
             "retrieval_mode": retrieval_mode, "semantic_backend": semantic_backend,
-            "filtered_counts": filtered_counts, "warnings": [],
+            "filtered_counts": filtered_counts,
+            "dropped_as_irrelevant": self._last_irrelevant,
+            "warnings": [],
         }
 
     def relations(self, card_id: str) -> dict[str, Any]:
@@ -963,12 +1057,47 @@ class Store:
         })
         return payload
 
+    @staticmethod
+    def _skip_reason(query: str) -> str:
+        """Return why retrieval should be skipped outright, or "" to proceed.
+
+        Only pure acknowledgements and greetings are skipped — "好", "謝謝",
+        "早安". Those cannot match knowledge, so searching costs an embedding
+        call and injects context for nothing.
+
+        The parser's other suppress rule (short messages without a known domain
+        keyword) is deliberately *not* honoured here: it measures length in
+        characters, and eight Chinese characters is a complete question.
+        "碳盤查的計算方式" is exactly eight, so trusting that rule would silence
+        precisely the domain questions this knowledge base exists to answer.
+        Relevance is decided after retrieval, by similarity, not by length.
+        """
+        stripped = query.strip().lower()
+        if len(stripped) <= 4 and stripped in ACK_ONLY:
+            return "acknowledgement"
+        for pattern in GREETING_PATTERNS:
+            if re.search(pattern, query, re.IGNORECASE):
+                return "greeting"
+        return ""
+
     def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private") -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
+        skipped = self._skip_reason(query)
+        if skipped:
+            return {
+                "schema": SCHEMA, "query": query, "namespace": namespace,
+                "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
+                "records": [], "count": 0, "unfiltered_count": 0,
+                "filtered_counts": filter_stats(), "context": "",
+                "retrieval_mode": "skipped", "skip_reason": skipped,
+                "semantic_retrieval_attempted": False,
+                "semantic_backend": {"status": "not_attempted"},
+                "dropped_as_irrelevant": 0, "warnings": [],
+            }
         knowledge = self.catalog.search(query, limit, namespace)
         conversation = self.recall(query, limit, namespace)
         records = knowledge["records"] + [
@@ -996,11 +1125,12 @@ class Store:
             "count": min(len(records), limit),
             "unfiltered_count": len(records),
             "filtered_counts": filtered_counts,
+            "dropped_as_irrelevant": knowledge.get("dropped_as_irrelevant", 0),
             "context": context,
             "retrieval_mode": knowledge.get("retrieval_mode", "keyword_fallback"),
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
-            "warnings": (["semantic_backend_unavailable_or_empty; keyword fallback used"] if knowledge.get("retrieval_mode") != "xbrain_hybrid" else []) + (["records_filtered_by_acl"] if filtered_counts.get("total") else []),
+            "warnings": _recall_warnings(knowledge, filtered_counts),
         }
 
 

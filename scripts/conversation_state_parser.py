@@ -122,11 +122,26 @@ def tokenize(text: str) -> list[str]:
     return xkb_text.tokenize(text, STOPWORDS)
 
 
+def _information_length(text: str) -> int:
+    """Length in "latin-equivalent" characters.
+
+    The short-message rule was written against English, where 8 characters is
+    "hi there" — nothing to search for. In Chinese, 8 characters is a complete
+    question: 「碳盤查的計算方式」is exactly 8, and was being suppressed, so the
+    domain questions this knowledge base exists to answer never reached recall.
+
+    A CJK character carries roughly three Latin characters' worth of meaning,
+    so count it as three before applying the same threshold.
+    """
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    return (len(text) - cjk) + cjk * 3
+
+
 def _check_suppress(text: str) -> bool:
     stripped = text.strip().lower()
     if len(stripped) <= 4 and stripped in SUPPRESS_EXACT:
         return True
-    if len(stripped) <= 8:
+    if _information_length(stripped) <= 8:
         # Short messages — only suppress if no domain keywords
         has_domain = any(d in stripped for d in high_freq_domains())
         if not has_domain:

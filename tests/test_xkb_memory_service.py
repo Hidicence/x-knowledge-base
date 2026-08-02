@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "xkb_memory_service.py"
@@ -345,3 +346,60 @@ class XKBMemoryServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelevanceAndIntentTests(unittest.TestCase):
+    """Injecting ten results into every turn is what makes an unrelated
+    question cost as much as a real one."""
+
+    def setUp(self) -> None:
+        self.module = module
+
+    def test_acknowledgements_and_greetings_skip_retrieval_entirely(self) -> None:
+        skip = self.module.Store._skip_reason
+        self.assertEqual(skip("好"), "acknowledgement")
+        self.assertEqual(skip("謝謝"), "acknowledgement")
+        self.assertEqual(skip("早安"), "greeting")
+        self.assertEqual(skip("hi"), "greeting")
+
+    def test_real_questions_are_never_skipped(self) -> None:
+        """Eight Chinese characters is a question, not chitchat."""
+        skip = self.module.Store._skip_reason
+        self.assertEqual(skip("碳盤查的計算方式"), "")
+        self.assertEqual(skip("XKB 召回"), "")
+        self.assertEqual(skip("我們之前怎麼處理碳盤查的"), "")
+
+    def test_vector_key_maps_slug_onto_index_key(self) -> None:
+        self.assertEqual(self.module._vector_key("01-topic/12345"), "01-topic/12345.md")
+        self.assertEqual(self.module._vector_key("01-topic/12345.md"), "01-topic/12345.md")
+        self.assertEqual(self.module._vector_key("https://x.com/i/status/1"), "")
+        self.assertEqual(self.module._vector_key(""), "")
+
+    def test_rank_score_is_replaced_by_measured_similarity(self) -> None:
+        """The backend's score says "ranked first", not "is relevant"."""
+        catalog = self.module.KnowledgeCatalog()
+        records = [{"id": "a/1", "score": 0.88}, {"id": "a/2", "score": 0.87}]
+        with mock.patch.object(self.module, "card_similarities",
+                               return_value={"a/1.md": 0.72, "a/2.md": 0.30}):
+            kept, dropped = catalog._drop_irrelevant("q", records)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([item["id"] for item in kept], ["a/1"])
+        self.assertEqual(kept[0]["score"], 0.72)
+        self.assertEqual(kept[0]["rank_score"], 0.88)
+
+    def test_unavailable_similarity_passes_records_through(self) -> None:
+        """A missing index must not silently delete every result."""
+        catalog = self.module.KnowledgeCatalog()
+        records = [{"id": "a/1", "score": 0.88}]
+        with mock.patch.object(self.module, "card_similarities", return_value=None):
+            kept, dropped = catalog._drop_irrelevant("q", records)
+        self.assertEqual((len(kept), dropped), (1, 0))
+
+    def test_warnings_separate_broken_backend_from_nothing_relevant(self) -> None:
+        broken = self.module._recall_warnings(
+            {"retrieval_mode": "keyword_fallback", "dropped_as_irrelevant": 0}, {})
+        self.assertIn("semantic_backend_unavailable_or_empty", broken[0])
+        nothing_relevant = self.module._recall_warnings(
+            {"retrieval_mode": "keyword_fallback", "dropped_as_irrelevant": 10}, {})
+        self.assertIn("relevance floor", nothing_relevant[0])
+        self.assertNotIn("unavailable", nothing_relevant[0])
