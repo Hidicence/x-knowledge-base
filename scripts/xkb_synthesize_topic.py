@@ -43,6 +43,10 @@ BULLET = re.compile(r"^\s*-\s+\S")
 # 反而失去「結論」該有的具體性。
 CHUNK = 40
 
+# 每批最多產出幾條結論，以及「算有消化」的最低壓縮比。
+PER_CHUNK = 8
+MIN_COMPRESSION = 2.0
+
 
 def split_page(text: str) -> tuple[str, list[str], list[str]]:
     """拆成 (前言/人寫的部分, 敘述型條列, 純連結)。
@@ -64,7 +68,24 @@ def split_page(text: str) -> tuple[str, list[str], list[str]]:
     return "\n".join(prose), bullets, links
 
 
-def synthesise(topic: str, prose: str, bullets: list[str]) -> str:
+def take_bullets(markdown: str, limit: int) -> list[str]:
+    """只留前 limit 條。
+
+    「最多 8 條」寫在提示詞裡只是請求，模型可以無視——實測 117 條進去、
+    86 條出來，等於沒有消化。上限必須由程式執行，不能靠模型自律。
+    """
+    kept: list[str] = []
+    for line in markdown.splitlines():
+        if line.strip().startswith(("- ", "* ")):
+            if len(kept) >= limit:
+                break
+            kept.append(line.rstrip())
+        elif kept and line.strip():
+            kept[-1] += " " + line.strip()      # 條列的續行
+    return kept
+
+
+def synthesise(topic: str, prose: str, bullets: list[str], per_chunk: int) -> str:
     from _llm import call as llm_call
 
     system = (
@@ -84,14 +105,15 @@ def synthesise(topic: str, prose: str, bullets: list[str]) -> str:
             "1. 合併重複的說法，只留下站得住腳的那一版\n"
             "2. 有衝突就明講衝突，不要假裝一致\n"
             "3. 每一條結論要具體到可以照著做，不要寫『可以提升效率』這種空話\n"
-            "4. 用 Markdown 條列，最多 8 條\n"
+            f"4. 用 Markdown 條列，**最多 {per_chunk} 條**。超過的部分會被直接截掉，\n"
+            "   所以請自己挑最重要的，不要把每條筆記都改寫一遍\n"
             "5. 沒有把握的地方標註『（待查證）』，不要編\n"
             "只輸出條列本身，不要開場白。"
         )
         raw = llm_call(system, user)
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         if cleaned:
-            out.append(cleaned)
+            out.append("\n".join(take_bullets(cleaned, per_chunk)))
         print(f"    已消化 {min(start + CHUNK, len(bullets))}/{len(bullets)} 條", flush=True)
     return "\n\n".join(out)
 
@@ -131,14 +153,30 @@ def cmd_topic(topic: str, apply: bool) -> int:
         return 1
     text = path.read_text(encoding="utf-8", errors="replace")
     prose, bullets, links = split_page(text)
+    per_chunk = PER_CHUNK
     if not bullets:
         print("這一頁沒有累積的條列可以消化。")
         return 0
     print(f"  {topic}：{len(bullets)} 條敘述、{len(links)} 條連結")
-    synthesis = synthesise(topic, prose, bullets)
+    synthesis = synthesise(topic, prose, bullets, per_chunk)
     if not synthesis:
         print("模型沒有產出內容，未寫入任何檔案。", file=sys.stderr)
         return 2
+
+    # 壓縮比是「有沒有真的消化」最直接的指標。
+    # 實測 ai-video-workflows 是 2.4x（真的收斂成結論），
+    # openclaw-agent-workflows 只有 1.4x——那一頁是 catch-all 分類的產物，
+    # 內容彼此不相關，本來就沒有共同主題可以收斂。
+    # 不連貫的頁面該先拆開，硬消化只會得到換句話說的同一批東西。
+    produced = len([b for b in synthesis.splitlines() if b.strip().startswith("- ")])
+    ratio = len(bullets) / max(produced, 1)
+    print(f"  壓縮比：{ratio:.1f}x（{len(bullets)} → {produced}）")
+    if ratio < MIN_COMPRESSION:
+        print(f"  警告：低於 {MIN_COMPRESSION}x，代表這一頁的內容彼此不相關，")
+        print("        消化不出共同結論。建議先把它拆成幾個主題，而不是硬消化。")
+        if apply:
+            print("  已停止：不會把沒有消化過的內容併回主題頁。", file=sys.stderr)
+            apply = False
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     review = REVIEW_DIR / f"{topic}-synthesis.md"
