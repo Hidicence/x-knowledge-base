@@ -113,6 +113,40 @@ XKB_MEMORY_SERVICE_URL=http://127.0.0.1:18972
 
 若 service 不可用，adapter 會 fail-open 並回退到本機 L1 artifact / configured recall command；不應因此阻斷 Agent 對話。
 
+## 從另一台機器連進來
+
+service 只綁 loopback，**不要為了讓其他機器連線而改成對外綁定**。
+正確做法是用 SSH 通道：對 service 而言連進來的仍是 `127.0.0.1`，
+但流量走的是 SSH 已經加密、已經驗證身分的通道。
+
+```bash
+# 在本機執行（保持這個行程開著）
+ssh -N -L 18972:127.0.0.1:18972 <你的伺服器>
+```
+
+之後本機的 `http://127.0.0.1:18972` 就是伺服器上的 service：
+
+```bash
+curl -s http://127.0.0.1:18972/v1/health
+```
+
+為什麼是 SSH 通道而不是開 port 或做 authentication：
+
+目前 `namespace`（身分）是呼叫端在 request 內自行宣告的，service 並不驗證。
+在只綁 loopback 的前提下這是可接受的取捨；一旦對外開放，
+任何連得上的人只要宣告 `"namespace": "private"` 就能讀走全部內容。
+SSH 通道把身分驗證交給 SSH（金鑰），因此不必先完成一整套 authentication／TLS
+就能安全地跨機使用。
+
+**在改成多人／多機共用之前，`namespace` 必須改為從憑證推導，而不是從 request body 讀取。**
+
+送出含中文的 request 時，注意 shell 的編碼；較穩的做法是把 JSON 寫成 UTF-8 檔案再送：
+
+```bash
+curl -s -X POST http://127.0.0.1:18972/v1/recall \
+  -H "Content-Type: application/json" --data-binary @query.json
+```
+
 ## Stage 3B 邊界
 
 ### Control plane 第一個切片：pipeline snapshot
