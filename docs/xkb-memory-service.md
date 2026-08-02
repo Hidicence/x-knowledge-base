@@ -159,13 +159,11 @@ ssh -N -L 18972:127.0.0.1:18972 <你的伺服器>
 curl -s http://127.0.0.1:18972/v1/health
 ```
 
-為什麼是 SSH 通道而不是開 port 或做 authentication：
+為什麼是 SSH 通道而不是直接把 port 開到公網：
 
-目前 `namespace`（身分）是呼叫端在 request 內自行宣告的，service 並不驗證。
-在只綁 loopback 的前提下這是可接受的取捨；一旦對外開放，
-任何連得上的人只要宣告 `"namespace": "private"` 就能讀走全部內容。
-SSH 通道把身分驗證交給 SSH（金鑰），因此不必先完成一整套 authentication／TLS
-就能安全地跨機使用。
+即使已經有 token 驗證（見下節），把 port 曝露在公網仍會多出一整層風險面
+（掃描、暴力嘗試、TLS 憑證管理）。SSH 通道讓流量走已加密、已驗證的通道，
+service 本身維持只綁 loopback，兩層防護互相獨立。
 
 ## 身分驗證
 
