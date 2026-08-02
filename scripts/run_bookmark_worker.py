@@ -275,9 +275,22 @@ def _save_queue(data: dict) -> None:
 
 
 def _read_bookmark(source_path: str) -> str:
+    """讀書籤原文；路徑過期時改用 id 找。
+
+    佇列存的是當初排隊時的相對路徑，但書籤之後會被歸檔到分類資料夾
+    （`inbox/123.md` → `99-general/123.md`）。路徑一過期，worker 只會說
+    「bookmark file not found」然後把項目標成失敗——檔案明明還在。
+
+    2026-08-02 有 9 份就是這樣失敗的。id 是穩定的，路徑不是，所以路徑
+    找不到時就用 id 再找一次。
+    """
     full_path = WORKSPACE / source_path
     if full_path.exists():
         return full_path.read_text(encoding="utf-8", errors="ignore")
+    moved = next(xkb_paths.BOOKMARKS_DIR.rglob(f"{Path(source_path).stem}.md"), None)
+    if moved:
+        print(f"    （書籤已移動：{source_path} → {moved.relative_to(WORKSPACE)}）", flush=True)
+        return moved.read_text(encoding="utf-8", errors="ignore")
     return ""
 
 
@@ -314,7 +327,7 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
     return "done", ""
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Bookmark enrichment worker")
     parser.add_argument("--limit",      type=int, default=5,     help="Max items to process (default: 5)")
     parser.add_argument("--worker",     default="worker",        help="Worker name recorded in queue")
