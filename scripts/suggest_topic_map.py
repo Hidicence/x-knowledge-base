@@ -37,11 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _llm import call as _llm_backend
 
 
-def load_env_key() -> str:
-    return ""  # auth handled by _llm.py via openclaw CLI
-
-
-def llm_call(prompt: str, api_key: str = "") -> str:
+def llm_call(prompt: str) -> str:
     return _llm_backend("", prompt)
 
 
@@ -94,7 +90,7 @@ Category: {category}
 """
 
 
-def suggest_topics_for_category(category: str, items: list, existing_slugs: list, api_key: str) -> dict:
+def suggest_topics_for_category(category: str, items: list, existing_slugs: list) -> dict:
     count = sum(1 for i in items if i.get("category") == category)
     titles_str = "\n".join(f"  - {t}" for t in sample_titles(items, category)) or "  （無標題）"
     existing_str = "\n".join(f"  - {s}" for s in existing_slugs) or "  （無）"
@@ -104,7 +100,7 @@ def suggest_topics_for_category(category: str, items: list, existing_slugs: list
         titles=titles_str, existing=existing_str,
     )
 
-    raw = llm_call(prompt, api_key).strip()
+    raw = llm_call(prompt).strip()
     # Strip markdown code fences
     if raw.startswith("```"):
         parts = raw.split("```")
@@ -142,11 +138,6 @@ def main():
     if not args.review and not args.apply:
         parser.error("請指定 --review 或 --apply")
 
-    api_key = load_env_key()
-    if not api_key:
-        print("[ERROR] 找不到 LLM_API_KEY", file=sys.stderr)
-        sys.exit(1)
-
     items = load_index()
     topic_map = load_topic_map()
     current_mapping = topic_map.get("mapping", {})
@@ -177,7 +168,7 @@ def main():
     suggestions = {}
     for cat, count in candidates:
         print(f"  ▶ {cat} ({count} 張)...", end=" ", flush=True)
-        suggestion = suggest_topics_for_category(cat, items, existing_slugs, api_key)
+        suggestion = suggest_topics_for_category(cat, items, existing_slugs)
         suggestions[cat] = {"count": count, **suggestion}
         topics_str = str(suggestion.get("topics")) if suggestion.get("topics") else "null"
         print(f"{topics_str} [{suggestion.get('confidence', '?')}]")
