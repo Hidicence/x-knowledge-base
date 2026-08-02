@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -50,6 +51,105 @@ def safe_read(path: Path, limit: int = 200_000) -> str:
 # layer but a channel: the backend returns hits without saying which layer they
 # came from, so drops there cannot be attributed any more precisely than that.
 ACL_LAYERS = ("card", "wiki", "semantic", "conversation")
+
+READ_SCOPE = "memory:read"
+WRITE_SCOPE = "memory:write"
+DEFAULT_SCOPES = (READ_SCOPE, WRITE_SCOPE)
+
+
+class Unauthorized(Exception):
+    """Request could not be attributed to a principal, or lacks the scope."""
+
+    def __init__(self, message: str, status: int = 401):
+        super().__init__(message)
+        self.status = status
+
+
+class AuthPolicy:
+    """Maps a bearer token to the namespace and scopes it is allowed to use.
+
+    Identity has to come from the credential rather than the request body. A
+    caller that names its own namespace can name *any* namespace, which makes
+    the ACL decorative — that is acceptable only while the service is bound to
+    loopback and used by one person.
+
+    With no tokens configured the service stays anonymous, preserving the
+    existing single-user setup; the moment a token is configured, anonymous
+    access is refused unless it is explicitly re-enabled. Tokens are read from
+    headers only, never the query string, because URLs end up in logs.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None):
+        config = config or {}
+        raw_tokens = config.get("tokens") or {}
+        if not isinstance(raw_tokens, dict):
+            raise ValueError("auth config: 'tokens' must be an object")
+        self.tokens: dict[str, dict[str, Any]] = {}
+        for token, entry in raw_tokens.items():
+            if not isinstance(token, str) or len(token) < 16:
+                raise ValueError("auth config: each token must be a string of at least 16 characters")
+            entry = entry if isinstance(entry, dict) else {}
+            namespace = str(entry.get("namespace") or "").strip()
+            if not namespace:
+                raise ValueError("auth config: every token must pin a namespace")
+            scopes = entry.get("scopes") or list(DEFAULT_SCOPES)
+            self.tokens[token] = {
+                "namespace": namespace,
+                "scopes": [str(scope) for scope in scopes],
+                "label": str(entry.get("label") or "token"),
+            }
+        # Anonymous stays on only while no token exists; configuring one is the
+        # signal that this service is no longer a single-trust-domain box.
+        self.allow_anonymous = bool(config.get("allow_anonymous", not self.tokens))
+
+    @classmethod
+    def load(cls, path: Path) -> "AuthPolicy":
+        try:
+            return cls(json.loads(path.read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            return cls({})
+        except (json.JSONDecodeError, OSError) as exc:
+            # Fail closed: an unreadable policy must not silently downgrade to
+            # "anyone may read everything".
+            raise ValueError(f"auth config at {path} could not be read: {exc}") from exc
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.tokens)
+
+    def principal(self, token: str | None) -> dict[str, Any]:
+        if token:
+            for known, entry in self.tokens.items():
+                if hmac.compare_digest(token, known):
+                    return {"kind": "token", "namespace": entry["namespace"],
+                            "scopes": entry["scopes"], "label": entry["label"]}
+            raise Unauthorized("invalid service token")
+        if self.allow_anonymous:
+            # No pinned namespace: the caller may still name one, which is the
+            # historical behaviour and only safe on a loopback-only service.
+            return {"kind": "anonymous", "namespace": None,
+                    "scopes": list(DEFAULT_SCOPES), "label": "anonymous"}
+        raise Unauthorized("service token required")
+
+    @staticmethod
+    def namespace_for(principal: dict[str, Any], requested: str | None) -> str:
+        """A pinned namespace always wins; mismatches are refused, not silently retargeted."""
+        pinned = principal.get("namespace")
+        requested = (requested or "").strip()
+        if pinned:
+            if requested and requested != pinned:
+                raise Unauthorized("namespace is not permitted for this token", status=403)
+            return pinned
+        return requested or "private"
+
+    @staticmethod
+    def require(principal: dict[str, Any], scope: str) -> None:
+        scopes = principal.get("scopes") or []
+        if "*" not in scopes and scope not in scopes:
+            raise Unauthorized(f"token lacks required scope: {scope}", status=403)
+
+
+ANONYMOUS_AUTH = AuthPolicy({})
 
 
 def filter_stats(*, card: int = 0, wiki: int = 0, semantic: int = 0, conversation: int = 0) -> dict[str, Any]:
@@ -938,20 +1038,40 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("JSON body must be an object")
         return payload
 
+    @property
+    def auth(self) -> AuthPolicy:
+        # An unconfigured server falls back to the documented default (no
+        # tokens means anonymous), so the handler is usable standalone.
+        return getattr(self.server, "auth", None) or ANONYMOUS_AUTH
+
+    def principal(self) -> dict[str, Any]:
+        """Resolve who is calling, from headers only."""
+        header = self.headers.get("Authorization") or ""
+        token = header[len("Bearer "):].strip() if header.startswith("Bearer ") else None
+        return self.auth.principal(token or self.headers.get("X-API-Key"))
+
+    def namespace(self, principal: dict[str, Any], requested: str | None) -> str:
+        return AuthPolicy.namespace_for(principal, requested)
+
+    def authorize(self, principal: dict[str, Any], scope: str) -> None:
+        AuthPolicy.require(principal, scope)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/v1/health":
-                self.send_json(200, {"schema": SCHEMA, "ok": True, "service": "knowledge", "data_plane": "sources/evidence/cards/wiki/conversations", "control_plane": "observed_status_only", "write_mode": "l1_capture_only"})
+                self.send_json(200, {"schema": SCHEMA, "ok": True, "service": "knowledge", "data_plane": "sources/evidence/cards/wiki/conversations", "control_plane": "observed_status_only", "write_mode": "l1_capture_only", "auth_required": self.server.auth.enabled})  # type: ignore[attr-defined]
                 return
+            principal = self.principal()
+            self.authorize(principal, READ_SCOPE)
             if parsed.path.startswith("/v1/sources/"):
                 params = parse_qs(parsed.query)
-                item = self.store.catalog.source(unquote(parsed.path.rsplit("/", 1)[-1]), (params.get("namespace") or ["private"])[0])
+                item = self.store.catalog.source(unquote(parsed.path.rsplit("/", 1)[-1]), self.namespace(principal, (params.get("namespace") or [""])[0]))
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             if parsed.path.startswith("/v1/evidence/"):
                 params = parse_qs(parsed.query)
-                item = self.store.catalog.evidence(unquote(parsed.path.rsplit("/", 1)[-1]), (params.get("namespace") or ["private"])[0])
+                item = self.store.catalog.evidence(unquote(parsed.path.rsplit("/", 1)[-1]), self.namespace(principal, (params.get("namespace") or [""])[0]))
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             if parsed.path.startswith("/v1/cards/") and parsed.path.endswith("/relations"):
@@ -961,12 +1081,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path.startswith("/v1/cards/"):
                 params = parse_qs(parsed.query)
-                item = self.store.catalog.card(unquote(parsed.path.rsplit("/", 1)[-1]), (params.get("namespace") or ["private"])[0])
+                item = self.store.catalog.card(unquote(parsed.path.rsplit("/", 1)[-1]), self.namespace(principal, (params.get("namespace") or [""])[0]))
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             if parsed.path.startswith("/v1/wiki/topics/"):
                 params = parse_qs(parsed.query)
-                item = self.store.catalog.wiki_topic(unquote(parsed.path.rsplit("/", 1)[-1]), (params.get("namespace") or ["private"])[0])
+                item = self.store.catalog.wiki_topic(unquote(parsed.path.rsplit("/", 1)[-1]), self.namespace(principal, (params.get("namespace") or [""])[0]))
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             if parsed.path == "/v1/ingest/status":
@@ -994,6 +1114,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             self.send_json(404, {"error": "not found"})
+        except Unauthorized as exc:
+            self.send_json(exc.status, {"error": str(exc)})
+        except ValueError as exc:
+            self.send_json(400, {"error": str(exc)})
         except Exception as exc:
             self.send_json(500, {"error": str(exc)})
 
@@ -1001,20 +1125,32 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             body = self.body()
+            principal = self.principal()
+            # A pinned namespace replaces whatever the body claimed, so the
+            # handlers below cannot be talked into another tenant's data.
+            if principal.get("namespace"):
+                body["namespace"] = self.namespace(principal, text(body.get("namespace")))
             if parsed.path == "/v1/sessions/open":
+                self.authorize(principal, WRITE_SCOPE)
                 self.send_json(200, self.store.open_session(body)); return
             if parsed.path == "/v1/turns/start":
+                self.authorize(principal, WRITE_SCOPE)
                 self.send_json(200, self.store.start_turn(body)); return
             if parsed.path.startswith("/v1/turns/") and parsed.path.endswith("/complete"):
+                self.authorize(principal, WRITE_SCOPE)
                 turn_id = unquote(parsed.path.split("/")[3])
                 self.send_json(200, self.store.complete_turn(turn_id, body)); return
             if parsed.path == "/v1/recall":
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), text(body.get("namespace")) or "private")); return
+                self.authorize(principal, READ_SCOPE)
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))))); return
             if parsed.path == "/v1/context":
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), text(body.get("namespace")) or "private")); return
+                self.authorize(principal, READ_SCOPE)
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))))); return
             if parsed.path == "/v1/ingest/status":
+                self.authorize(principal, READ_SCOPE)
                 self.send_json(200, self.store.catalog.pipeline_status()); return
             if parsed.path == "/v1/pipeline/jobs/run":
+                self.authorize(principal, WRITE_SCOPE)
                 requested_worker = text(body.get("worker")) or "xkb_l1_to_candidate"
                 if requested_worker != "xkb_l1_to_candidate":
                     raise ValueError("only xkb_l1_to_candidate is triggerable")
@@ -1023,20 +1159,25 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("job_ids must be a list of non-empty strings")
                 self.send_json(200, self.store.run_l1_to_candidate(raw_ids, bounded_int(body.get("limit"), name="limit", default=50, minimum=1, maximum=200), bool(body.get("dry_run")))); return
             if parsed.path == "/v1/pipeline/jobs/recover-stale":
+                self.authorize(principal, WRITE_SCOPE)
                 self.send_json(200, self.store.recover_stale_jobs(
                     body.get("older_than_seconds", 3600),
                     bool(body.get("dry_run", True)),
                     bool(body.get("confirm", False)),
                 )); return
             if parsed.path == "/v1/candidates/query":
+                self.authorize(principal, READ_SCOPE)
                 params = parse_qs(parsed.query)
                 self.send_json(200, self.store.query_candidates(
                     status=(params.get("status") or [""])[0],
                     limit=int((params.get("limit") or ["50"])[0]),
                 )); return
             if parsed.path == "/v1/pipeline/jobs/events":
+                self.authorize(principal, WRITE_SCOPE)
                 self.send_json(200, self.store.record_job_event(body)); return
             self.send_json(404, {"error": "not found"})
+        except Unauthorized as exc:
+            self.send_json(exc.status, {"error": str(exc)})
         except ValueError as exc:
             self.send_json(400, {"error": str(exc)})
         except Exception as exc:
@@ -1048,12 +1189,21 @@ def main() -> int:
     parser.add_argument("--host", default=os.getenv("XKB_SERVICE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("XKB_SERVICE_PORT", "18972")))
     parser.add_argument("--db", type=Path, default=Path(os.getenv("XKB_SERVICE_DB", str(Path.home() / ".xkb-runtime" / "knowledge.sqlite"))))
+    parser.add_argument("--auth", type=Path, default=Path(os.getenv("XKB_SERVICE_AUTH", str(Path.home() / ".xkb-runtime" / "auth.json"))))
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost", "::1"} and os.getenv("XKB_ALLOW_NON_LOOPBACK") != "1":
         parser.error("refusing non-loopback bind; set XKB_ALLOW_NON_LOOPBACK=1 only with explicit network controls")
+    try:
+        auth = AuthPolicy.load(args.auth)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not auth.enabled and args.host not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("refusing to serve a non-loopback bind without tokens: configure --auth first")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(args.db)  # type: ignore[attr-defined]
-    print(json.dumps({"ok": True, "schema": SCHEMA, "host": args.host, "port": args.port, "db": str(args.db)}, ensure_ascii=False), flush=True)
+    server.auth = auth  # type: ignore[attr-defined]
+    print(json.dumps({"ok": True, "schema": SCHEMA, "host": args.host, "port": args.port, "db": str(args.db),
+                      "auth": "token" if auth.enabled else "anonymous", "auth_file": str(args.auth)}, ensure_ascii=False), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

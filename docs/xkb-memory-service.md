@@ -138,7 +138,65 @@ curl -s http://127.0.0.1:18972/v1/health
 SSH 通道把身分驗證交給 SSH（金鑰），因此不必先完成一整套 authentication／TLS
 就能安全地跨機使用。
 
-**在改成多人／多機共用之前，`namespace` 必須改為從憑證推導，而不是從 request body 讀取。**
+## 身分驗證
+
+預設不需要 token：沒有設定任何 token 時，service 維持匿名（單人、只綁 loopback 的既有行為）。
+**一旦設定了 token，匿名就會被拒絕**，而且 namespace 改由 token 決定，
+request body 不能再自行宣告。
+
+設定檔預設在 `~/.xkb-runtime/auth.json`（可用 `XKB_SERVICE_AUTH` 覆寫）：
+
+```json
+{
+  "tokens": {
+    "至少十六字元的隨機字串": {
+      "namespace": "private",
+      "scopes": ["memory:read", "memory:write"],
+      "label": "windows-laptop"
+    }
+  }
+}
+```
+
+呼叫時放在 header（不接受放在網址查詢字串，因為網址會進日誌）：
+
+```bash
+curl -s http://127.0.0.1:18972/v1/recall \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" --data-binary @query.json
+```
+
+規則：
+
+- `namespace` 由 token 決定；body 宣告不同的 namespace 會被拒絕（403），而不是默默改用別的
+- `scopes` 分讀寫：`memory:read` 可召回與查詢，`memory:write` 才能開 session／寫入 turn／觸發 job
+- `/v1/health` 永遠免驗證，並回報 `auth_required`，方便探活
+- auth 設定檔壞掉時 service **拒絕啟動**，不會退回成「誰都能讀」
+- 非 loopback 綁定且未設定 token 時，service 拒絕啟動
+
+## 讓 Agent 自動接上
+
+`xkb_agent_hook.py` 掛在 Agent 的事件上，不必 Agent 自己記得呼叫：
+
+```text
+UserPromptSubmit → turns/start → 把召回的知識注入上下文
+Stop             → turns/complete → 對話成為 L1 證據
+```
+
+安裝（目前支援 Claude Code）：
+
+```bash
+python3 scripts/xkb_install_agent_hook.py --status
+python3 scripts/xkb_install_agent_hook.py --install
+python3 scripts/xkb_install_agent_hook.py --install --token <token>
+python3 scripts/xkb_install_agent_hook.py --uninstall
+```
+
+安裝是冪等的：重跑會取代舊的設定而不是疊加，也不會動到你其他的 hook；
+設定檔以原子方式寫入，中斷不會留下壞掉的 settings.json。
+
+**讀取一律 fail-open**：service 連不上時 hook 直接放行，絕不擋住對話。
+這與寫入端相反——吸收閘門故障時必須擋住，因為寫進錯的知識比沒寫更糟。
 
 送出含中文的 request 時，注意 shell 的編碼；較穩的做法是把 JSON 寫成 UTF-8 檔案再送：
 

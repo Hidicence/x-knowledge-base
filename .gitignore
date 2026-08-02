@@ -34,3 +34,7 @@ dist/
 
 # ── 本機路徑設定（xkb_init.py 產生，每台機器不同）────────────────────────────
 .xkb.json
+
+# Machine-local service credentials (bearer tokens) - never commit
+scripts/xkb-agent-hook-config.json
+auth.json
