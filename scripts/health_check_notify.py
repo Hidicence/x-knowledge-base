@@ -40,6 +40,7 @@ import health_check_pipeline as hc
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 TIMEOUT_SECONDS = 20
+ALERT_STATE_PATH = xkb_paths.WORKSPACE / "memory" / "health-check-alert-state.json"
 
 
 def _from_openclaw_config() -> tuple[str, str]:
@@ -112,6 +113,38 @@ def build_message(sections: list[dict], failures: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _failure_key(section: str, message: str) -> str:
+    """Stable identity for one check+error; timestamps must not make it new."""
+    import hashlib
+    normalized = " ".join(message.split())
+    return hashlib.sha256(f"{section}\0{normalized}".encode("utf-8")).hexdigest()
+
+
+def _load_alert_state() -> dict:
+    try:
+        data = json.loads(ALERT_STATE_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_alert_state(active: dict) -> None:
+    ALERT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ALERT_STATE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"active": active}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(ALERT_STATE_PATH)
+
+
+def deduplicate_failures(failures: list[tuple[str, str]], state: dict) -> tuple[list[tuple[str, str]], dict, list[str]]:
+    """Return only new/changed errors, retaining active errors until recovery."""
+    previous = state.get("active", {}) if isinstance(state.get("active", {}), dict) else {}
+    current = {_failure_key(section, msg): {"section": section, "message": msg}
+               for section, msg in failures}
+    changed = [(item["section"], item["message"]) for key, item in current.items() if key not in previous]
+    recovered = [item["section"] for key, item in previous.items() if key not in current]
+    return changed, {"active": current}, recovered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run XKB health check and alert on failure")
     parser.add_argument("--always", action="store_true", help="全綠也送出通知")
@@ -137,6 +170,19 @@ def main() -> int:
 
     message = build_message(sections, failures)
     print(message)
+
+    # Persist state even when no Telegram credentials exist. This makes repeated
+    # heartbeat/cron runs quiet and keeps recovery detectable on the next run.
+    alert_failures, next_state, recovered = deduplicate_failures(failures, _load_alert_state())
+    _save_alert_state(next_state["active"])
+    if failures and not alert_failures and not recovered and not args.always:
+        print("\n（狀態未變：略過重複通知）")
+        return 1
+    if not failures and recovered and not args.always:
+        print("\n（排程異常已恢復：略過全綠通知）")
+        return 0
+    if alert_failures and not args.always:
+        message = build_message(sections, alert_failures)
 
     if not failures and not args.always:
         return 0

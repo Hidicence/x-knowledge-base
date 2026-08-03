@@ -35,6 +35,8 @@ from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
 )
+from category_classifier import classify_content
+from category_classifier import apply_category
 SOURCE_LABELS["github_fork"] = "GitHub 倉庫（Fork）"
 SOURCE_LABELS["github_star"] = "GitHub 倉庫（Star）"
 
@@ -216,12 +218,13 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
             f"README:\n{readme or '(not available)'}"
         )
         related = find_related_context(content, existing_items or [])
+        classified = classify_content(content, source_type=action_type, current_category="tech")
         prompt = build_prompt(
             content=content,
             card_id=card_id,
             source_type=action_type,
             source_url=url,
-            category="tech",
+            category=classified["category"],
             related_context=related,
         )
         try:
@@ -233,6 +236,7 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
         # Inject id into frontmatter if missing
         if "---\n" in card_content and "id:" not in card_content:
             card_content = card_content.replace("---\n", f"---\nid: {card_id}\n", 1)
+        card_content = apply_category(card_content, classified["category"])
 
         # Save LLM card to memory/cards/
         card_path = CARDS_DIR / f"{card_id}.md"
@@ -252,7 +256,7 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
             "path": str(card_path),
             "relative_path": f"cards/{card_id}.md",
             "title": fm.get("title", full_name),
-            "category": fm.get("category", "tech"),
+            "category": fm.get("category", classified["category"]),
             "tags": list(set(tags)),
             "summary": summary,
             "source_url": url,

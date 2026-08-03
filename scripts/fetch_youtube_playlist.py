@@ -28,6 +28,8 @@ from _card_prompt import (
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
     condense_long_content,
 )
+from category_classifier import classify_content
+from category_classifier import apply_category
 SOURCE_LABELS["youtube"] = "YouTube 影片"   # ensure registered
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -135,12 +137,13 @@ def generate_card(title: str, video_id: str, transcript: str, lang: str,
     # 長文 map-reduce（TODOS 2026-07-13）：長字幕分段濃縮，取代硬截 4000 字元
     content    = f"標題: {title}\n字幕語言: {lang or 'unknown'}\n\n{condense_long_content(transcript)}"
     related    = find_related_context(content, existing_items)
+    classified = classify_content(content, source_type="youtube", current_category="03-video-prompts")
     prompt     = build_prompt(
         content=content,
         card_id=card_id,
         source_type="youtube",
         source_url=source_url,
-        category="video",
+        category=classified["category"],
         related_context=related,
     )
     return _llm_call(prompt, api_key)
@@ -253,6 +256,9 @@ def main():
                 continue
 
             # Save .md
+            # 分類在 build_card 裡已經做過了，而且用的是壓縮過的內容。
+            # 這裡再分類一次不只多付一次 LLM，送的還是未壓縮的完整字幕，
+            # 結果又會覆蓋前一次——同一支影片可能得到兩個不同的分類。
             md_path = YOUTUBE_DIR / f"{vid_id}.md"
             md_path.write_text(card_content, encoding="utf-8")
             _gbrain_put(md_path, f"youtube-{vid_id}")

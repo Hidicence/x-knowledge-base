@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import gbrain_put as _gbrain_put
 from _card_prompt import condense_long_content
+from category_classifier import classify_content, apply_category
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
@@ -296,7 +297,10 @@ def process_file(
         return None
 
     source_url = pmc_url_from_filename(path.name)
-    category = force_category or "research"
+    classification = classify_content(
+        content, source_type="local-paper", current_category=force_category or "research"
+    )
+    category = classification["category"]
     related_ctx = find_related_context(content, existing_items)
     related_section = f"相關既有卡片（供 Section 6 參考）：\n{related_ctx}\n" if related_ctx else ""
 
@@ -325,6 +329,8 @@ def process_file(
             r"^category:.*$", f"category: {force_category}",
             card_content, flags=re.MULTILINE
         )
+    else:
+        card_content = apply_category(card_content, category)
 
     # Save card
     CARDS_DIR.mkdir(parents=True, exist_ok=True)

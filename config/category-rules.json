@@ -1,5 +1,14 @@
 {
   "default_category": "99-general",
+  "categories": [
+    "01-openclaw-workflows",
+    "02-seo-geo",
+    "03-video-prompts",
+    "04-ai-tools-agents",
+    "05-startup-business",
+    "06-visual-ai-prompts",
+    "99-general"
+  ],
   "rules": [
     {
       "category": "06-visual-ai-prompts",

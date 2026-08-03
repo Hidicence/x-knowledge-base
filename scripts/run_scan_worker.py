@@ -29,6 +29,7 @@ from pathlib import Path
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
+from category_classifier import classify_content
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
@@ -241,7 +242,8 @@ def main() -> None:
 
         try:
             related_ctx = find_related_context(content, [])
-            text = _call_llm(api_key, content, card_id, source_url, category, related_ctx)
+            classified = classify_content(content, source_type="x-bookmark", current_category=category)
+            text = _call_llm(api_key, content, card_id, source_url, classified["category"], related_ctx)
             if not text:
                 results["failed"] += 1
                 print("✗ empty response")
@@ -251,6 +253,7 @@ def main() -> None:
                 print("⏭ skipped")
                 continue
 
+            text = apply_category(text, classified["category"])
             card_path = CARDS_DIR / f"{card_id}.md"
             card_path.write_text(text, encoding="utf-8")
             _gbrain_put(card_path, card_id)

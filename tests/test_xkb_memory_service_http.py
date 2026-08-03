@@ -17,6 +17,21 @@ import sys
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+_wiki_patch = None
+
+
+def setUpModule() -> None:
+    """同 test_xkb_memory_service：不要讓測試載入真實知識庫或打 embedding API。"""
+    global _wiki_patch
+    from unittest import mock
+    _wiki_patch = mock.patch.object(module.KnowledgeCatalog, "_wiki_search", return_value=[])
+    _wiki_patch.start()
+
+
+def tearDownModule() -> None:
+    if _wiki_patch is not None:
+        _wiki_patch.stop()
+
 
 class XKBMemoryServiceHTTPTests(unittest.TestCase):
     def setUp(self) -> None:

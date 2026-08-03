@@ -15,6 +15,28 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 Store = module.Store
 
+_wiki_patch = None
+
+
+def setUpModule() -> None:
+    """讓測試不要碰到真實的知識庫。
+
+    recall 加入 wiki 搜尋之後，任何呼叫 knowledge_recall 的測試都會去載入
+    使用者真實的語意索引（本機 1,872 筆），再對 Gemini 打一次 embedding。
+    那讓測試變慢、要花錢、依賴網路，而且結果隨著知識庫內容改變——
+    在這台機器上甚至會 segfault。
+
+    預設回空，個別測試要驗 wiki 行為時再自己 patch。
+    """
+    global _wiki_patch
+    _wiki_patch = mock.patch.object(module.KnowledgeCatalog, "_wiki_search", return_value=[])
+    _wiki_patch.start()
+
+
+def tearDownModule() -> None:
+    if _wiki_patch is not None:
+        _wiki_patch.stop()
+
 
 class XKBMemoryServiceTests(unittest.TestCase):
     def setUp(self) -> None:

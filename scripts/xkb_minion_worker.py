@@ -8,6 +8,7 @@ import psycopg2, psycopg2.extras
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
+from category_classifier import classify_content, apply_category
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
@@ -39,6 +40,9 @@ def _get_api_key():
     return ""
 
 def _call_llm(api_key, content, card_id, source_url, category):
+    category = classify_content(
+        content, source_type="x-bookmark", current_category=category
+    )["category"]
     prompt = build_prompt(
         content=f"Process this bookmark. If low-value output only: SKIPPED\n\n--- Raw ---\n{content[:4000]}\n---",
         card_id=card_id, source_type="x-bookmark", source_url=source_url, category=category,
@@ -87,6 +91,8 @@ def process_job(job, api_key):
     text = _call_llm(api_key, content, card_id, data.get("source_url",""), data.get("category",""))
     if not text: raise RuntimeError("LLM empty response")
     if re.match(r"^SKIPPED", text.strip(), re.IGNORECASE): return {"status":"skipped","reason":"low_value"}
+    classified = classify_content(content, source_type="x-bookmark", current_category=data.get("category", ""))
+    text = apply_category(text, classified["category"])
     card_path = CARDS_DIR / f"{card_id}.md"
     card_path.write_text(text, encoding="utf-8")
     _gbrain_put(card_path, card_id)
