@@ -25,12 +25,7 @@ from xkb_memory_service import Store, now, text
 WORKER = "xkb_l1_to_candidate"
 STAGE = "distill"
 ANALYSIS_SCHEMA = "xkb-l1-candidate-analysis.v1"
-NOISE_MARKERS = (
-    "self_review_sent", "hn_digest_sent", "cron jobs executed", "cron_jobs_executed",
-    "system echo", "heartbeat_ok", "heartbeat", "delivery", "cron:",
-    "assistant: no_reply", "assistant turn failed before producing content",
-    "image2_skill_autogrow_failed", "async command did not run",
-)
+from xkb_noise import NOISE_MARKERS  # 唯一一份雜訊清單
 
 
 def _blob(value: Any) -> str:

@@ -125,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         ("產卡片", [python, "scripts/run_bookmark_worker.py", "--limit", str(args.batch)], True),
         ("重建搜尋索引", ["bash", "scripts/build_search_index.sh"], False),
         ("補向量索引", [python, "scripts/build_vector_index.py", "--incremental"], True),
+        # OpenClaw 把對話寫成軌跡檔，知識服務存在 SQLite——兩個分開的儲存體。
+        # 不轉送的話，VPS 上的對話永遠不會進到共享的候選池，
+        # 「跨 Agent 共享」就只有讀是共享的。
+        ("匯入 OpenClaw 對話", [python, "scripts/xkb_import_l1_traces.py", "--since", "2"], False),
     ]
 
     if args.dry_run:

@@ -24,16 +24,13 @@ try:
 except ImportError:  # keeps the report tool usable in minimal copies
     extract_conversation_content = None
 
+from xkb_noise import NOISE_MARKERS as SYSTEM_MARKERS  # 唯一一份雜訊清單
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 SYSTEM_TERMS = {
     "cron jobs executed", "cron_jobs_executed", "hn_digest_sent", "self_review_sent",
     "image2_skill_autogrow_failed", "heartbeat", "delivery", "system echo",
 }
-SYSTEM_MARKERS = (
-    "cron:", "heartbeat", "self_review_sent", "hn_digest_sent", "system (", "delivery",
-    "assistant turn failed before producing content", "assistant: no_reply", "assistant: heartbeat_ok",
-    "write a dream diary entry", "do not run the command again", "async command did not run",
-)
 ASSISTANT_OUTPUT_MARKERS = (
     "assistant: no_reply", "assistant: heartbeat_ok", "assistant turn failed",
     "assistant: {", "assistant: [", "assistant: ⏰", "assistant: 提醒", "assistant: pan，",
