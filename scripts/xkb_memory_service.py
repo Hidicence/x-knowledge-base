@@ -94,6 +94,10 @@ def safe_read(path: Path, limit: int = 200_000) -> str:
 # came from, so drops there cannot be attributed any more precisely than that.
 ACL_LAYERS = ("card", "wiki", "semantic", "conversation")
 
+# 對話用關鍵字比對,卡片用語意相似度。把對話的命中比例乘上這個折扣,
+# 讓兩者落在同一個尺度上——全部命中約 0.65,跟中等相關的卡片相當。
+KEYWORD_EVIDENCE_DISCOUNT = float(os.getenv("XKB_KEYWORD_DISCOUNT", "0.65"))
+
 READ_SCOPE = "memory:read"
 WRITE_SCOPE = "memory:write"
 DEFAULT_SCOPES = (READ_SCOPE, WRITE_SCOPE)
@@ -1176,12 +1180,26 @@ class Store:
                 "ORDER BY turns.completed_at DESC LIMIT 500",
                 (namespace,),
             ).fetchall()
+        # 命中詞數不是相關度。
+        #
+        # 原本直接把「命中幾個詞」當分數，所以只中一個詞的對話拿 1 分，
+        # 而餘弦相似度最高只有 1——對話因此永遠排在卡片前面。匯入 45 筆
+        # OpenClaw 對話之後，語意查詢的前八名全被對話佔滿，真正相關的
+        # 知識卡一張都擠不進來。這是 xkb_score 當初診斷的同一個病：
+        # 拿公分跟英吋比大小。
+        #
+        # 這裡不走 xkb_score，因為這條管線的卡片保留的是原始餘弦，
+        # 只換算其中一邊會讓對話反過來永遠墊底。改成一開始就產生
+        # 同一個尺度的數字：命中比例乘上折扣——關鍵字命中是比語意
+        # 相似弱的證據，詞出現過不代表在講同一件事。
+        # 全部命中約 0.65，落在中等相關的卡片附近；只中一半約 0.33，
+        # 低於卡片的相關度門檻，等於自動被濾掉。
         scored = []
         for row in rows:
             haystack = f"{row['query']} {row['answer']}".lower()
-            score = sum(1 for term in terms if term in haystack)
-            if score:
-                scored.append((score, row))
+            matched = sum(1 for term in terms if term in haystack)
+            if matched:
+                scored.append((round(KEYWORD_EVIDENCE_DISCOUNT * matched / len(terms), 4), row))
         scored.sort(key=lambda item: (item[0], item[1]["completed_at"] or ""), reverse=True)
         memories = [{"trace_id": row["trace_id"], "session_id": row["session_id"], "episode_id": row["episode_id"], "query": row["query"], "answer": row["answer"], "score": score, "memory_layer": "L1", "visibility": namespace} for score, row in scored[: max(1, min(limit, 50))]]
         context = "\n\n".join(f"[歷史證據] Q: {item['query']}\nA: {item['answer']}" for item in memories)
