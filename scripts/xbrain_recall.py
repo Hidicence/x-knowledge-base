@@ -13,8 +13,7 @@ Usage:
 Environment / config (in priority order):
     GBRAIN_DIR          path to vector store runtime (overrides all)
     GEMINI_API_KEY      required for semantic (vector) search
-    OPENCLAW_JSON       path to openclaw.json config (default: ~/.openclaw/openclaw.json)
-    ~/.openclaw/openclaw.json  fallback config: { "env": { "GEMINI_API_KEY": "...", "gbrain_dir": "..." } }
+    XKB_ENV_FILE        optional dotenv file for runtime credential injection
 """
 from __future__ import annotations
 
@@ -26,28 +25,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-def _read_openclaw_env() -> dict[str, str]:
-    """Read env dict from ~/.openclaw/openclaw.json (or OPENCLAW_JSON path)."""
-    try:
-        cfg_path = Path(os.getenv("OPENCLAW_JSON",
-                                  str(Path.home() / ".openclaw" / "openclaw.json")))
-        if cfg_path.exists():
-            return json.loads(cfg_path.read_text(encoding="utf-8")).get("env", {})
-    except Exception:
-        pass
-    return {}
-
-
-_OPENCLAW_ENV = _read_openclaw_env()
+_RUNTIME_ENV = runtime_env()
 
 
 def _resolve_gbrain_dir() -> Path | None:
     """Find the gbrain runtime directory, in priority order."""
     candidates = [
         os.getenv("GBRAIN_DIR"),
-        _OPENCLAW_ENV.get("gbrain_dir"),
+        _RUNTIME_ENV.get("GBRAIN_DIR"),
         str(Path.home() / "Desktop" / "gbrain"),
         str(Path.home() / "gbrain"),
         "/opt/gbrain",
@@ -79,20 +69,12 @@ def _resolve_bun() -> str:
 
 BUN = _resolve_bun()
 
-GEMINI_API_KEY = (
-    os.getenv("GEMINI_API_KEY")
-    or _OPENCLAW_ENV.get("GEMINI_API_KEY", "")
-)
+GEMINI_API_KEY = _RUNTIME_ENV.get("GEMINI_API_KEY", "")
 
 
 def _make_subprocess_env(semantic: bool) -> dict[str, str]:
-    """Build subprocess env, inheriting current env + openclaw overrides."""
-    env = {**os.environ}
-    # Propagate OPENCLAW_JSON so sub-processes can also find the config
-    if "OPENCLAW_JSON" not in env:
-        cfg = Path.home() / ".openclaw" / "openclaw.json"
-        if cfg.exists():
-            env["OPENCLAW_JSON"] = str(cfg)
+    """Build subprocess env from the portable runtime contract."""
+    env = {**_RUNTIME_ENV}
     if semantic and GEMINI_API_KEY:
         env["GEMINI_API_KEY"] = GEMINI_API_KEY
         # gbrain v0.42+ gateway 的 google recipe 讀這個變數名

@@ -27,6 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
 _SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -36,12 +38,7 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5
 
 
 def _get_gemini_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        return cfg.get("env", {}).get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "")
-    except Exception:
-        return os.getenv("GEMINI_API_KEY", "")
+    return runtime_env().get("GEMINI_API_KEY", "")
 
 
 def _call_gemini(key: str, prompt: str, retries: int = 3) -> str:

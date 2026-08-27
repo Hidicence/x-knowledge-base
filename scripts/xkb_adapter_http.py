@@ -8,11 +8,15 @@ from typing import Any
 
 from xkb_adapter_base import XKBInferenceAdapter
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
+
 
 class GenericHTTPAdapter(XKBInferenceAdapter):
     """Generic HTTP API adapter for OpenAI-compatible endpoints.
 
-    Reads LLM_API_URL / LLM_API_KEY from environment or ~/.openclaw/openclaw.json.
+    Reads LLM_API_URL / LLM_API_KEY from process env or explicit XKB_ENV_FILE.
     Works with any OpenAI-compatible endpoint (OpenAI-compatible, Groq, local models, etc.).
     """
 
@@ -24,16 +28,9 @@ class GenericHTTPAdapter(XKBInferenceAdapter):
         system = request.get("input", {}).get("system", "")
         user = request.get("input", {}).get("user", "")
 
-        cfg = {}
-        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
-        if cfg_path.exists():
-            try:
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8")).get("env", {})
-            except Exception:
-                cfg = {}
-
-        api_url = os.getenv("LLM_API_URL", "") or cfg.get("LLM_API_URL", "")
-        api_key = os.getenv("LLM_API_KEY", "") or cfg.get("LLM_API_KEY", "")
+        cfg = runtime_env()
+        api_url = cfg.get("LLM_API_URL", "")
+        api_key = cfg.get("LLM_API_KEY", "")
         if not api_url or not api_key:
             return {
                 "version": "xkb.result.v1",

@@ -36,23 +36,16 @@ from _llm import call as _llm_backend
 # ── gbrain bridge (optional) ──────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
 
 _GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
-_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-if not _GEMINI_KEY:
-    try:
-        import json as _j
-        _cfg = Path.home() / ".openclaw" / "openclaw.json"
-        if _cfg.exists():
-            _GEMINI_KEY = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
-    except Exception:
-        pass
+_GEMINI_KEY = runtime_env().get("GEMINI_API_KEY", "")
 
 _GBRAIN_AVAILABLE = _GBRAIN_DIR.exists() and bool(_GEMINI_KEY)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
-    os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
+WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
 INDEX_FILE     = BOOKMARKS_DIR / "search_index.json"
 VECTOR_FILE    = BOOKMARKS_DIR / "vector_index.json"

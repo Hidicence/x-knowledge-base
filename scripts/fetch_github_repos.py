@@ -21,13 +21,16 @@ Exit codes:
 import argparse
 import base64
 import json
-import os
+
 import re
 import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
 
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
@@ -41,13 +44,11 @@ SOURCE_LABELS["github_fork"] = "GitHub 倉庫（Fork）"
 SOURCE_LABELS["github_star"] = "GitHub 倉庫（Star）"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-WORKSPACE_DIR = Path(
-    os.getenv("OPENCLAW_WORKSPACE",
-              os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace")))
-)
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-CARDS_DIR = WORKSPACE_DIR / "memory" / "cards"
-INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
+import xkb_paths
+WORKSPACE_DIR = xkb_paths.WORKSPACE
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 GITHUB_RAW_DIR = BOOKMARKS_DIR / "github"   # raw metadata per repo (source layer)
 
 CARD_CATEGORIES = [
@@ -57,14 +58,7 @@ CARD_CATEGORIES = [
 
 
 def load_env_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        env = cfg.get("env", {})
-        return (env.get("LLM_API_KEY") or
-                os.getenv("LLM_API_KEY") or "")
-    except Exception:
-        return os.getenv("LLM_API_KEY") or ""
+    return runtime_env().get("LLM_API_KEY", "")
 
 
 # llm_call imported from _card_prompt as _llm_call

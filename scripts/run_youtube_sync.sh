@@ -12,20 +12,8 @@ LOG_FILE="${XKB_YOUTUBE_LOG:-/tmp/xkb-youtube-sync.log}"
 # Add user-local bin to PATH (yt-dlp is often installed there)
 export PATH="$PATH:$HOME/.local/bin"
 
-# 讀取 secrets
-SECRETS_FILE="$SKILL_DIR/../../../.secrets/x-knowledge-base.env"
-if [[ -f "$SECRETS_FILE" ]]; then
-    source "$SECRETS_FILE"
-fi
-
-# 讀取 openclaw.json 的 API keys（如果 env var 未設定）
-OPENCLAW_JSON="${OPENCLAW_JSON:-$OPENCLAW_HOME/openclaw.json}"
-if [[ -z "$LLM_API_KEY" && -f "$OPENCLAW_JSON" ]]; then
-    export LLM_API_KEY=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON')).get('env',{}).get('LLM_API_KEY',''))" 2>/dev/null)
-fi
-if [[ -z "$GEMINI_API_KEY" && -f "$OPENCLAW_JSON" ]]; then
-    export GEMINI_API_KEY=$(python3 -c "import json; print(json.load(open('$OPENCLAW_JSON'))['env'].get('GEMINI_API_KEY',''))" 2>/dev/null)
-fi
+# Credentials/configuration are injected by the caller (process environment or
+# XKB_ENV_FILE); this wrapper never reads private host paths.
 
 echo "[$(date '+%Y-%m-%d %H:%M')] YouTube sync start" >> "$LOG_FILE"
 

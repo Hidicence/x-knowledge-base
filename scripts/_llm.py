@@ -21,40 +21,21 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
+
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = _SKILL_DIR / "config" / "llm.json"
 
-# Env override takes priority over config file
-_ENV_MODEL = os.getenv("LLM_MODEL", "")
-# Direct API fallback (used when openclaw CLI is not available)
-_DIRECT_API_URL = os.getenv("LLM_API_URL", "")
-_DIRECT_API_KEY = os.getenv("LLM_API_KEY", "")
-
-# Fallback: read LLM config from ~/.openclaw/openclaw.json
-# Priority: env vars > openclaw.json generic LLM > Gemini
-if not _DIRECT_API_URL or not _DIRECT_API_KEY:
-    try:
-        _oclaw_cfg = Path.home() / ".openclaw" / "openclaw.json"
-        if _oclaw_cfg.exists():
-            import json as _j
-            _oclaw_env = _j.loads(_oclaw_cfg.read_text(encoding="utf-8")).get("env", {})
-            _DIRECT_API_URL = _DIRECT_API_URL or _oclaw_env.get("LLM_API_URL", "")
-            _DIRECT_API_KEY = _DIRECT_API_KEY or _oclaw_env.get("LLM_API_KEY", "")
-            _ENV_MODEL = _ENV_MODEL or _oclaw_env.get("LLM_MODEL", "")
-            # Gemini last-resort fallback
-            if not _DIRECT_API_URL or not _DIRECT_API_KEY:
-                _gk = _oclaw_env.get("GEMINI_API_KEY", "")
-                if _gk:
-                    _DIRECT_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-                    _DIRECT_API_KEY = _gk
-                    _ENV_MODEL = _ENV_MODEL or "gemini-2.5-pro"
-    except Exception:
-        pass
+def _runtime_settings() -> dict[str, str]:
+    """Read credentials from process env or explicit XKB_ENV_FILE only."""
+    return runtime_env()
 
 
 def _load_model() -> str:
-    if _ENV_MODEL:
-        return _ENV_MODEL
+    env_model = _runtime_settings().get("LLM_MODEL", "")
+    if env_model:
+        return env_model
     try:
         cfg = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
         return cfg.get("model", "sub2api-gpt/gpt-5.5")
@@ -68,7 +49,10 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
     Uses LLM_API_URL + LLM_API_KEY env vars for direct HTTP calls.
     Supports both OpenAI chat-completions format and Anthropic messages format.
     """
-    if not _DIRECT_API_URL or not _DIRECT_API_KEY:
+    settings = _runtime_settings()
+    direct_api_url = settings.get("LLM_API_URL", "")
+    direct_api_key = settings.get("LLM_API_KEY", "")
+    if not direct_api_url or not direct_api_key:
         raise RuntimeError(
             "openclaw is not installed and LLM_API_URL / LLM_API_KEY are not set.\n"
             "Set them to use a direct OpenAI-compatible API fallback:\n"
@@ -78,7 +62,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         )
 
     model = _load_model()
-    url = _DIRECT_API_URL.rstrip("/")
+    url = direct_api_url.rstrip("/")
     # Use Anthropic format only when URL explicitly contains "/anthropic"
     is_anthropic = "/anthropic" in url
     is_gemini = "generativelanguage.googleapis.com" in url
@@ -88,7 +72,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         if ":generateContent" not in url:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         # model var not used for URL when generateContent already in URL
-        url = f"{url}?key={_DIRECT_API_KEY}"
+        url = f"{url}?key={direct_api_key}"
         parts_text = (f"{system.strip()}\n\n" if system else "") + user.strip()
         payload = {"contents": [{"parts": [{"text": parts_text}]}]}
         headers = {"Content-Type": "application/json"}
@@ -125,9 +109,9 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
             payload["system"] = system
         headers = {
             "Content-Type": "application/json",
-            "x-api-key": _DIRECT_API_KEY,
+            "x-api-key": direct_api_key,
             "anthropic-version": "2023-06-01",
-            "Authorization": f"Bearer {_DIRECT_API_KEY}",
+            "Authorization": f"Bearer {direct_api_key}",
         }
     else:
         # OpenAI chat completions format
@@ -144,7 +128,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         }
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {_DIRECT_API_KEY}",
+            "Authorization": f"Bearer {direct_api_key}",
         }
 
     body = json.dumps(payload).encode("utf-8")
@@ -195,6 +179,13 @@ def call(system: str, user: str, *, model: str | None = None, timeout: int = 120
         RuntimeError: If the call fails or returns no output.
     """
     m = model or _load_model()
+
+    # Hermes supplies an explicit OpenAI-compatible runtime endpoint. Prefer it
+    # over the legacy OpenClaw CLI so Cron and non-OpenClaw sessions use the
+    # same provider contract.
+    settings = _runtime_settings()
+    if settings.get("LLM_API_URL") and settings.get("LLM_API_KEY"):
+        return _direct_api_call(system, user, timeout=timeout)
 
     # openclaw capability model run takes a single --prompt.
     # We inject the system context as a prefix.

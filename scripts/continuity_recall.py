@@ -367,25 +367,6 @@ def card_similarities(query: str, keys: list[str]) -> dict[str, float] | None:
     return {k: _cosine(query_vector, v) for k, v in vectors.items()}
 
 
-def _load_embedding_env() -> None:
-    """把 openclaw.json 裡的 embedding 設定補進環境變數（已存在的不覆蓋）。"""
-    path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if not path.exists():
-        return
-    try:
-        with path.open(encoding="utf-8") as fh:
-            env = (json.load(fh).get("env") or {})
-    except (OSError, ValueError):
-        return
-    for key in ("GEMINI_API_KEY", "EMBEDDING_PROVIDER", "EMBEDDING_MODEL",
-                "OPENAI_API_KEY", "OLLAMA_BASE_URL"):
-        if env.get(key) and not os.getenv(key):
-            os.environ[key] = str(env[key])
-    # 有 key 但沒指定供應商時，預設走 gemini——索引就是用它建的
-    if os.getenv("GEMINI_API_KEY") and not os.getenv("EMBEDDING_PROVIDER"):
-        os.environ["EMBEDDING_PROVIDER"] = "gemini"
-
-
 # 同一句話在一次召回裡會被 embed 兩次：混合檢索先打一次，相關度過濾再打一次。
 # 查詢字串一模一樣，向量當然也一樣，第二次純粹是多付一趟網路來回。
 # 小快取就夠——一次召回內命中，而且行程結束就丟掉，不會拿到過期的向量。
@@ -408,10 +389,6 @@ def _embed_query_uncached(query: str) -> list[float] | None:
     global _PROVIDER
     if _PROVIDER is None:
         try:
-            # MCP server 是被 OpenClaw 叫起來的，未必帶著這些環境變數。
-            # 沿用 xbrain_recall 的做法，從 openclaw.json 補上，否則語意召回會
-            # 在正式環境靜默退回字串比對——正是今天修了一整天的那種失敗方式。
-            _load_embedding_env()
             sys.path.insert(0, str(xkb_paths.SKILL_DIR))
             from tools.embedding_providers import get_provider
             _PROVIDER = get_provider()

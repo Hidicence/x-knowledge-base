@@ -12,6 +12,8 @@ from category_classifier import classify_content, apply_category
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
 CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
@@ -27,17 +29,7 @@ def _handle_signal(sig, frame):
     _shutdown = True
 
 def _get_api_key():
-    for k in ("LLM_API_KEY",):
-        v = os.environ.get(k, "")
-        if v: return v
-    cfg = Path(os.environ.get("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if cfg.exists():
-        try:
-            d = json.loads(cfg.read_text())
-            e = d.get("env", {})
-            return e.get("LLM_API_KEY") or ""
-        except: pass
-    return ""
+    return runtime_env().get("LLM_API_KEY", "")
 
 def _call_llm(api_key, content, card_id, source_url, category):
     category = classify_content(
