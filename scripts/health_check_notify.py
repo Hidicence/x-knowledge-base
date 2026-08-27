@@ -13,7 +13,7 @@ XKB 健檢告警 — 給排程用的死人開關
 設定（依序，先找到先用）：
     環境變數 XKB_TELEGRAM_BOT_TOKEN / XKB_TELEGRAM_CHAT_ID
     .xkb.json 的 {"telegram": {"bot_token": "...", "chat_id": "..."}}
-    ~/.openclaw/openclaw.json 的 channels.telegram（沿用既有設定）
+    XKB_ENV_FILE        optional dotenv file for runtime credential injection
 
 Usage:
     python3 scripts/health_check_notify.py
@@ -34,57 +34,25 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_paths
 import health_check_pipeline as hc
+from runtime_config import runtime_env
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 TIMEOUT_SECONDS = 20
 ALERT_STATE_PATH = xkb_paths.WORKSPACE / "memory" / "health-check-alert-state.json"
 
 
-def _from_openclaw_config() -> tuple[str, str]:
-    """沿用 OpenClaw 既有的 Telegram 設定，免得同一組憑證要維護兩份。"""
-    path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    if not path.exists():
-        return "", ""
-    try:
-        with path.open(encoding="utf-8") as fh:
-            cfg = json.load(fh)
-    except (json.JSONDecodeError, OSError):
-        return "", ""
-
-    tg = (cfg.get("channels") or {}).get("telegram") or {}
-    token = tg.get("botToken") or tg.get("bot_token") or ""
-    chat_id = ""
-    for key in ("chatId", "chat_id", "defaultChatId", "owner"):
-        if tg.get(key):
-            chat_id = str(tg[key])
-            break
-    if not chat_id:
-        # 有些版本把收件人放在 allowlist / admins 之類的清單裡
-        for key in ("allowedChatIds", "admins", "allowlist"):
-            value = tg.get(key)
-            if isinstance(value, list) and value:
-                chat_id = str(value[0])
-                break
-    return token, chat_id
-
-
 def resolve_telegram() -> tuple[str, str]:
-    token = os.getenv("XKB_TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("XKB_TELEGRAM_CHAT_ID", "")
+    settings = runtime_env()
+    token = settings.get("XKB_TELEGRAM_BOT_TOKEN", "")
+    chat_id = settings.get("XKB_TELEGRAM_CHAT_ID", "")
     if token and chat_id:
         return token, chat_id
-
     tg = xkb_paths.load_config().get("telegram") or {}
-    token = token or tg.get("bot_token", "")
-    chat_id = chat_id or str(tg.get("chat_id", ""))
-    if token and chat_id:
-        return token, chat_id
-
-    fallback_token, fallback_chat = _from_openclaw_config()
-    return token or fallback_token, chat_id or fallback_chat
+    return token or tg.get("bot_token", ""), chat_id or str(tg.get("chat_id", ""))
 
 
 def send_telegram(token: str, chat_id: str, text: str) -> None:
@@ -159,6 +127,7 @@ def main() -> int:
         hc.check_semantic_index(),
         hc.check_topic_map(),
         hc.check_staging_backlog(),
+        hc.check_governance_actionable(),
         hc.check_index_freshness(),
     ]
     failures = [

@@ -1,0 +1,7 @@
+# XKB 每日治理排程範例（未啟用）
+# 先確認工作目錄與 XKB_DATA_DIR，再由外部 cron 啟用：
+# 15 3 * * * cd /root/.openclaw/workspace && /usr/bin/python3 skills/x-knowledge-base/scripts/xkb_daily_pipeline.py --skip-fetch --batch 40 --governance-limit 20 --no-notify >> /var/log/xkb-daily.log 2>&1
+# future dry-run：
+# /usr/bin/python3 skills/x-knowledge-base/scripts/xkb_daily_pipeline.py --dry-run --governance-limit 20
+
+# 這是模板，不會自行安裝或修改 cron；治理入口固定經 xkb_review.py，保留 provenance/evidence/TTL/promotion gates。

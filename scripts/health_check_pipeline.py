@@ -327,6 +327,24 @@ def check_staging_backlog() -> dict:
     return result
 
 
+def check_governance_actionable() -> dict:
+    """Warn only when bounded governance backlog exceeds threshold or is overdue."""
+    result = {"name": "governance_actionable", "checks": []}
+    try:
+        import xkb_review
+        counts = xkb_review.governance_health_counts(int(os.getenv("XKB_GOVERNANCE_TTL_DAYS", "30")))
+    except Exception as exc:
+        result["checks"].append({"ok": False, "msg": f"governance counts unavailable: {exc}"})
+        return result
+    threshold = int(os.getenv("XKB_GOVERNANCE_MAX_PENDING", os.getenv("XKB_STAGING_MAX_PENDING", "60")))
+    actionable = {key: counts.get(key, 0) for key in ("pending", "medium", "low", "proposal", "quarantine", "overdue", "safe_promotion")}
+    actionable["ttl"] = actionable["quarantine"]
+    result["actionable_counts"] = actionable
+    warning = counts["pending"] > threshold or counts["overdue"] > 0
+    result["checks"].append({"ok": not warning, "msg": "governance actionable counts: " + json.dumps(actionable, ensure_ascii=False) + (f" — threshold {threshold}" if warning else "")})
+    return result
+
+
 def check_index_freshness() -> dict:
     """檢查 search_index 和 vector_index 的 summary 覆蓋率與更新時間。"""
     result = {"name": "index_freshness", "checks": []}
@@ -407,6 +425,7 @@ def main() -> int:
         check_semantic_index(),
         check_topic_map(),
         check_staging_backlog(),
+        check_governance_actionable(),
         check_index_freshness(),
     ]
 
