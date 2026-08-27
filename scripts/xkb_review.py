@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -202,8 +203,45 @@ def _classify_relations(candidates: list[Candidate]) -> None:
                 break
 
 
+def _has_evidence(candidate: Candidate) -> bool:
+    """A link is the strongest evidence, but distilled candidates rarely quote one.
+
+    These are conclusions drawn from work sessions, not clippings, so requiring
+    an inline URL rejected 1,122 of 1,132 pending candidates for lacking a
+    property they could never have had. Naming the staging file, the position
+    inside it, and a real date traces the claim back to what was actually said,
+    which is what this gate is asking for.
+    """
+    if candidate.evidence_present:
+        return True
+    if not candidate.provenance_complete:
+        return False
+    try:
+        date.fromisoformat(candidate.source_date)
+    except ValueError:
+        return False
+    return True
+
+
+def _topic_accepts_append(candidate: Candidate) -> bool:
+    """Refuse to append to a page already too long for anyone to read.
+
+    Promotion appends one bullet. On a ten-thousand-line topic that adds volume
+    and no understanding, and the pending set is concentrated enough that a
+    single topic would receive a hundred of them. Those candidates stay in the
+    review queue, where the answer is to synthesise the page, not extend it.
+    """
+    path = TOPICS_DIR / f"{candidate.topic_key}.md"
+    try:
+        with path.open(encoding="utf-8") as fh:
+            lines = sum(1 for _ in fh)
+    except OSError:
+        return False
+    return lines <= int(os.getenv("XKB_TOPIC_APPEND_MAX_LINES", "800"))
+
+
 def _safe_promotable(candidate: Candidate) -> bool:
-    if candidate.relation != "unique" or not candidate.provenance_complete or not candidate.evidence_present:
+    if candidate.relation != "unique" or not candidate.provenance_complete or not _has_evidence(candidate):
         return False
     if not candidate.reusable or candidate.topic.startswith("[NEW:"):
         return False
@@ -235,7 +273,8 @@ def _promoted_ids(path: Path) -> set[str]:
 def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dict[str, str]]:
     changes = []
     for candidate in candidates:
-        if not _safe_promotable(candidate) or not _topic_available(candidate):
+        if (not _safe_promotable(candidate) or not _topic_available(candidate)
+                or not _topic_accepts_append(candidate)):
             continue
         topic_path = TOPICS_DIR / f"{candidate.topic_key}.md"
         marker = f"xkb-candidate:{candidate.candidate_id}"
@@ -315,6 +354,8 @@ def write_registry(candidates: list[Candidate], path: Path, promoted_ids: set[st
             )
             if row["lifecycle"] == "retained" and not _topic_available(candidate):
                 row["retained_reason"] = "missing_topic"
+            elif row["lifecycle"] == "retained" and not _topic_accepts_append(candidate):
+                row["retained_reason"] = "topic_needs_synthesis"
             row["source_evidence"] = {"file": candidate.source_file, "position": candidate.source_position}
             fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
             existing.add(candidate.candidate_id)
@@ -347,6 +388,8 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     eligible = [c for c in pending if c.candidate_id not in already_promoted and (
         c.candidate_id not in registered_ids
         or (retained_reasons.get(c.candidate_id) == "missing_topic" and _topic_available(c))
+        or (retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
+            and _topic_accepts_append(c))
     )]
     bounded = eligible[: max(0, limit)]
     topic_groups: dict[str, list[Candidate]] = {}
@@ -385,6 +428,7 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
             queues["proposal_queue"].append(asdict(candidate))
             continue
         if (_safe_promotable(candidate) and _topic_available(candidate)
+                and _topic_accepts_append(candidate)
                 and candidate.candidate_id not in already_promoted):
             stats["promoted"] += 1
             stats["approved"] += 1
@@ -565,6 +609,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="governance preview; no artifact writes")
     parser.add_argument("--write-governance", action="store_true", help="write additive registry governance artifacts")
     parser.add_argument("--rollback", metavar="BATCH_ID", help="restore exactly one governance batch")
+    parser.add_argument("--ttl-days", type=int,
+                        default=int(os.getenv("XKB_GOVERNANCE_TTL_DAYS", "30")),
+                        help="quarantine candidates whose source date is older than this "
+                             "(default 30, or XKB_GOVERNANCE_TTL_DAYS)")
     args = parser.parse_args()
     if args.approve or args.skip:
         code = 0
@@ -578,7 +626,8 @@ def main() -> int:
         print(json.dumps(rollback_batch(args.rollback), ensure_ascii=False, indent=2)); return 0
     candidates = load_candidates()
     if args.governance:
-        print(json.dumps(governance_batch(args.limit, not args.write_governance), ensure_ascii=False, indent=2)); return 0
+        print(json.dumps(governance_batch(args.limit, not args.write_governance, args.ttl_days),
+                         ensure_ascii=False, indent=2)); return 0
     if args.stats or not args.do_list: print_stats(candidates); return 0
     pending = [c for c in candidates if c.status == "pending" and (args.include_duplicates or not c.duplicate_of) and (not args.topic or c.topic == args.topic)]
     batch = pending[:args.limit]
