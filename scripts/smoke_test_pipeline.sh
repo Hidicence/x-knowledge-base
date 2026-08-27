@@ -15,12 +15,14 @@ check() {
     local name="$1"
     local result="$2"
     local expect="$3"
-    if echo "$result" | grep -qE "$expect"; then
+    local rc="${4:-0}"
+    if [[ "$rc" -eq 0 ]] && grep -qE "$expect" <<<"$result"; then
         echo "  ✅  $name"
         PASS=$((PASS + 1))
     else
         echo "  ❌  $name"
         echo "      expected: $expect"
+        [[ "$rc" -ne 0 ]] && echo "      command exit: $rc"
         echo "      got: $(echo "$result" | head -3)"
         FAIL=$((FAIL + 1))
     fi
@@ -36,44 +38,44 @@ import json
 d=json.load(open('$WORKSPACE_DIR/memory/bookmarks/search_index.json'))
 items=d.get('items',d) if isinstance(d,dict) else d
 print(f'items={len(items)}')
-" 2>&1 || echo "ERROR")
-check "search_index.json has items" "$out" "items=[0-9]+"
+" 2>&1); rc=$?
+check "search_index.json has items" "$out" "^items=[0-9]+$" "$rc"
 
 # 2. topic-map.json valid
 out=$(python3 -c "
 import json
 d=json.load(open('$WORKSPACE_DIR/wiki/topic-map.json'))
 print(f'mappings={len(d.get(\"mapping\",{}))}')
-" 2>&1 || echo "ERROR")
-check "topic-map.json valid" "$out" "mappings=[0-9]+"
+" 2>&1); rc=$?
+check "topic-map.json valid" "$out" "^mappings=[0-9]+$" "$rc"
 
 # 3. Wiki topics exist on disk
 count=$(ls "$WORKSPACE_DIR/wiki/topics/"*.md 2>/dev/null | wc -l || echo 0)
-check "wiki topics seeded" "topics=$count" "topics=[1-9]"
+check "wiki topics seeded" "topics=$count" "^topics=[1-9][0-9]*$"
 
 # 4. lint_wiki.py
-out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/lint_wiki.py" 2>&1 || echo "ERROR")
-check "lint_wiki.py runs" "$out" "Topics on disk: [1-9]"
+out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/lint_wiki.py" 2>&1); rc=$?
+check "lint_wiki.py runs" "$out" "Topics on disk: [1-9][0-9]*" "$rc"
 
 # 5. status_knowledge_pipeline.py
-out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/status_knowledge_pipeline.py" 2>&1 || echo "ERROR")
-check "status_knowledge_pipeline.py runs" "$out" "Total: [0-9]+"
+out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/status_knowledge_pipeline.py" 2>&1); rc=$?
+check "status_knowledge_pipeline.py runs" "$out" "^[[:space:]]+Total: [0-9]+[[:space:]]+\|" "$rc"
 
 # 6. sync_cards_to_wiki --review --no-llm
-out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/sync_cards_to_wiki.py" --review --no-llm --topic openclaw-agent-workflows 2>&1 || echo "ERROR")
-check "sync_cards_to_wiki --review" "$out" "candidates"
+out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/sync_cards_to_wiki.py" --review --no-llm --topic openclaw-agent-workflows 2>&1); rc=$?
+check "sync_cards_to_wiki --review" "$out" "[0-9]+ candidates?" "$rc"
 
 # 7. distill_memory_to_wiki --no-llm
-out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/distill_memory_to_wiki.py" --dry-run --no-llm --days 3 2>&1 || echo "ERROR")
-check "distill_memory_to_wiki --no-llm" "$out" "(No memory files|Loaded [0-9]+ file)"
+out=$(OPENCLAW_WORKSPACE="$WORKSPACE_DIR" python3 "$SCRIPTS/distill_memory_to_wiki.py" --dry-run --no-llm --days 3 2>&1); rc=$?
+check "distill_memory_to_wiki --no-llm" "$out" "^(No memory files|Loaded [0-9]+ (recent L1 trace snapshot\(s\)|input item\(s\):))" "$rc"
 
 # 8. review-decisions.json has decisions written
 out=$(python3 -c "
 import json
 d=json.load(open('$WORKSPACE_DIR/wiki/review-decisions.json'))
 print(f'decisions={len(d.get(\"decisions\",{}))}')
-" 2>&1 || echo "ERROR")
-check "review-decisions.json has absorb records" "$out" "decisions=[0-9]+"
+" 2>&1); rc=$?
+check "review-decisions.json has absorb records" "$out" "^decisions=[0-9]+$" "$rc"
 
 # 9. wiki index.md lists topic links
 count=$(grep -c 'topics/.*\.md' "$WORKSPACE_DIR/wiki/index.md" 2>/dev/null || echo 0)

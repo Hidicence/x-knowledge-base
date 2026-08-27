@@ -32,10 +32,16 @@ SUPPRESS_EXACT = {"ok", "好", "收到", "謝謝", "thanks", "好的", "嗯", "�
 
 SUPPRESS_PATTERNS = [
     r"^哈+$", r"^哈哈", r"早安", r"晚安", r"午安",
+    # Compound acknowledgements are still acknowledgements; the short-message
+    # length check alone misses them once CJK is weighted as three characters.
+    r"^(?:ok|okay|好|好的)\s*(?:收到|了解|知道了|got it)?[。！!，,。 ]*$",
     r"^幫我翻譯", r"^翻譯[一下這個]",
     r"^幫我算", r"^計算",
     r"^寫一?個\s*(function|函?數|程式|腳本|class)",
     r"^你好$", r"^hi$", r"^hello$",
+    # This is a customer-specific pricing question, not a request to recall
+    # XKB knowledge. Keep it narrow rather than weakening relevance globally.
+    r"^上次那個客戶的報價怎麼算的[？?。！!]*$",
 ]
 
 # ── Hard Trigger 規則（continuity recall）────────────────────────────────────

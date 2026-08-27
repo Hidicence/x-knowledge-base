@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -24,27 +25,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
-QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
-CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(xkb_paths.XKB_DATA_DIR / "tiege-queue.json")))
+CARDS_DIR = xkb_paths.CARDS_DIR
 
 # ── gbrain integration ────────────────────────────────────────────────────────
 _GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
 _GBRAIN_CLI = str(_GBRAIN_DIR / "src" / "cli.ts")
 _GBRAIN_AVAILABLE = (_GBRAIN_DIR / "src" / "cli.ts").exists()
 
-# Load GEMINI_API_KEY for gbrain embed
+# Load GEMINI_API_KEY for gbrain embed; Hermes injects it via its profile .env.
 _GBRAIN_ENV: dict[str, str] = {**os.environ}
-if not _GBRAIN_ENV.get("GEMINI_API_KEY"):
-    try:
-        import json as _j
-        _cfg = Path.home() / ".openclaw" / "openclaw.json"
-        if _cfg.exists():
-            _k = _j.loads(_cfg.read_text(encoding="utf-8")).get("env", {}).get("GEMINI_API_KEY", "")
-            if _k:
-                _GBRAIN_ENV["GEMINI_API_KEY"] = _k
-    except Exception:
-        pass
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 _SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -284,11 +275,15 @@ def _read_bookmark(source_path: str) -> str:
     2026-08-02 有 9 份就是這樣失敗的。id 是穩定的，路徑不是，所以路徑
     找不到時就用 id 再找一次。
     """
-    full_path = WORKSPACE / source_path
-    if full_path.exists():
+    candidate = Path(source_path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return ""
+    full_path = (WORKSPACE / candidate).resolve()
+    bookmarks_root = BOOKMARKS_DIR.resolve()
+    if full_path.is_file() and (full_path == bookmarks_root or bookmarks_root in full_path.parents):
         return full_path.read_text(encoding="utf-8", errors="ignore")
     moved = next(xkb_paths.BOOKMARKS_DIR.rglob(f"{Path(source_path).stem}.md"), None)
-    if moved:
+    if moved and (moved.resolve() == bookmarks_root or bookmarks_root in moved.resolve().parents):
         print(f"    （書籤已移動：{source_path} → {moved.relative_to(WORKSPACE)}）", flush=True)
         return moved.read_text(encoding="utf-8", errors="ignore")
     return ""
@@ -327,6 +322,25 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
     return "done", ""
 
 
+def _sync_enriched_index() -> bool:
+    """Make cards immediately searchable after a worker batch completes."""
+    script = Path(__file__).with_name("sync_enriched_index.py")
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(WORKSPACE),
+        capture_output=True,
+        text=True,
+    )
+    output = (proc.stdout or "").strip()
+    if output:
+        print("\n" + output, flush=True)
+    if proc.returncode != 0:
+        error = (proc.stderr or proc.stdout or "").strip()[-300:]
+        print(f"⚠️  enriched index sync failed: {error}", file=sys.stderr, flush=True)
+        return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bookmark enrichment worker")
     parser.add_argument("--limit",      type=int, default=5,     help="Max items to process (default: 5)")
@@ -339,7 +353,7 @@ def main() -> int:
     if args.local_only:
         args.dry_run = True  # local-only implies dry-run (no API calls)
 
-    api_key = ""  # auth handled by _llm.py via openclaw CLI
+    api_key = os.getenv("LLM_API_KEY", "")
 
     data = _load_queue()
     items = data["items"]
@@ -360,7 +374,7 @@ def main() -> int:
     elif args.dry_run:
         print("   (dry-run mode — no API calls; queue will not be mutated)")
     else:
-        print(f"   ⚠️  Bookmark content will be sent to LLM for enrichment (via openclaw).")
+        print(f"   ⚠️  Bookmark content will be sent to LLM for enrichment (via configured XKB runtime provider).")
 
     if args.dry_run:
         for item in todo:
@@ -414,6 +428,15 @@ def main() -> int:
 
     remaining = len([i for i in data["items"] if i["status"] == "todo"])
     print(f"\n📊 done={results['done']}  skipped={results['skipped']}  failed={results['failed']}  remaining todo={remaining}")
+
+    if not args.dry_run and results["done"]:
+        if not _sync_enriched_index():
+            print("❌ enriched index sync failed after cards were written", file=sys.stderr, flush=True)
+            return 1
+
+    if results["failed"]:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

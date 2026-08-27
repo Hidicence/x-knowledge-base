@@ -39,3 +39,7 @@ dist/
 scripts/xkb-agent-hook-config.json
 auth.json
 config/youtube-playlists.json
+
+# Runtime artifacts written by scripts run from the skill directory
+memory/
+*.bak-*

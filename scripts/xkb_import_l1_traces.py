@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -56,7 +57,12 @@ def local_token(url: str) -> str:
 
     非 loopback 就不做這件事:那代表是從別台機器連進來,必須明確給 token。
     """
-    if not any(host in url for host in ("127.0.0.1", "localhost", "::1")):
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return ""
+    if parsed.username or parsed.password or hostname not in {"127.0.0.1", "localhost", "::1"}:
         return ""
     path = Path(os.getenv("XKB_SERVICE_AUTH", str(Path.home() / ".xkb-runtime" / "auth.json")))
     try:
