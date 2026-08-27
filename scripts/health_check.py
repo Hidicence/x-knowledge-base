@@ -31,20 +31,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.embedding_providers import get_provider
 
 WORKSPACE = xkb_paths.WORKSPACE
 INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
-GEMINI_EMBED_URL = "https://generativelanguage.googleapis.com/v1/models/text-embedding-004:embedContent"
 
 
-def _get_gemini_key() -> str:
-    cfg_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-    try:
-        cfg = json.loads(cfg_path.read_text())
-        return cfg.get("env", {}).get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "")
-    except Exception:
-        return os.getenv("GEMINI_API_KEY", "")
+
+def _get_gemini_key(env_file: str | Path | None = None) -> str:
+    provider = get_provider(env_file=env_file)
+    if provider.__class__.__name__ != "GeminiProvider":
+        raise ValueError("health check requires EMBEDDING_PROVIDER=gemini")
+    return getattr(provider, "api_key")
 
 
 def _call_gemini(key: str, prompt: str, retries: int = 3) -> str:
@@ -63,7 +63,7 @@ def _call_gemini(key: str, prompt: str, retries: int = 3) -> str:
                 raise
 
 
-def _embed(key: str, text: str) -> list[float]:
+def _embed(key: str, text: str, env_file: str | Path | None = None) -> list[float]:
     """單筆 embedding。目前沒有呼叫端——分析一律沿用 build_vector_index 的成果。
 
     要重新啟用前先注意：這裡用的是 text-embedding-004（768 維），
@@ -71,15 +71,13 @@ def _embed(key: str, text: str) -> list[float]:
     cosine_similarity 的 zip() 會直接截斷到較短的那個，不會拋錯，
     只會算出無意義的分數——又是一個安靜出錯的路徑。
     """
-    payload = json.dumps({"model": "models/text-embedding-004", "content": {"parts": [{"text": text[:2000]}]}}).encode()
-    url = f"{GEMINI_EMBED_URL}?key={key}"
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read())
-    return data["embedding"]["values"]
+    del key  # retained for compatibility with older callers
+    return get_provider(env_file=env_file).embed(text[:2000])
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):
+        raise ValueError(f"embedding dimension mismatch: {len(a)} != {len(b)}")
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x * x for x in a))
     mag_b = math.sqrt(sum(x * x for x in b))
@@ -329,11 +327,13 @@ def main() -> int:
     parser.add_argument("--mode", choices=["all", "conflicts", "gaps", "duplicates"], default="all")
     parser.add_argument("--out", help="輸出報告路徑")
     parser.add_argument("--threshold", type=float, default=0.82, help="相似度閾值（預設 0.82）")
+    parser.add_argument("--env-file", help="dotenv file for credentials/config (process environment wins)")
     args = parser.parse_args()
 
-    key = _get_gemini_key()
-    if not key:
-        print("❌ GEMINI_API_KEY not found")
+    try:
+        key = _get_gemini_key(args.env_file)
+    except (EnvironmentError, ValueError, OSError) as exc:
+        print(f"❌ {exc}", file=sys.stderr)
         return 1
 
     cards = load_cards(args.category)

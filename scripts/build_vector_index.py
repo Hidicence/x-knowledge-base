@@ -36,9 +36,9 @@ sys.path.insert(0, str(_SKILL_DIR))
 from tools.embedding_providers import get_provider
 
 WORKSPACE_DIR = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
-VECTOR_FILE = BOOKMARKS_DIR / "vector_index.json"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
+VECTOR_FILE = xkb_paths.VECTOR_FILE
 # wiki/memory 的向量另外存一份小檔。召回時只需要這 ~1,900 個向量，
 # 但它們混在 8,000 多個卡片向量裡，載入整個 62MB 檔案要 5.4 秒——
 # 而召回是每句話都要跑的。分開存之後只需要載入十分之一。
@@ -261,6 +261,7 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--index-file", default=str(INDEX_FILE))
     parser.add_argument("--vector-file", default=str(VECTOR_FILE))
+    parser.add_argument("--env-file", help="dotenv file for credentials/config (process environment wins)")
     args = parser.parse_args()
 
     index_path = Path(args.index_file)
@@ -332,9 +333,9 @@ def main() -> int:
 
     # Init provider
     try:
-        provider = get_provider()
+        provider = get_provider(env_file=args.env_file)
         print(f"🤖 Provider: {provider.__class__.__name__} / model: {getattr(provider, 'model', '?')}")
-    except EnvironmentError as e:
+    except (EnvironmentError, ValueError) as e:
         print(f"❌ {e}", file=sys.stderr)
         return 1
 

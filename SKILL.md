@@ -1,12 +1,6 @@
 ---
-name: x-knowledge-base
-description: |
-  Evolve scattered inputs into a proactive, reusable personal knowledge base for AI agents.
-  Use for: ingesting X/Twitter bookmarks, local notes, YouTube, GitHub, PDFs, and PubMed papers;
-  generating knowledge cards; building search/vector indexes; surfacing relevant knowledge during conversations;
-  distilling durable wiki pages; and packaging/publishing the skill itself on ClawHub.
-  將分散資料來源整理成可檢索、可主動召回、可沉澱成 wiki 的個人知識系統，也用來維護/發佈 XKB skill。
-  使用於：抓取與整理 X/Twitter 書籤、本地筆記、YouTube、GitHub、PDF、PubMed 論文；生成知識卡；更新搜尋/向量索引；在對話中主動召回既有知識；以及沉澱長期 wiki 與發布 ClawHub 版本。
+name: "x-knowledge-base"
+description: "Evolve scattered inputs into a proactive, reusable personal knowledge base for AI agents.\nUse for: ingesting X/Twitter bookmarks, local notes, YouTube, GitHub,"
 ---
 
 # X Knowledge Base
@@ -241,6 +235,8 @@ python3 scripts/recall_for_conversation.py "query" --no-semantic
 
 ## Semantic Recall (Optional)
 
+For a portable setup from a clean GitHub checkout, read `docs/embedding-configuration.md`. It documents the sanitized `.env.example` and `config/embedding.example.json`, workspace isolation, provider/model compatibility, credential rotation, redaction, fail-fast behavior, and mock/dry-run verification. No Hermes or OpenClaw private path is required.
+
 ```bash
 # 建立向量索引（首次 or 重建）
 export EMBEDDING_PROVIDER=gemini
@@ -380,3 +376,14 @@ python3 scripts/migrate_schema.py             # 執行
 - 個人資料（cards、wiki、graph-data、vector index）永遠留在本機，不進 repo
 - Data quality first — 先保品質再追覆蓋率
 - Knowledge cards 要服務回用，不只是保存
+
+## Maintenance Verification
+
+Use this sequence for backup, health checks, and index maintenance:
+
+1. Create a timestamped backup of wiki data and any existing search/vector indexes before mutation; record the backup path. **Completion criterion:** the backup directory exists and contains each source that was present.
+2. Run pipeline status, wiki lint, and health checks before rebuilding indexes; record their counts and warnings separately. **Completion criterion:** a pre-maintenance report distinguishes clean results from actionable warnings.
+3. Treat each queue independently: inspect both the external/task queue and wiki `_staging/` pending candidates rather than using one queue’s empty result as proof that all review work is complete. **Completion criterion:** report pending counts for every queue that the status tools expose.
+4. Run the incremental vector-index rebuild after source and wiki checks complete. **Completion criterion:** the command reports saved vectors and the output index exists.
+5. Run several representative recall smoke tests covering distinct knowledge areas. **Completion criterion:** each test returns an explicit search mode and, when relevant, both wiki and source-card evidence.
+6. Report lint warnings and pending staging candidates as remaining work, not as successful indexing; use batch triage before approving a large historical backlog. **Completion criterion:** the final status separates completed maintenance from unresolved review work.

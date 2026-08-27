@@ -1,0 +1,9 @@
+{
+  "schema": "xkb-embedding.v1",
+  "embedding": {
+    "provider": "gemini",
+    "model": "gemini-embedding-2-preview",
+    "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+    "workspace_root": "./runtime"
+  }
+}

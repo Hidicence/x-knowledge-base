@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 from typing import List
+from urllib.parse import urlparse
 
 from pathlib import Path
 import requests
@@ -23,10 +25,116 @@ import requests
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+DEFAULT_MODEL = "gemini-embedding-2-preview"
+DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
+
+
+@dataclass(frozen=True)
+class EmbeddingConfig:
+    provider: str = "gemini"
+    model: str = DEFAULT_MODEL
+    endpoint: str = DEFAULT_ENDPOINT
+    workspace_root: str = ""
+
+
+def _config_path() -> Path:
+    return Path(os.getenv("XKB_CONFIG", str(Path(__file__).resolve().parent.parent / "config" / "embedding.json")))
+
+
+def _load_xkb_config() -> dict:
+    path = _config_path()
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Invalid embedding config at {path}: {exc}") from exc
+    if not isinstance(value, dict) or not isinstance(value.get("embedding", {}), dict):
+        raise ValueError(f"Invalid embedding config at {path}: expected an embedding object")
+    return value
+
+
+def _http_endpoint(value: str, setting: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{setting} must be an HTTP(S) URL")
+    return value.rstrip("/")
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Read a dotenv-style file without mutating ``os.environ``.
+
+    Explicit env files are an injection boundary for isolated workers.  Values
+    already present in the process always win over values from this file.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Embedding env file not found: {path}")
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise OSError(f"Unable to read embedding env file {path}: {exc}") from exc
+    for line_no, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].lstrip()
+        if "=" not in stripped:
+            raise ValueError(f"Invalid embedding env file {path} line {line_no}: expected KEY=VALUE")
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum():
+            raise ValueError(f"Invalid embedding env file {path} line {line_no}: invalid key")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def load_config(env_file: str | Path | None = None) -> EmbeddingConfig:
+    env_values = _load_env_file(Path(env_file)) if env_file is not None else {}
+    configured = _load_xkb_config().get("embedding", {})
+    defaults = {
+        "provider": "gemini",
+        "model": DEFAULT_MODEL,
+        "endpoint": DEFAULT_ENDPOINT,
+        "workspace_root": "",
+    }
+    for setting, value in configured.items():
+        if setting in defaults and not isinstance(value, str):
+            raise ValueError(f"embedding.{setting} must be a string")
+    values = {
+        "provider": os.getenv("EMBEDDING_PROVIDER") or env_values.get("EMBEDDING_PROVIDER") or configured.get("provider", defaults["provider"]),
+        "model": os.getenv("EMBEDDING_MODEL") or env_values.get("EMBEDDING_MODEL") or configured.get("model", defaults["model"]),
+        "endpoint": os.getenv("EMBEDDING_ENDPOINT") or env_values.get("EMBEDDING_ENDPOINT") or configured.get("endpoint", defaults["endpoint"]),
+        "workspace_root": os.getenv("EMBEDDING_WORKSPACE_ROOT") or env_values.get("EMBEDDING_WORKSPACE_ROOT") or configured.get("workspace_root", defaults["workspace_root"]),
+    }
+    for setting, value in values.items():
+        if not isinstance(value, str):
+            raise ValueError(f"embedding.{setting} must be a string")
+    provider = values["provider"].strip().lower()
+    model = values["model"].strip()
+    endpoint = values["endpoint"]
+    workspace_root = values["workspace_root"]
+    return EmbeddingConfig(provider=provider, model=model, endpoint=_http_endpoint(endpoint, "EMBEDDING_ENDPOINT"), workspace_root=workspace_root)
+
+
+def _validate_model(provider: str, model: str) -> None:
+    prefixes = {"gemini": ("gemini-",), "openai": ("text-embedding-",), "ollama": ()}
+    if provider not in prefixes:
+        raise ValueError(f"Unknown EMBEDDING_PROVIDER: '{provider}'. Supported: {', '.join(PROVIDER_REGISTRY)}")
+    if prefixes[provider] and not model.startswith(prefixes[provider]):
+        raise ValueError(f"Model '{model}' is not compatible with provider '{provider}'")
+
+
 def _post(url: str, headers: dict, body: dict, timeout: int = 30) -> dict:
     resp = requests.post(url, headers=headers, json=body, timeout=timeout)
     if not resp.ok:
-        raise RuntimeError(f"Embedding API error {resp.status_code}: {resp.text[:200]}")
+        # Upstream bodies can echo request text or credentials. Keep failures
+        # actionable without copying potentially sensitive response content.
+        raise RuntimeError(f"Embedding API error {resp.status_code}")
     return resp.json()
 
 
@@ -64,19 +172,20 @@ class GeminiProvider(EmbeddingProvider):
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, api_key: str, model: str = "gemini-embedding-2-preview"):
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str = DEFAULT_ENDPOINT):
         self.api_key = api_key
         self.model = model
+        self.base_url = _http_endpoint(base_url, "Gemini endpoint")
 
     def embed(self, text: str) -> List[float]:
-        url = f"{self.BASE_URL}/{self.model}:embedContent?key={self.api_key}"
+        url = f"{self.base_url}/{self.model}:embedContent?key={self.api_key}"
         body = {"content": {"parts": [{"text": text}]}}
         data = _post(url, headers={"Content-Type": "application/json"}, body=body)
         return data["embedding"]["values"]
 
     def _embed_batch_impl(self, texts: List[str]) -> List[List[float]]:
         # Gemini supports batchEmbedContents
-        url = f"{self.BASE_URL}/{self.model}:batchEmbedContents?key={self.api_key}"
+        url = f"{self.base_url}/{self.model}:batchEmbedContents?key={self.api_key}"
         requests_list = [{"model": f"models/{self.model}", "content": {"parts": [{"text": t}]}} for t in texts]
         body = {"requests": requests_list}
         data = _post(url, headers={"Content-Type": "application/json"}, body=body)
@@ -137,21 +246,14 @@ class OllamaProvider(EmbeddingProvider):
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-
-def _openclaw_key(key_name: str) -> str:
-    """Fallback: read API key from OPENCLAW_JSON or ~/.openclaw/openclaw.json."""
-    try:
-        config_path = Path(os.getenv("OPENCLAW_JSON", str(Path.home() / ".openclaw" / "openclaw.json")))
-        if config_path.exists():
-            import json as _json
-            cfg = _json.loads(config_path.read_text(encoding="utf-8"))
-            return cfg.get("env", {}).get(key_name, "")
-    except Exception:
-        pass
-    return ""
+PROVIDER_REGISTRY = {
+    "gemini": GeminiProvider,
+    "openai": OpenAIProvider,
+    "ollama": OllamaProvider,
+}
 
 
-def get_provider() -> EmbeddingProvider:
+def get_provider(env_file: str | Path | None = None) -> EmbeddingProvider:
     """
     Create an EmbeddingProvider based on environment variables.
 
@@ -163,41 +265,26 @@ def get_provider() -> EmbeddingProvider:
     Optional:
         EMBEDDING_MODEL=<model name>  (overrides per-provider default)
     """
-    provider_name = os.getenv("EMBEDDING_PROVIDER", "").lower()
-    model = os.getenv("EMBEDDING_MODEL", "")
+    env_file = env_file or os.getenv("XKB_ENV_FILE")
+    env_values = _load_env_file(Path(env_file)) if env_file is not None else {}
+    config = load_config(env_file=env_file)
+    provider_name, model = config.provider, config.model
+    _validate_model(provider_name, model)
 
     if provider_name == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY", "")
+        api_key = os.getenv("GEMINI_API_KEY") or env_values.get("GEMINI_API_KEY", "")
         if not api_key:
             raise EnvironmentError("GEMINI_API_KEY is required for EMBEDDING_PROVIDER=gemini")
-        return GeminiProvider(api_key=api_key, model=model or "gemini-embedding-2-preview")
+        return GeminiProvider(api_key=api_key, model=model, base_url=config.endpoint)
 
     elif provider_name == "openai":
-        api_key = os.getenv("OPENAI_API_KEY", "")
+        api_key = os.getenv("OPENAI_API_KEY") or env_values.get("OPENAI_API_KEY", "")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY is required for EMBEDDING_PROVIDER=openai")
-        return OpenAIProvider(api_key=api_key, model=model or "text-embedding-3-small")
+        return OpenAIProvider(api_key=api_key, model=model)
 
     elif provider_name == "ollama":
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        base_url = os.getenv("OLLAMA_BASE_URL") or env_values.get("OLLAMA_BASE_URL", "http://localhost:11434")
         return OllamaProvider(base_url=base_url, model=model or "nomic-embed-text")
 
-    elif provider_name == "":
-        # Auto-detect from available API keys (env var first, then openclaw.json)
-        gemini_key = os.getenv("GEMINI_API_KEY") or _openclaw_key("GEMINI_API_KEY")
-        openai_key = os.getenv("OPENAI_API_KEY") or _openclaw_key("OPENAI_API_KEY")
-        if gemini_key:
-            return GeminiProvider(api_key=gemini_key, model=model or "gemini-embedding-2-preview")
-        elif openai_key:
-            return OpenAIProvider(api_key=openai_key, model=model or "text-embedding-3-small")
-        else:
-            raise EnvironmentError(
-                "No embedding provider configured. "
-                "Set EMBEDDING_PROVIDER=gemini|openai|ollama, "
-                "or provide GEMINI_API_KEY / OPENAI_API_KEY."
-            )
-    else:
-        raise EnvironmentError(
-            f"Unknown EMBEDDING_PROVIDER: '{provider_name}'. "
-            "Supported: gemini, openai, ollama"
-        )
+    raise ValueError(f"Unknown EMBEDDING_PROVIDER: '{provider_name}'. Supported: {', '.join(PROVIDER_REGISTRY)}")

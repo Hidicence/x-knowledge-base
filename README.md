@@ -216,6 +216,17 @@ python3 scripts/xkb_ask.py "What patterns appear across these notes?"
 
 Cards and indexes are written to your workspace, never into this repository.
 
+### Embedding setup
+
+Semantic indexing is optional; keyword search does not need an embedding credential. For a fresh checkout, follow [`docs/embedding-configuration.md`](./docs/embedding-configuration.md). In short, copy `.env.example` as a local reference, set `XKB_DATA_DIR` to a workspace you control, and export a provider credential at runtime. The default is Gemini with `gemini-embedding-2-preview`; OpenAI and local Ollama are also supported. Never commit `.env`, keys, personal data, or generated vector indexes.
+
+```bash
+python3 -m unittest discover -s tests -p 'test_embedding_providers.py' -v
+python3 scripts/build_vector_index.py --dry-run --index-file "$XKB_DATA_DIR/bookmarks/search_index.json"
+```
+
+Use `python3 scripts/build_vector_index.py --incremental` only when you intend to send card text to the selected embedding provider. Provider/model mismatches, missing credentials, malformed config, and non-HTTP(S) endpoints fail before a request; see the configuration guide for rotation, redaction, and troubleshooting.
+
 ---
 
 ## Add sources

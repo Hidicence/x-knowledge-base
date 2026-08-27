@@ -335,20 +335,21 @@ python3 "$SKILL_DIR/scripts/cleanup_titles_in_index.py" || true
 
 echo ""
 echo "🧠 步驟6：更新語意向量索引..."
-OPENCLAW_JSON="${OPENCLAW_JSON:-$(dirname "$WORKSPACE_DIR")/openclaw.json}"
-GEMINI_KEY=$(python3 -c "import json,os; f=os.environ.get('OPENCLAW_JSON', '$OPENCLAW_JSON'); c=json.load(open(f)); print(c.get('env',{}).get('GEMINI_API_KEY',''))" 2>/dev/null || echo "")
 VECTOR_INDEX_PATH="$WORKSPACE_DIR/memory/bookmarks/vector_index.json"
-
-if [[ -n "$GEMINI_KEY" ]]; then
-    if [[ -f "$VECTOR_INDEX_PATH" ]]; then
-        echo "  ♻️ 偵測到既有向量索引，執行 incremental rebuild"
-        GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --incremental --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" || true
-    else
-        echo "  🆕 尚未找到向量索引，執行首次 full build"
-        GEMINI_API_KEY="$GEMINI_KEY" python3 "$SKILL_DIR/scripts/build_vector_index.py" --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" || true
-    fi
+EMBEDDING_ENV_ARGS=()
+if [[ -n "${XKB_ENV_FILE:-}" ]]; then
+    EMBEDDING_ENV_ARGS=(--env-file "$XKB_ENV_FILE")
+fi
+if [[ -f "$VECTOR_INDEX_PATH" ]]; then
+    echo "  ♻️ 偵測到既有向量索引，執行 incremental rebuild"
+    python3 "$SKILL_DIR/scripts/build_vector_index.py" --incremental \
+        --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" \
+        "${EMBEDDING_ENV_ARGS[@]}"
 else
-    echo "  ⏭️ 略過（GEMINI_API_KEY 未設定）"
+    echo "  🆕 尚未找到向量索引，執行首次 full build"
+    python3 "$SKILL_DIR/scripts/build_vector_index.py" \
+        --index-file "$INDEX_FILE" --vector-file "$VECTOR_INDEX_PATH" \
+        "${EMBEDDING_ENV_ARGS[@]}"
 fi
 
 
