@@ -240,6 +240,25 @@ def _topic_accepts_append(candidate: Candidate) -> bool:
     return lines <= int(os.getenv("XKB_TOPIC_APPEND_MAX_LINES", "800"))
 
 
+def _expired(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
+    if ttl_days <= 0 or candidate.source_date == "unknown":
+        return False
+    try:
+        return date.fromisoformat(candidate.source_date) <= as_of - timedelta(days=ttl_days)
+    except ValueError:
+        return False
+
+
+def _would_promote(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
+    """Whether this candidate would reach a topic page on this run, as configured."""
+    return (not _expired(candidate, ttl_days, as_of)
+            and candidate.relation == "unique"
+            and not candidate.topic.startswith("[NEW:")
+            and _safe_promotable(candidate)
+            and _topic_available(candidate)
+            and _topic_accepts_append(candidate))
+
+
 def _safe_promotable(candidate: Candidate) -> bool:
     if candidate.relation != "unique" or not candidate.provenance_complete or not _has_evidence(candidate):
         return False
@@ -391,9 +410,16 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
         or (retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
             and _topic_accepts_append(c))
     )]
+    # A bounded batch taken in staging-file order can spend weeks registering
+    # candidates it will not promote before reaching one it would. Sorting is
+    # stable and keyed on the outcome under the TTL actually in force, so a
+    # normal run — where nothing old enough to matter qualifies — keeps its
+    # existing order, while a backlog pass with a relaxed TTL reaches the
+    # candidates it was run for.
+    as_of = date.today()
+    eligible.sort(key=lambda c: not _would_promote(c, ttl_days, as_of))
     bounded = eligible[: max(0, limit)]
     topic_groups: dict[str, list[Candidate]] = {}
-    as_of = date.today()
     stats = {"discovered": len(bounded), "new": len(bounded), "promoted": 0,
              "approved": 0, "skipped": 0, "retained": 0, "ttl": 0,
              "quarantine": 0, "review_queue": 0, "proposal_queue": 0,
@@ -401,12 +427,7 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     queues: dict[str, list[dict[str, Any]]] = {"review_queue": [], "proposal_queue": [], "quarantine": []}
     topic_changes: list[dict[str, str]] = []
     for candidate in bounded:
-        expired = False
-        try:
-            expired = ttl_days > 0 and candidate.source_date != "unknown" and date.fromisoformat(candidate.source_date) <= as_of - timedelta(days=ttl_days)
-        except ValueError:
-            pass
-        if expired:
+        if _expired(candidate, ttl_days, as_of):
             stats["ttl"] += 1
             stats["quarantine"] += 1
             record = asdict(candidate)
@@ -540,12 +561,7 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
         result[candidate.confidence] = result.get(candidate.confidence, 0) + 1
         if candidate.topic.startswith("[NEW:"):
             result["proposal"] += 1
-        expired = False
-        try:
-            expired = ttl_days > 0 and candidate.source_date != "unknown" and date.fromisoformat(candidate.source_date) <= today - timedelta(days=ttl_days)
-        except ValueError:
-            pass
-        if expired:
+        if _expired(candidate, ttl_days, today):
             result["quarantine"] += 1
             result["overdue"] += 1
         elif _safe_promotable(candidate):
