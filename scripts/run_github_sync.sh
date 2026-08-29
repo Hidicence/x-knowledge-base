@@ -43,7 +43,8 @@ fi
 
 cd "$WORKSPACE" || { echo "[ERROR] workspace not found: $WORKSPACE" >&2; exit 1; }
 test -f "$SCRIPT" || { echo "[ERROR] fetch script not found: $SCRIPT" >&2; exit 1; }
-python3 "$SCRIPT" $FLAGS 2>&1 | tee -a "$LOG_FILE"
+read -r -a FLAG_ARGS <<< "$FLAGS"
+python3 "$SCRIPT" "${FLAG_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
 EXIT_CODE=${PIPESTATUS[0]}
 
 # Exit code 2 = new cards were added — update vector index

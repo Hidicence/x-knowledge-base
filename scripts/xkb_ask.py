@@ -39,10 +39,9 @@ import xkb_paths
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from runtime_config import runtime_env
 
-_GBRAIN_DIR = Path(os.getenv("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
-_GEMINI_KEY = runtime_env().get("GEMINI_API_KEY", "")
-
-_GBRAIN_AVAILABLE = _GBRAIN_DIR.exists() and bool(_GEMINI_KEY)
+def _resolve_gbrain_dir(settings: dict[str, str]) -> Path:
+    """Resolve the non-credential gbrain workspace from portable settings."""
+    return Path(settings.get("GBRAIN_DIR", str(Path.home() / "Desktop" / "gbrain")))
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = xkb_paths.WORKSPACE
@@ -71,8 +70,9 @@ STOPWORDS = {
 
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
-def load_env_key() -> str:
-    return ""  # auth handled by _llm.py via openclaw CLI
+def load_env_key(env_file: str | Path | None = None) -> str:
+    """Read the optional semantic-search credential from shared runtime config."""
+    return runtime_env(env_file).get("GEMINI_API_KEY", "")
 
 
 def llm_call(prompt: str, api_key: str = "", max_tokens: int = 1000,
@@ -209,7 +209,8 @@ def score_card(item: dict, tokens: list[str], query: str) -> float:
     return score
 
 
-def search_cards_gbrain(query: str, limit: int = MAX_CARDS) -> list[dict]:
+def search_cards_gbrain(query: str, limit: int = MAX_CARDS,
+                        env_file: str | Path | None = None) -> list[dict]:
     """Use gbrain hybrid search (RRF + Gemini) instead of keyword index."""
     try:
         from xbrain_recall import xbrain_query as gbrain_query
@@ -217,7 +218,7 @@ def search_cards_gbrain(query: str, limit: int = MAX_CARDS) -> list[dict]:
         return []
 
     try:
-        raw = gbrain_query(query, limit=limit)
+        raw = gbrain_query(query, limit=limit, env_file=env_file)
     except Exception:
         return []
 
@@ -512,6 +513,7 @@ def main() -> int:
     parser.add_argument("--json",       action="store_true", help="輸出 JSON")
     parser.add_argument("--max-wiki",   type=int, default=MAX_WIKI_TOPICS)
     parser.add_argument("--max-cards",  type=int, default=MAX_CARDS)
+    parser.add_argument("--env-file", help="明確指定 XKB dotenv runtime credential 檔案")
     args = parser.parse_args()
 
     query = (args.query or "").strip()
@@ -520,20 +522,44 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    api_key = ""  # auth handled by _llm.py
+    settings = runtime_env(args.env_file)
+    api_key = settings.get("GEMINI_API_KEY", "")
+    if not api_key:
+        print(
+            "缺少 GEMINI_API_KEY；請設定 process environment、XKB_ENV_FILE，或使用 --env-file。",
+            file=sys.stderr,
+        )
+        return 2
     query_tokens = tokenize(query)
 
-    use_gbrain = _GBRAIN_AVAILABLE and not args.no_gbrain
-    card_search_fn = search_cards_gbrain if use_gbrain else search_cards
+    gbrain_dir = _resolve_gbrain_dir(settings)
+    use_gbrain = gbrain_dir.exists() and bool(api_key) and not args.no_gbrain
     card_backend = "gbrain⚡" if use_gbrain else "keyword"
 
     wiki_hits, wiki_max_score = ([], 0.0) if args.no_wiki else search_wiki_topics(query, args.max_wiki)
-    card_hits = [] if args.no_cards else card_search_fn(query, args.max_cards)
+    if args.no_cards:
+        card_hits = []
+    elif use_gbrain:
+        card_hits = search_cards_gbrain(query, args.max_cards, args.env_file)
+    else:
+        card_hits = search_cards(query, args.max_cards)
 
     situation = classify_query(query, wiki_max_score, card_hits)
     print(f"[搜尋結果] wiki topics: {len(wiki_hits)}, cards: {len(card_hits)}, cards_backend: {card_backend}, situation: {situation}", file=sys.stderr)
 
-    answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key, situation)
+    # _llm.py reads the shared selector from XKB_ENV_FILE; temporarily bridge
+    # the CLI override without persisting or exposing any credential value.
+    previous_env_file = os.environ.get("XKB_ENV_FILE")
+    if args.env_file:
+        os.environ["XKB_ENV_FILE"] = str(args.env_file)
+    try:
+        answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key, situation)
+    finally:
+        if args.env_file:
+            if previous_env_file is None:
+                os.environ.pop("XKB_ENV_FILE", None)
+            else:
+                os.environ["XKB_ENV_FILE"] = previous_env_file
 
     if args.json:
         output = {

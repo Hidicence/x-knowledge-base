@@ -22,7 +22,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import xkb_paths
+from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -353,7 +355,7 @@ def main() -> int:
     if args.local_only:
         args.dry_run = True  # local-only implies dry-run (no API calls)
 
-    api_key = os.getenv("LLM_API_KEY", "")
+    api_key = runtime_env().get("LLM_API_KEY", "")
 
     data = _load_queue()
     items = data["items"]

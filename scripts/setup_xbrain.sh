@@ -9,24 +9,61 @@
 #   1. Locates or installs Bun
 #   2. Clones GBrain runtime if not present
 #   3. Installs dependencies and initialises the PGLite database
-#   4. Writes gbrain_dir + LLM env into ~/.openclaw/openclaw.json
+#   4. Uses the shared portable runtime environment (process env, or XKB_ENV_FILE)
 #   5. Verifies the installation with a test query
+#
+# Runtime configuration is intentionally never read from or written to a
+# host-specific Hermes/OpenClaw config.  Pass --env-file to select a dotenv
+# file for this invocation; otherwise an inherited XKB_ENV_FILE is used.  The
+# shared loader gives process environment variables precedence over file values.
 
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 GBRAIN_REPO="https://github.com/garrytan/gbrain"
 GBRAIN_DEFAULT_DIR="$HOME/gbrain"
-OPENCLAW_JSON="${OPENCLAW_JSON:-$HOME/.openclaw/openclaw.json}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 GBRAIN_DIR="$GBRAIN_DEFAULT_DIR"
+ENV_FILE="${XKB_ENV_FILE:-}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dir) GBRAIN_DIR="$2"; shift 2 ;;
+    --env-file) ENV_FILE="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
+
+if [[ -n "$ENV_FILE" && ! -f "$ENV_FILE" ]]; then
+  echo "❌ XKB env file not found: $ENV_FILE" >&2
+  echo "   Provide an existing dotenv file with --env-file, or unset XKB_ENV_FILE." >&2
+  exit 1
+fi
+
+# Validate before any install/clone/database side effects.  Use the same shared
+# loader as the runtime; never print the resulting values.
+echo "▶ Validating portable XKB runtime configuration..."
+if [[ -n "$ENV_FILE" ]]; then
+  echo "  Credentials/config: selected XKB env file (values not displayed)"
+else
+  echo "  Credentials/config: process environment (no host config fallback)"
+fi
+RUNTIME_ENV_FILE="$ENV_FILE" GBRAIN_DIR="$GBRAIN_DIR" python3 - "$SCRIPT_DIR" <<'EOF'
+import os, sys
+from pathlib import Path
+
+script_dir = Path(sys.argv[1])
+sys.path.insert(0, str(script_dir.parent / "tools"))
+from runtime_config import runtime_env
+
+settings = runtime_env(os.environ.get("RUNTIME_ENV_FILE") or None)
+if not settings.get("GEMINI_API_KEY"):
+    raise SystemExit(
+        "XBrain verification requires GEMINI_API_KEY via process environment "
+        "or the selected XKB env file (process environment takes precedence)."
+    )
+EOF
 
 # ── 1. Find or install Bun ────────────────────────────────────────────────────
 echo "▶ Checking Bun..."
@@ -66,35 +103,12 @@ else
   (cd "$GBRAIN_DIR" && "$BUN" run src/cli.ts init)
 fi
 
-# ── 5. Update openclaw.json ───────────────────────────────────────────────────
-echo "▶ Updating $OPENCLAW_JSON..."
-mkdir -p "$(dirname "$OPENCLAW_JSON")"
-
-if [ ! -f "$OPENCLAW_JSON" ]; then
-  echo '{"env":{}}' > "$OPENCLAW_JSON"
-fi
-
-python3 - "$OPENCLAW_JSON" "$GBRAIN_DIR" <<'EOF'
-import json, sys
-path, gbrain_dir = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    cfg = json.load(f)
-env = cfg.setdefault("env", {})
-env["gbrain_dir"] = gbrain_dir
-# Only set LLM defaults if not already present
-env.setdefault("LLM_API_URL", "")
-env.setdefault("LLM_MODEL",   "sub2api-gpt/gpt-5.5")
-with open(path, "w") as f:
-    json.dump(cfg, f, ensure_ascii=False, indent=2)
-print(f"  gbrain_dir = {gbrain_dir}")
-print(f"  LLM_API_URL = {env['LLM_API_URL']}")
-print(f"  LLM_MODEL = {env['LLM_MODEL']}")
-EOF
+# ── 5. Report portable runtime configuration ─────────────────────────────────
+echo "  gbrain_dir = $GBRAIN_DIR"
 
 # ── 6. Verify ─────────────────────────────────────────────────────────────────
 echo "▶ Verifying XBrain integration..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULT=$(OPENCLAW_JSON="$OPENCLAW_JSON" python3 -c "
+RESULT=$(XKB_ENV_FILE="$ENV_FILE" GBRAIN_DIR="$GBRAIN_DIR" python3 -c "
 import sys; sys.path.insert(0, '$SCRIPT_DIR')
 from xbrain_recall import GBRAIN_AVAILABLE, GBRAIN_DIR, BUN
 print('GBRAIN_AVAILABLE:', GBRAIN_AVAILABLE)

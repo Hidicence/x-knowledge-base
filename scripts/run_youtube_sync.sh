@@ -2,6 +2,8 @@
 # YouTube 播放清單自動同步腳本
 # 每日執行：抓新影片 → 生成知識卡 → 更新語意索引
 
+set -o pipefail
+
 # Use HOME-relative default instead of hardcoded /root/
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 WORKSPACE="${OPENCLAW_WORKSPACE:-$OPENCLAW_HOME/workspace}"
@@ -25,7 +27,12 @@ python3 scripts/fetch_youtube_playlist.py 2>&1 | tee -a "$LOG_FILE"
 # 2. 更新語意索引（增量）
 VECTOR_INDEX="$WORKSPACE/memory/bookmarks/vector_index.json"
 if [[ -f "$VECTOR_INDEX" ]]; then
-    EMBEDDING_PROVIDER=gemini EMBEDDING_MODEL=gemini-embedding-2-preview     python3 scripts/build_vector_index.py --incremental 2>&1 | tee -a "$LOG_FILE"
+    EMBEDDING_ARGS=(--incremental)
+    if [[ -n "${XKB_ENV_FILE:-}" ]]; then
+        EMBEDDING_ARGS+=(--env-file "$XKB_ENV_FILE")
+    fi
+    EMBEDDING_PROVIDER=gemini EMBEDDING_MODEL=gemini-embedding-2-preview \
+        python3 scripts/build_vector_index.py "${EMBEDDING_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
 fi
 
 echo "[$(date '+%Y-%m-%d %H:%M')] YouTube sync done" >> "$LOG_FILE"

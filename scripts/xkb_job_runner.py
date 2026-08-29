@@ -20,6 +20,9 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent / "tools"))
+from runtime_config import runtime_env
+
 DEFAULT_WORKER = SCRIPT_DIR / "build_vector_index.py"
 
 
@@ -68,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-id", default=f"index:{uuid.uuid4()}")
     parser.add_argument("--service-url", default=os.getenv("XKB_MEMORY_SERVICE_URL", "http://127.0.0.1:18972"))
     parser.add_argument("--worker", type=Path, default=DEFAULT_WORKER)
+    parser.add_argument("--env-file", help="dotenv file passed to the worker (process environment wins)")
     parser.add_argument("--dry-run", action="store_true", help="Report the job lifecycle without running the worker")
     parser.add_argument("worker_args", nargs=argparse.REMAINDER, help="Arguments passed to the worker after --")
     args = parser.parse_args(argv)
@@ -85,10 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         post_event(args.service_url, event(args.job_id, "succeeded", finished_at=timestamp(), output_ref="dry-run", **base))
         print(json.dumps({"job_id": args.job_id, "status": "dry-run", "worker": str(worker)}, ensure_ascii=False))
         return 0
+    child_env = runtime_env(args.env_file)
     post_event(args.service_url, event(args.job_id, "running", started_at=started_at, **base))
     command = [sys.executable, str(worker), *worker_args]
     try:
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False, cwd=str(SCRIPT_DIR.parent.parent), env=child_env)
     except OSError as exc:
         error = f"{type(exc).__name__}: {exc}"
         post_event(args.service_url, event(args.job_id, "failed", started_at=started_at, finished_at=timestamp(), error=error, retryable=True, **base))

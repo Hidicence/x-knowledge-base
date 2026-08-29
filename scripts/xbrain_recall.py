@@ -13,7 +13,11 @@ Usage:
 Environment / config (in priority order):
     GBRAIN_DIR          path to vector store runtime (overrides all)
     GEMINI_API_KEY      required for semantic (vector) search
-    XKB_ENV_FILE        optional dotenv file for runtime credential injection
+    --env-file          explicit dotenv file for runtime credential injection
+    XKB_ENV_FILE        fallback dotenv file when --env-file is omitted
+
+Process environment variables take precedence over either dotenv file. No
+host-specific config or private credential fallback is consulted.
 """
 from __future__ import annotations
 
@@ -33,11 +37,12 @@ from runtime_config import runtime_env
 _RUNTIME_ENV = runtime_env()
 
 
-def _resolve_gbrain_dir() -> Path | None:
+def _resolve_gbrain_dir(settings: dict[str, str] | None = None) -> Path | None:
     """Find the gbrain runtime directory, in priority order."""
+    settings = _RUNTIME_ENV if settings is None else settings
     candidates = [
         os.getenv("GBRAIN_DIR"),
-        _RUNTIME_ENV.get("GBRAIN_DIR"),
+        settings.get("GBRAIN_DIR"),
         str(Path.home() / "Desktop" / "gbrain"),
         str(Path.home() / "gbrain"),
         "/opt/gbrain",
@@ -72,13 +77,18 @@ BUN = _resolve_bun()
 GEMINI_API_KEY = _RUNTIME_ENV.get("GEMINI_API_KEY", "")
 
 
-def _make_subprocess_env(semantic: bool) -> dict[str, str]:
+def _make_subprocess_env(
+    semantic: bool,
+    settings: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Build subprocess env from the portable runtime contract."""
-    env = {**_RUNTIME_ENV}
-    if semantic and GEMINI_API_KEY:
-        env["GEMINI_API_KEY"] = GEMINI_API_KEY
+    settings = _RUNTIME_ENV if settings is None else settings
+    env = {**settings}
+    gemini_api_key = settings.get("GEMINI_API_KEY", "")
+    if semantic and gemini_api_key:
+        env["GEMINI_API_KEY"] = gemini_api_key
         # gbrain v0.42+ gateway 的 google recipe 讀這個變數名
-        env["GOOGLE_GENERATIVE_AI_API_KEY"] = GEMINI_API_KEY
+        env["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
     elif not semantic:
         env.pop("GEMINI_API_KEY", None)
         env.pop("GOOGLE_GENERATIVE_AI_API_KEY", None)
@@ -94,6 +104,7 @@ def xbrain_query(
     limit: int = 10,
     no_expand: bool = True,
     semantic: bool = True,
+    env_file: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run hybrid search and return structured results.
@@ -101,10 +112,12 @@ def xbrain_query(
 
     Result keys: slug, title, type, chunk_text, score, source_url, stale
     """
-    if not GBRAIN_AVAILABLE or GBRAIN_DIR is None:
+    settings = runtime_env(env_file) if env_file is not None else _RUNTIME_ENV
+    gbrain_dir = _resolve_gbrain_dir(settings)
+    if gbrain_dir is None:
         return []
 
-    cmd = [BUN, "run", str(GBRAIN_DIR / "src" / "cli.ts")]
+    cmd = [BUN, "run", str(gbrain_dir / "src" / "cli.ts")]
     cmd += ["query", query, "--json"]
     if no_expand:
         cmd += ["--no-expand"]
@@ -117,8 +130,8 @@ def xbrain_query(
             capture_output=True,
             text=True,
             encoding="utf-8",
-            env=_make_subprocess_env(semantic),
-            cwd=str(GBRAIN_DIR),
+            env=_make_subprocess_env(semantic, settings),
+            cwd=str(gbrain_dir),
             timeout=30,
         )
     except subprocess.TimeoutExpired:
@@ -261,17 +274,36 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--json", action="store_true", dest="output_json")
     parser.add_argument("--no-semantic", action="store_true")
+    parser.add_argument(
+        "--env-file",
+        help="Explicit XKB dotenv file (process environment takes precedence)",
+    )
     args = parser.parse_args()
 
-    if not GBRAIN_AVAILABLE:
+    try:
+        settings = runtime_env(args.env_file) if args.env_file else _RUNTIME_ENV
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(f"Unable to load XKB runtime configuration: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if _resolve_gbrain_dir(settings) is None:
         print("XBrain not available. Set GBRAIN_DIR or clone to ~/Desktop/gbrain.",
               file=sys.stderr)
+        sys.exit(1)
+
+    if not args.no_semantic and not settings.get("GEMINI_API_KEY"):
+        print(
+            "Semantic recall requires GEMINI_API_KEY via the process environment "
+            "or the selected XKB env file (process environment takes precedence).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     results = xbrain_query(
         args.query,
         limit=args.limit,
         semantic=not args.no_semantic,
+        env_file=args.env_file,
     )
 
     if args.output_json:
