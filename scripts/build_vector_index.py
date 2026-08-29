@@ -201,6 +201,13 @@ def knowledge_section_docs() -> list[tuple[str, str, str]]:
         title = path.stem
         section = ""
         buffer: list[str] = []
+        # A heading can repeat inside one file — memory/2026-05-09.md has
+        # "教訓" fifteen times. Every copy produced the same key, so each
+        # run kept a vector for the last of them and re-embedded the rest:
+        # about a hundred sections that could never go incremental, paying
+        # for an embedding every day. Later occurrences get a suffix; the
+        # first keeps the original key so existing vectors stay valid.
+        seen_keys: dict[str, int] = {}
 
         def flush(section_name: str, lines: list[str]) -> None:
             body = "\n".join(lines).strip()
@@ -208,6 +215,10 @@ def knowledge_section_docs() -> list[tuple[str, str, str]]:
                 return
             text = f"{title} — {section_name}\n{body}"[:MAX_SECTION_CHARS]
             key = f"{prefix}/{path.name}#{section_name or 'intro'}"
+            occurrence = seen_keys.get(key, 0) + 1
+            seen_keys[key] = occurrence
+            if occurrence > 1:
+                key = f"{key}~{occurrence}"
             docs.append((key, text, hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
 
         for line in content.splitlines():
