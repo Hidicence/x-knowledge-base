@@ -296,20 +296,29 @@ def check_staging_backlog() -> dict:
     max_pending = int(os.getenv("XKB_STAGING_MAX_PENDING", "60"))
     max_age_days = int(os.getenv("XKB_STAGING_MAX_AGE_DAYS", "30"))
 
-    pending = 0
-    oldest: str | None = None
-    for path in staging_dir.glob("*.md"):
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for block in re.split(r"\n## Candidate \d+\n", content)[1:]:
-            if re.search(r"\*\*Status:\*\*.*\[x\]", block, re.IGNORECASE):
-                continue
-            pending += 1
-            m = re.search(r"\*\*Source date:\*\* (\d{4}-\d{2}-\d{2})", block)
-            if m and (oldest is None or m.group(1) < oldest):
-                oldest = m.group(1)
+    # Read through xkb_review rather than parsing staging again here. The two
+    # parsers had already drifted apart on which files they looked at, and a
+    # second definition of "pending" is how this repository ends up with two
+    # numbers for one question.
+    try:
+        import xkb_review
+        promoted = xkb_review._promoted_ids(
+            xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl")
+        outstanding = [
+            c for c in xkb_review.load_candidates(classify=False)
+            # Keep this check's long-standing scope: top-level staging only,
+            # not the pre-2026-07 archive.
+            if "/" not in c.source_file
+            and c.status == "pending"
+            and c.candidate_id not in promoted
+        ]
+    except Exception as exc:
+        result["checks"].append({"ok": False, "msg": f"staging counts unavailable: {exc}"})
+        return result
+
+    pending = len(outstanding)
+    dates = [c.source_date for c in outstanding if c.source_date != "unknown"]
+    oldest: str | None = min(dates) if dates else None
 
     result["checks"].append({
         "ok": pending <= max_pending,

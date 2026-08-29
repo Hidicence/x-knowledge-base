@@ -223,23 +223,6 @@ def _has_evidence(candidate: Candidate) -> bool:
     return True
 
 
-def _topic_accepts_append(candidate: Candidate) -> bool:
-    """Refuse to append to a page already too long for anyone to read.
-
-    Promotion appends one bullet. On a ten-thousand-line topic that adds volume
-    and no understanding, and the pending set is concentrated enough that a
-    single topic would receive a hundred of them. Those candidates stay in the
-    review queue, where the answer is to synthesise the page, not extend it.
-    """
-    path = TOPICS_DIR / f"{candidate.topic_key}.md"
-    try:
-        with path.open(encoding="utf-8") as fh:
-            lines = sum(1 for _ in fh)
-    except OSError:
-        return False
-    return lines <= int(os.getenv("XKB_TOPIC_APPEND_MAX_LINES", "800"))
-
-
 def _expired(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
     if ttl_days <= 0 or candidate.source_date == "unknown":
         return False
@@ -255,8 +238,7 @@ def _would_promote(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
             and candidate.relation == "unique"
             and not candidate.topic.startswith("[NEW:")
             and _safe_promotable(candidate)
-            and _topic_available(candidate)
-            and _topic_accepts_append(candidate))
+            and _topic_available(candidate))
 
 
 def _safe_promotable(candidate: Candidate) -> bool:
@@ -264,9 +246,14 @@ def _safe_promotable(candidate: Candidate) -> bool:
         return False
     if not candidate.reusable or candidate.topic.startswith("[NEW:"):
         return False
-    if candidate.confidence == "high":
-        return True
-    return candidate.confidence == "medium" and candidate.episode_count >= 2 and candidate.source_count >= 2
+    # medium used to additionally require two episodes and two sources. Those
+    # counts come from Memmy's induction gate, which reads L1 trace episode
+    # ids; staging Markdown has none and deliberately refuses to invent them
+    # from a filename, so the fields were always absent and every medium
+    # candidate defaulted to 1. The rule could not be satisfied by this data,
+    # and 659 candidates sat behind it. Corroboration still belongs in the L1
+    # candidate pool, where episodes are real.
+    return candidate.confidence in ("high", "medium")
 
 
 def _topic_available(candidate: Candidate) -> bool:
@@ -292,8 +279,7 @@ def _promoted_ids(path: Path) -> set[str]:
 def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dict[str, str]]:
     changes = []
     for candidate in candidates:
-        if (not _safe_promotable(candidate) or not _topic_available(candidate)
-                or not _topic_accepts_append(candidate)):
+        if not _safe_promotable(candidate) or not _topic_available(candidate):
             continue
         topic_path = TOPICS_DIR / f"{candidate.topic_key}.md"
         marker = f"xkb-candidate:{candidate.candidate_id}"
@@ -303,7 +289,19 @@ def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dic
         backup = snapshot_dir / "topics" / topic_path.name
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(topic_path, backup)
-        addition = f"\n- {candidate.text} <!-- {marker} --> *(source: {candidate.source_file}#{candidate.source_position})*\n"
+        # Promotion used to append a bare bullet at end of file, so every
+        # promoted claim joined whatever the last section happened to be. The
+        # indexer caps a section at 4,000 characters, and two of the target
+        # pages were already at that cap: the text reached the wiki and never
+        # reached a vector. Giving each claim its own heading makes it its own
+        # section and its own vector, which also stops page length from
+        # mattering at all.
+        heading = re.sub(r"\s+", " ", candidate.text).strip()[:60].rstrip()
+        addition = (
+            f"\n\n### {heading or candidate.candidate_id[:12]}\n"
+            f"{candidate.text} <!-- {marker} --> "
+            f"*(source: {candidate.source_file}#{candidate.source_position})*\n"
+        )
         topic_path.write_text(content.rstrip() + addition, encoding="utf-8")
         changes.append({"candidate_id": candidate.candidate_id, "topic": str(topic_path), "snapshot": str(backup)})
     return changes
@@ -373,8 +371,6 @@ def write_registry(candidates: list[Candidate], path: Path, promoted_ids: set[st
             )
             if row["lifecycle"] == "retained" and not _topic_available(candidate):
                 row["retained_reason"] = "missing_topic"
-            elif row["lifecycle"] == "retained" and not _topic_accepts_append(candidate):
-                row["retained_reason"] = "topic_needs_synthesis"
             row["source_evidence"] = {"file": candidate.source_file, "position": candidate.source_position}
             fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
             existing.add(candidate.candidate_id)
@@ -407,8 +403,7 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     eligible = [c for c in pending if c.candidate_id not in already_promoted and (
         c.candidate_id not in registered_ids
         or (retained_reasons.get(c.candidate_id) == "missing_topic" and _topic_available(c))
-        or (retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
-            and _topic_accepts_append(c))
+        or retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
     )]
     # A bounded batch taken in staging-file order can spend weeks registering
     # candidates it will not promote before reaching one it would. Sorting is
@@ -449,7 +444,6 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
             queues["proposal_queue"].append(asdict(candidate))
             continue
         if (_safe_promotable(candidate) and _topic_available(candidate)
-                and _topic_accepts_append(candidate)
                 and candidate.candidate_id not in already_promoted):
             stats["promoted"] += 1
             stats["approved"] += 1
@@ -552,7 +546,13 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
 
 def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     """Return secret-free actionable counts without writing governance artifacts."""
-    candidates = [c for c in load_candidates(classify=False) if c.status == "pending"]
+    # A promoted candidate is still marked pending in its staging file, because
+    # governance never edits the source. Counting it as outstanding work would
+    # keep the alert red no matter how much was absorbed, and an alert that can
+    # never clear stops being read.
+    promoted = _promoted_ids(GOVERNANCE_DIR / "candidate-registry.jsonl")
+    candidates = [c for c in load_candidates(classify=False)
+                  if c.status == "pending" and c.candidate_id not in promoted]
     _classify_relations(candidates)
     result = {"pending": len(candidates), "high": 0, "medium": 0, "low": 0,
               "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0}
