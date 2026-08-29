@@ -169,6 +169,39 @@ MIN_SECTION_CHARS = 80
 MAX_SECTION_CHARS = 4000
 
 
+def _chunks(header: str, body: str) -> list[tuple[str, str]]:
+    """Split one section into as many vectors as it needs.
+
+    A section longer than MAX_SECTION_CHARS used to be truncated, so the tail
+    was written to the wiki and then silently dropped from the index — 56
+    sections were losing their endings that way. Anything past the cap now
+    becomes its own vector instead.
+
+    The first chunk is byte-for-byte what truncation produced, so every vector
+    already in the index keeps its hash and nothing is re-embedded to catch up;
+    only the previously discarded remainder is new.
+    """
+    room = MAX_SECTION_CHARS - len(header)
+    if room <= 0 or len(body) <= room:
+        return [("", f"{header}{body}"[:MAX_SECTION_CHARS])]
+
+    out = [("", f"{header}{body}"[:MAX_SECTION_CHARS])]
+    start = room
+    index = 2
+    while start < len(body):
+        end = min(start + room, len(body))
+        if end < len(body):
+            # Prefer a line break near the end of the window so a chunk does
+            # not begin mid-sentence. Deterministic, so hashes stay stable.
+            split = body.rfind("\n", start + int(room * 0.8), end)
+            if split > start:
+                end = split
+        out.append((f"@{index}", header + body[start:end].strip()))
+        start = end
+        index += 1
+    return out
+
+
 def knowledge_section_docs() -> list[tuple[str, str, str]]:
     """把 wiki 主題頁與記憶檔切段，每段一個向量。回傳 [(key, text, hash)]。
 
@@ -213,13 +246,14 @@ def knowledge_section_docs() -> list[tuple[str, str, str]]:
             body = "\n".join(lines).strip()
             if len(body) < MIN_SECTION_CHARS:
                 return
-            text = f"{title} — {section_name}\n{body}"[:MAX_SECTION_CHARS]
             key = f"{prefix}/{path.name}#{section_name or 'intro'}"
             occurrence = seen_keys.get(key, 0) + 1
             seen_keys[key] = occurrence
             if occurrence > 1:
                 key = f"{key}~{occurrence}"
-            docs.append((key, text, hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
+            for suffix, text in _chunks(f"{title} — {section_name}\n", body):
+                docs.append((key + suffix, text,
+                             hashlib.md5(text.encode("utf-8")).hexdigest()[:12]))
 
         for line in content.splitlines():
             if re.match(r"^#{1,3} .+", line):
