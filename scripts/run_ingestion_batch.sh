@@ -7,8 +7,9 @@
 # a day and a half with no semantic vectors: findable by keyword, invisible
 # to recall. An instruction an agent can report as done is not a pipeline.
 #
-# The builder's own exit code is not sufficient evidence either, so the last
-# step checks that the index file was actually rewritten by this run.
+# The builder's own exit code is not sufficient evidence either, so when there
+# was work to do the last step checks that the index file was actually
+# rewritten by this run.
 #
 # Usage:
 #   bash scripts/run_ingestion_batch.sh [--env-file FILE]
@@ -57,27 +58,77 @@ print(xkb_paths.VECTOR_FILE.resolve())
 started_at=$(date +%s)
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch start" | tee -a "$LOG_FILE"
 
-echo "▶ Syncing enriched cards into the search index..." | tee -a "$LOG_FILE"
+echo "> Syncing enriched cards into the search index..." | tee -a "$LOG_FILE"
 python3 scripts/sync_enriched_index.py 2>&1 | tee -a "$LOG_FILE"
 
-echo "▶ Updating the semantic vector index..." | tee -a "$LOG_FILE"
-python3 scripts/build_vector_index.py "${EMBED_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
-embed_status=${PIPESTATUS[0]}
+echo "> Updating the semantic vector index..." | tee -a "$LOG_FILE"
+EMBED_OUT=$(mktemp)
+trap 'rm -f "$EMBED_OUT"' EXIT
+set +e
+python3 scripts/build_vector_index.py "${EMBED_ARGS[@]}" >"$EMBED_OUT" 2>&1
+embed_status=$?
+set -e
+tee -a "$LOG_FILE" <"$EMBED_OUT"
 if [[ "$embed_status" -ne 0 ]]; then
   echo "[ERROR] build_vector_index exited $embed_status" | tee -a "$LOG_FILE" >&2
   exit "$embed_status"
 fi
 
 # The failure this script was written for: a clean exit with nothing written.
-if [[ ! -f "$VECTOR_FILE" ]]; then
-  echo "[ERROR] vector index missing after a successful build: $VECTOR_FILE" | tee -a "$LOG_FILE" >&2
-  exit 1
-fi
-written_at=$(stat -c %Y "$VECTOR_FILE")
-if [[ "$written_at" -lt "$started_at" ]]; then
-  echo "[ERROR] vector index was not rewritten by this run (last write $(date -u -d "@$written_at" +%Y-%m-%dT%H:%M:%SZ))." | tee -a "$LOG_FILE" >&2
-  echo "        The builder reported success without producing an index." | tee -a "$LOG_FILE" >&2
+# An empty queue is a legitimate no-op, though, and demanding a rewrite there
+# would fail every run once the index has caught up.
+pending=$(sed -n 's/.*To embed: \([0-9][0-9]*\).*/\1/p' "$EMBED_OUT" | tail -1)
+if [[ -z "$pending" ]]; then
+  echo "[ERROR] could not read the embedding queue size from the builder output." | tee -a "$LOG_FILE" >&2
   exit 1
 fi
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch done — index written $(date -u -d "@$written_at" +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$LOG_FILE"
+if [[ "$pending" -eq 0 ]]; then
+  echo "  index already current — nothing to embed this run" | tee -a "$LOG_FILE"
+else
+  if [[ ! -f "$VECTOR_FILE" ]]; then
+    echo "[ERROR] vector index missing after a successful build: $VECTOR_FILE" | tee -a "$LOG_FILE" >&2
+    exit 1
+  fi
+  written_at=$(stat -c %Y "$VECTOR_FILE")
+  if [[ "$written_at" -lt "$started_at" ]]; then
+    echo "[ERROR] $pending items were queued but the index was not rewritten by this run" | tee -a "$LOG_FILE" >&2
+    echo "        (last write $(date -u -d "@$written_at" +%Y-%m-%dT%H:%M:%SZ))." | tee -a "$LOG_FILE" >&2
+    exit 1
+  fi
+fi
+
+# The scheduler entry this replaced also had an agent check whether anything
+# from the overnight syncs had failed to land. That was worth keeping, but it
+# is a count rather than a judgement, so it belongs here: a source that stops
+# producing cards shows up in the delivered output instead of being noticed
+# weeks later.
+echo "> Pending work:" | tee -a "$LOG_FILE"
+python3 - <<'PY' 2>&1 | tee -a "$LOG_FILE" || echo "  (pending-work report unavailable)" | tee -a "$LOG_FILE"
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "scripts")
+import xkb_paths
+
+carded = {p.stem for p in xkb_paths.CARDS_DIR.glob("*.md")}
+sources = {p.stem for p in xkb_paths.BOOKMARKS_DIR.rglob("*.md")}
+print(f"  bookmarks without a card: {len(sources - carded)}")
+
+raw_dir = xkb_paths.XKB_DATA_DIR / "youtube-raw"
+pending = []
+if raw_dir.exists():
+    for path in sorted(raw_dir.glob("*.json")):
+        try:
+            status = json.loads(path.read_text(encoding="utf-8")).get("status")
+        except (OSError, ValueError):
+            status = "unreadable"
+        if status != "completed":
+            pending.append(f"{path.name} ({status})")
+print(f"  youtube transcripts awaiting a card: {len(pending)}")
+for item in pending[:5]:
+    print(f"    {item}")
+PY
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch done" | tee -a "$LOG_FILE"
