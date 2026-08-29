@@ -15,6 +15,7 @@ from typing import List, Dict, Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_text
+from xkb_mmr import mmr_select
 
 WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -470,15 +471,18 @@ def wiki_recall(query: str, limit: int = 2) -> List[Dict[str, Any]]:
 
     results.sort(key=lambda x: x["score"], reverse=True)
 
-    # 每個 topic 最多保留最高分的一個段落
-    seen: set = set()
-    deduped = []
-    for r in results:
-        if r["topic_title"] not in seen:
-            seen.add(r["topic_title"])
-            deduped.append(r)
-
-    return deduped[:limit]
+    # 原本是「每個 topic 只留最高分的一段」。那條規則兩邊都鈍：同一頁的第二段
+    # 就算講的是完全不同的事也會被丟掉，而兩段幾乎一樣的內容只要分屬不同頁就
+    # 都會留下。治理開始讓每則升級的論點各自成段之後，一頁可以有好幾百段，
+    # 這條規則等於讓一頁的內容在每次召回時互相淘汰，只出得來一段。
+    #
+    # 改成 MMR：一段要「比已選的多說了些什麼」才留。分數接近時它會挑不重複的，
+    # 分數差很多時不會為了多樣性硬塞——後者靠函式內的正規化保證。
+    return mmr_select(
+        results,
+        limit,
+        text=lambda item: f"{item['section_title']} {item['excerpt']}",
+    )
 
 
 def semantic_recall(query: str, limit: int, vector_file: Path = VECTOR_FILE,
