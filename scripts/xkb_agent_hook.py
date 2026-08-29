@@ -192,12 +192,34 @@ def on_stop(event: dict, cfg: dict) -> None:
     path.unlink(missing_ok=True)
 
 
-def main() -> int:
+def read_event() -> dict:
+    """Read the hook payload as UTF-8 bytes, not through the console codepage.
+
+    ``sys.stdin.read`` decodes with the locale encoding, which on a zh-TW
+    Windows box is cp950. A UTF-8 payload then survives JSON parsing — the
+    structure is ASCII — while every Chinese character in the prompt becomes a
+    lone surrogate. The first thing to touch that text is ``turn_id``, whose
+    ``encode("utf-8")`` raises UnicodeEncodeError; that is a ValueError, so the
+    fail-open handler swallowed it and the hook exited 0 having opened a
+    session and recorded no turn. Every Chinese prompt was lost that way.
+
+    ``emit`` already writes bytes for exactly this reason. This is the same fix
+    on the way in.
+    """
     try:
-        event = json.loads(sys.stdin.read() or "{}")
+        raw = sys.stdin.buffer.read().decode("utf-8")
+    except (UnicodeDecodeError, AttributeError, OSError):
+        return {}
+    try:
+        event = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        return 0
-    if not isinstance(event, dict):
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def main() -> int:
+    event = read_event()
+    if not event:
         return 0
     name = str(event.get("hook_event_name") or event.get("hookEventName") or "").strip()
     try:
