@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_text
 from xkb_mmr import mmr_select
+from xkb_provenance import is_self_derived
 
 WORKSPACE_DIR = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -278,7 +279,6 @@ def _category_penalty(item: Dict[str, Any]) -> float:
 # 回音室防護（TODOS 2026-07-13）：對話蒸餾而來的知識（self-derived）召回時降權，
 # 避免「收藏 → 召回 → 討論 → 再入庫」閉環讓既有觀點自我強化。
 SELF_DERIVED_PENALTY = float(os.getenv("XKB_SELF_DERIVED_PENALTY", "-0.15"))
-_SELF_DERIVED_RE = re.compile(r"self-derived|\(memory/\d{4}-\d{2}-\d{2}")
 
 
 def _provenance_penalty(item: Dict[str, Any]) -> float:
@@ -287,7 +287,7 @@ def _provenance_penalty(item: Dict[str, Any]) -> float:
     text = " ".join(
         str(item.get(k) or "") for k in ("summary", "content", "source_file", "section_text")
     )
-    if _SELF_DERIVED_RE.search(text):
+    if is_self_derived(text):
         return SELF_DERIVED_PENALTY
     return 0.0
 

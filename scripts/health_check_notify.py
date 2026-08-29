@@ -128,6 +128,7 @@ def main() -> int:
         hc.check_topic_map(),
         hc.check_staging_backlog(),
         hc.check_governance_actionable(),
+        hc.check_provenance_markers(),
         hc.check_index_freshness(),
     ]
     failures = [

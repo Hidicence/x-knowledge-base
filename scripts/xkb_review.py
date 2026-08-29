@@ -25,6 +25,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+from xkb_provenance import annotate
 
 STAGING_DIR = xkb_paths.WIKI_DIR / "_staging"
 GOVERNANCE_DIR = xkb_paths.XKB_DATA_DIR / "governance"
@@ -297,10 +298,13 @@ def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dic
         # section and its own vector, which also stops page length from
         # mattering at all.
         heading = re.sub(r"\s+", " ", candidate.text).strip()[:60].rstrip()
+        # Distilled from Pan's own notes, so it carries the self-derived
+        # marker and takes the recall penalty. Without it these outrank the
+        # external sources they were reasoned from.
+        provenance = annotate(f"{candidate.source_file}#{candidate.source_position}")
         addition = (
             f"\n\n### {heading or candidate.candidate_id[:12]}\n"
-            f"{candidate.text} <!-- {marker} --> "
-            f"*(source: {candidate.source_file}#{candidate.source_position})*\n"
+            f"{candidate.text} <!-- {marker} --> {provenance}\n"
         )
         topic_path.write_text(content.rstrip() + addition, encoding="utf-8")
         changes.append({"candidate_id": candidate.candidate_id, "topic": str(topic_path), "snapshot": str(backup)})

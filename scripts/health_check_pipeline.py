@@ -354,6 +354,51 @@ def check_governance_actionable() -> dict:
     return result
 
 
+def check_provenance_markers() -> dict:
+    """Knowledge distilled from Pan's own notes must be marked as such.
+
+    Recall down-weights self-derived knowledge so that collecting an idea,
+    recalling it, discussing it and distilling it again cannot turn one
+    opinion into a consensus. The penalty is applied by looking for a marker
+    in the text, so a writer that invents its own annotation silently opts
+    out of it — which is how 913 promoted claims ended up competing at full
+    weight against the external sources they were reasoned from.
+    """
+    result = {"name": "provenance_markers", "checks": []}
+    topics_dir = WIKI_DIR / "topics"
+    if not topics_dir.exists():
+        result["checks"].append({"ok": True, "msg": "no topics dir"})
+        return result
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xkb_provenance import MARKER
+    except Exception as exc:
+        result["checks"].append({"ok": False, "msg": f"provenance module unavailable: {exc}"})
+        return result
+
+    governance_line = re.compile(r"<!-- xkb-candidate:[0-9a-f]+ -->")
+    unmarked = 0
+    files = set()
+    for path in sorted(topics_dir.glob("*.md")):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in content.splitlines():
+            if governance_line.search(line) and MARKER not in line:
+                unmarked += 1
+                files.add(path.name)
+
+    result["checks"].append({
+        "ok": unmarked == 0,
+        "msg": (f"self-derived markers present on every governance line"
+                if unmarked == 0 else
+                f"{unmarked} governance lines missing the '{MARKER}' marker in "
+                f"{len(files)} page(s) — 跑 scripts/backfill_self_derived_marker.py --apply"),
+    })
+    return result
+
+
 def check_index_freshness() -> dict:
     """檢查 search_index 和 vector_index 的 summary 覆蓋率與更新時間。"""
     result = {"name": "index_freshness", "checks": []}
@@ -435,6 +480,7 @@ def main() -> int:
         check_topic_map(),
         check_staging_backlog(),
         check_governance_actionable(),
+        check_provenance_markers(),
         check_index_freshness(),
     ]
 
