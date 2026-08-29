@@ -558,6 +558,11 @@ def main() -> int:
         os.environ["XKB_ENV_FILE"] = str(args.env_file)
     try:
         answer = build_answer(query, wiki_hits, card_hits, query_tokens, api_key, situation)
+    except RuntimeError as exc:
+        # The backend already says which credential is missing. Print that
+        # rather than a traceback: this is a command people type.
+        print(f"無法產生回答：{exc}", file=sys.stderr)
+        return 3
     finally:
         if args.env_file:
             if previous_env_file is None:

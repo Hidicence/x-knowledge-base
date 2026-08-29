@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -186,6 +187,20 @@ def call(system: str, user: str, *, model: str | None = None, timeout: int = 120
     settings = _runtime_settings()
     if settings.get("LLM_API_URL") and settings.get("LLM_API_KEY"):
         return _direct_api_call(system, user, timeout=timeout)
+
+    # The OpenClaw CLI is a legacy fallback, and it does not share the
+    # direct API's model contract: it requires <provider/model> while the
+    # API takes a bare name. config/llm.json holds one value, so a bare
+    # name means this call cannot succeed here. Say which credential is
+    # missing instead of letting the CLI reject the model downstream,
+    # where it surfaces as "produced no output" and reads like a crash.
+    if shutil.which("openclaw") is None or "/" not in m:
+        raise RuntimeError(
+            "No LLM backend is configured. Set LLM_API_URL and LLM_API_KEY in "
+            "the process environment, or in the file named by XKB_ENV_FILE.\n"
+            f"(The legacy openclaw CLI needs a <provider/model> name; the "
+            f"configured model is {m!r}.)"
+        )
 
     # openclaw capability model run takes a single --prompt.
     # We inject the system context as a prefix.
