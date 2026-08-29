@@ -95,6 +95,24 @@ class XkbAskRuntimeTests(unittest.TestCase):
 
         self.assertIn("GEMINI_API_KEY", stderr.getvalue())
 
+    def test_keyword_mode_runs_without_an_embedding_credential(self) -> None:
+        """--no-gbrain is the documented keyword path and needs no Gemini key."""
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            self.xkb_ask, "search_wiki_topics", return_value=([], 0.0)
+        ), mock.patch.object(
+            self.xkb_ask, "search_cards", return_value=[]
+        ) as search_cards, mock.patch.object(
+            self.xkb_ask, "search_cards_gbrain",
+            side_effect=AssertionError("semantic search must not run"),
+        ), mock.patch.object(
+            self.xkb_ask, "build_answer", return_value="fixture answer"
+        ), mock.patch.object(
+            sys, "argv", ["xkb_ask.py", "fixture query", "--no-gbrain", "--json"]
+        ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.xkb_ask.main(), 0)
+
+        self.assertTrue(search_cards.called)
+
     def test_active_source_has_no_private_host_credential_fallback(self) -> None:
         source = (SCRIPTS / "xkb_ask.py").read_text(encoding="utf-8")
         for forbidden in ("OPENCLAW_JSON", "openclaw.json", "$HOME/.openclaw", "/root/.openclaw"):

@@ -524,9 +524,13 @@ def main() -> int:
 
     settings = runtime_env(args.env_file)
     api_key = settings.get("GEMINI_API_KEY", "")
-    if not api_key:
+    # Fail fast rather than quietly answering from keyword hits when semantic
+    # search was implied. --no-gbrain is the explicit way to ask for the
+    # keyword path, which needs no embedding credential.
+    if not api_key and not args.no_gbrain:
         print(
-            "缺少 GEMINI_API_KEY；請設定 process environment、XKB_ENV_FILE，或使用 --env-file。",
+            "缺少 GEMINI_API_KEY；請設定 process environment、XKB_ENV_FILE，或使用 --env-file。"
+            "若只要關鍵字搜尋，請加 --no-gbrain。",
             file=sys.stderr,
         )
         return 2
