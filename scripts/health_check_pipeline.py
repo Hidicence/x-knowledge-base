@@ -22,7 +22,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
@@ -354,6 +354,61 @@ def check_governance_actionable() -> dict:
     return result
 
 
+def check_conversation_capture(days: int = 3) -> dict:
+    """Conversations must actually reach the store, not just open a session.
+
+    The hook opens a session and then records a turn. Between 2026-08-24 and
+    08-29 it opened sessions and recorded nothing: stdin was decoded with the
+    Windows codepage, the surrogates that produced raised UnicodeEncodeError
+    inside turn_id, and that is a ValueError, which the fail-open handler is
+    written to swallow. Exit code 0, no error anywhere, five days of Chinese
+    conversations lost.
+
+    Failing open is right — XKB must never block a conversation — but failing
+    open is not the same as failing silently. A day whose sessions all hold
+    zero turns is the signature, and it is visible from the store alone.
+    """
+    result = {"name": "conversation_capture", "checks": []}
+    db_path = Path(os.getenv("XKB_SERVICE_DB", str(Path.home() / ".xkb-runtime" / "knowledge.sqlite")))
+    if not db_path.exists():
+        result["checks"].append({"ok": True, "msg": "no knowledge service store on this host"})
+        return result
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        import sqlite3
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
+            total, empty = db.execute(
+                """SELECT COUNT(*),
+                          SUM(CASE WHEN t.n IS NULL THEN 1 ELSE 0 END)
+                     FROM sessions s
+                     LEFT JOIN (SELECT session_id, COUNT(*) n FROM turns GROUP BY session_id) t
+                       ON t.session_id = s.session_id
+                    WHERE s.created_at >= ?""",
+                (since,),
+            ).fetchone()
+    except Exception as exc:
+        result["checks"].append({"ok": False, "msg": f"capture counts unavailable: {exc}"})
+        return result
+
+    total = total or 0
+    empty = empty or 0
+    if total == 0:
+        result["checks"].append({"ok": True, "msg": f"no conversations in the last {days}d — nothing to capture"})
+        return result
+
+    # Every session empty means capture is broken, not that the conversations
+    # were unremarkable. A mix is normal: a session can open and go unused.
+    broken = empty == total
+    result["checks"].append({
+        "ok": not broken,
+        "msg": (f"conversation capture: {total - empty}/{total} sessions recorded turns "
+                f"(last {days}d)" + ("" if not broken else
+                " — hook 開了 session 卻沒有記下任何 turn，召回與候選池都收不到東西")),
+    })
+    return result
+
+
 def check_provenance_markers() -> dict:
     """Knowledge distilled from Pan's own notes must be marked as such.
 
@@ -481,6 +536,7 @@ def main() -> int:
         check_staging_backlog(),
         check_governance_actionable(),
         check_provenance_markers(),
+        check_conversation_capture(),
         check_index_freshness(),
     ]
 

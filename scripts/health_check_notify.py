@@ -129,6 +129,7 @@ def main() -> int:
         hc.check_staging_backlog(),
         hc.check_governance_actionable(),
         hc.check_provenance_markers(),
+        hc.check_conversation_capture(),
         hc.check_index_freshness(),
     ]
     failures = [
