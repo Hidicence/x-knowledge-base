@@ -65,7 +65,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
         forbidden = ('Path.home() / ".openclaw"', "openclaw.json", "OPENCLAW_JSON")
         active_entrypoints = (
             "_llm.py", "fetch_github_repos.py", "xbrain_recall.py", "xkb_ask.py",
-            "run_scan_worker.py", "xkb_minion_worker.py", "pdf_ingest.py",
+            "run_scan_worker.py", "pdf_ingest.py",
             "health_check_notify.py", "topic_guide_generator.py",
         )
         for name in active_entrypoints:
@@ -75,8 +75,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
 
     def test_active_entrypoints_import_shared_runtime_loader(self) -> None:
         active_entrypoints = (
-            "xbrain_recall.py", "xkb_ask.py", "run_scan_worker.py", "xkb_minion_worker.py",
-            "pdf_ingest.py", "health_check_notify.py",
+            "xbrain_recall.py", "xkb_ask.py", "run_scan_worker.py", "pdf_ingest.py", "health_check_notify.py",
             "topic_guide_generator.py",
         )
         for name in active_entrypoints:

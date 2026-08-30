@@ -156,6 +156,23 @@ def _inventory_lines() -> list[str]:
             lines.append(f"待消化：{pending} 筆書籤還沒變成知識")
     except Exception:
         pass
+
+    # Topic pages only ever grow. Nothing schedules synthesis — it rewrites
+    # knowledge with a model, which is a call to make deliberately — so the
+    # count belongs here, where a growing number is visible, rather than in a
+    # tool nobody remembers to run. openclaw-agent-workflows reached 3,278
+    # bullets before anyone counted.
+    try:
+        bloated = [
+            path.stem for path in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))
+            if sum(1 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                   if line.lstrip().startswith("- ")) >= 200
+        ]
+        if bloated:
+            lines.append(f"待整理：{len(bloated)} 個主題頁條列過多"
+                         f"（{'、'.join(bloated[:2])}⋯，用 xkb_synthesize_topic.py 消化）")
+    except Exception:
+        pass
     return lines
 
 
