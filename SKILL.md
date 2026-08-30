@@ -383,6 +383,11 @@ Schedules live on the host, not in this repository, so nothing here would
 otherwise say which scripts they call. These are the entry points; everything
 else runs because one of them, or one of the tools below, calls it.
 
+Every one of them is a script. A scheduled job that hands a model a fixed
+command and asks it to report back can report success without having run it,
+which is exactly how the 2026-08-28 ingestion "succeeded" while writing
+nothing. Models make judgements here; they do not carry pipelines.
+
 | When (Asia/Taipei) | Entry point | What it is for |
 | --- | --- | --- |
 | 02:00 | `run_bookmark_worker.py` | Queue newly fetched bookmarks and turn them into cards. |
@@ -391,6 +396,7 @@ else runs because one of them, or one of the tools below, calls it.
 | 04:00 | `monitor_youtube_playlist.py` | Fetch new transcripts and prepare them for card generation. |
 | 09:00 | `health_check_notify.py` | The one message that says whether anything is wrong. Runs from plain cron, without a model, so it still speaks when everything else is down. |
 | 13:30 | `run_ingestion_batch.sh` | Sync enriched cards into the search index, embed what changed, and verify the index was actually written. |
+| 14:30, 22:30 | `run_wiki_mirror.sh` | Copy the wiki into the OpenClaw memory-wiki vault so agents can reach it through `openclaw wiki search`, and fail loudly if the vault was not written. |
 | 15:30, 21:30 | `distill_memory_to_wiki.py` | Extract durable claims from the day's notes into candidates. |
 | twice daily | `recommend_from_profile.sh` | Surface reading recommendations from the topic profile. |
 

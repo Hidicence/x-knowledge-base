@@ -18,6 +18,10 @@
 這支做的是另一件事：把已經累積在頁面裡的條列，交給模型寫成「結論」，
 並保留出處。輸出到審閱檔，**不直接覆寫**主題頁。
 
+--apply 併回去的，就是你剛剛看過的那一份審閱稿。它不會重跑模型——重跑會
+產出不一樣的結論，那樣審閱的稿子跟寫進 wiki 的稿子就不是同一份，審閱也就
+沒有意義。頁面在你審閱之後又變動了的話，它會停下來說明，而不是默默重產。
+
 用法：
     python3 scripts/xkb_synthesize_topic.py --list
     python3 scripts/xkb_synthesize_topic.py --topic ai-video-workflows
@@ -26,6 +30,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import pathlib
 import re
 import shutil
 import sys
@@ -118,13 +124,41 @@ def synthesise(topic: str, prose: str, bullets: list[str], per_chunk: int) -> st
     return "\n\n".join(out)
 
 
-def render(topic: str, synthesis: str, links: list[str], bullets: int) -> str:
+DIGEST_LINE = re.compile(r"^<!-- source-digest: ([0-9a-f]{16}) -->$", re.M)
+
+
+def digest(bullets: list[str]) -> str:
+    """指紋，用來確認審閱稿跟現在的頁面是同一批條列。"""
+    joined = "\n".join(bullets).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()[:16]
+
+
+def read_draft(review: pathlib.Path, bullets: list[str]) -> str | None:
+    """讀回審閱稿的結論；指紋對不上就回 None。
+
+    對不上代表頁面在你審閱之後又長了新東西，那份稿子已經不是這一頁的
+    消化結果了。
+    """
+    if not review.exists():
+        return None
+    text = review.read_text(encoding="utf-8", errors="replace")
+    found = DIGEST_LINE.search(text)
+    if not found or found.group(1) != digest(bullets):
+        return None
+    body = text.split("\n## 結論\n", 1)
+    if len(body) != 2:
+        return None
+    return body[1].split("\n## 出處\n", 1)[0].strip("\n")
+
+
+def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]) -> str:
     stamp = datetime.now(timezone.utc).isoformat()
     return "\n".join([
         f"# {topic} — 消化後",
         "",
-        f"> 由 {bullets} 條累積筆記消化而成，{stamp}。",
+        f"> 由 {len(bullets_text)} 條累積筆記消化而成，{stamp}。",
         "> 這是審閱稿：確認無誤後再用 --apply 併回主題頁。",
+        f"<!-- source-digest: {digest(bullets_text)} -->",
         "",
         "## 結論",
         "",
@@ -146,7 +180,7 @@ def cmd_list() -> int:
     return 0
 
 
-def cmd_topic(topic: str, apply: bool) -> int:
+def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     path = xkb_paths.WIKI_TOPICS_DIR / f"{topic}.md"
     if not path.exists():
         print(f"找不到主題頁：{path}", file=sys.stderr)
@@ -158,7 +192,18 @@ def cmd_topic(topic: str, apply: bool) -> int:
         print("這一頁沒有累積的條列可以消化。")
         return 0
     print(f"  {topic}：{len(bullets)} 條敘述、{len(links)} 條連結")
-    synthesis = synthesise(topic, prose, bullets, per_chunk)
+
+    review = REVIEW_DIR / f"{topic}-synthesis.md"
+    synthesis = None if regenerate else read_draft(review, bullets)
+    if synthesis:
+        print(f"  沿用既有審閱稿：{review.name}")
+    else:
+        if apply and review.exists() and not regenerate:
+            print("  審閱稿是針對舊版頁面產生的，頁面之後又有變動。", file=sys.stderr)
+            print("  請先重跑一次消化、看過新稿，再 --apply；"
+                  "或加 --regenerate 直接重產。", file=sys.stderr)
+            return 3
+        synthesis = synthesise(topic, prose, bullets, per_chunk)
     if not synthesis:
         print("模型沒有產出內容，未寫入任何檔案。", file=sys.stderr)
         return 2
@@ -179,8 +224,7 @@ def cmd_topic(topic: str, apply: bool) -> int:
             apply = False
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    review = REVIEW_DIR / f"{topic}-synthesis.md"
-    review.write_text(render(topic, synthesis, links, len(bullets)), encoding="utf-8")
+    review.write_text(render(topic, synthesis, links, bullets), encoding="utf-8")
     print(f"  審閱稿：{review}")
 
     if not apply:
@@ -203,8 +247,12 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--list", action="store_true", help="列出哪些主題頁累積了未消化的條列")
     mode.add_argument("--topic", help="消化這個主題頁")
     parser.add_argument("--apply", action="store_true", help="把結論併回主題頁（預設只產生審閱稿）")
+    parser.add_argument("--regenerate", action="store_true",
+                        help="就算已有審閱稿也重新消化一次")
     args = parser.parse_args(argv)
-    return cmd_list() if args.list else cmd_topic(args.topic, args.apply)
+    if args.list:
+        return cmd_list()
+    return cmd_topic(args.topic, args.apply, args.regenerate)
 
 
 if __name__ == "__main__":

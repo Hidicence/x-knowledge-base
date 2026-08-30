@@ -24,6 +24,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_provenance
 import xkb_text
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -47,6 +48,25 @@ class RecallResult(NamedTuple):
     excerpt: str        # text snippet (150 chars)
     score: float
     url: str = ""       # wiki topic URL or ""
+
+
+def _result(*, source_type, source_file, section, excerpt, score, url="") -> RecallResult:
+    """Build a result with the bookkeeping taken out.
+
+    Governance stamps every promoted line with the candidate fingerprint that
+    makes its batch reversible. A recall for 碳盤查 was answering with 64
+    characters of hex in the middle of the sentence. There are three places
+    that build a result and more than one that renders it, so the removal
+    belongs here, once, where the next one added inherits it.
+    """
+    return RecallResult(
+        source_type=source_type,
+        source_file=source_file,
+        section=xkb_provenance.strip_markers(section),
+        excerpt=xkb_provenance.strip_markers(excerpt),
+        score=score,
+        url=url,
+    )
 
 
 def tokenize(text: str) -> list[str]:
@@ -150,7 +170,7 @@ def recall_from_memory(query: str, top_k: int = 3) -> list[RecallResult]:
                 continue
 
             excerpt = _excerpt(body, tokens)
-            candidates.append(RecallResult(
+            candidates.append(_result(
                 source_type="memory",
                 source_file=rel_path,
                 section=section_title,
@@ -469,7 +489,7 @@ def recall_semantic(query: str, top_k: int = 2) -> list[RecallResult] | None:
         seen_topics.add(rest)
         is_wiki = source_type == "wiki_semantic"
         excerpt = _section_text(rest, section) if is_wiki else _memory_section_text(rest, section)
-        results.append(RecallResult(
+        results.append(_result(
             source_type=source_type,
             source_file=f"{prefix}{rest}",
             section=section,
@@ -539,7 +559,7 @@ def _recall_from_wiki_keyword(query: str, top_k: int = 2) -> list[RecallResult]:
         if not best_excerpt:
             best_excerpt = _excerpt(body, tokens)
 
-        candidates.append(RecallResult(
+        candidates.append(_result(
             source_type="wiki",
             source_file=f"wiki/topics/{path.name}",
             section=best_section or title,

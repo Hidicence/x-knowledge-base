@@ -24,9 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_provenance
 from xkb_provenance import MARKER
 
-GOVERNANCE_LINE = re.compile(r"<!-- xkb-candidate:[0-9a-f]+ -->")
+GOVERNANCE_LINE = xkb_provenance.CANDIDATE_MARKER_RE
 PLAIN_SOURCE = "*(source: "
 MARKED_SOURCE = f"*({MARKER} · source: "
 

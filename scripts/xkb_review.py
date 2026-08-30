@@ -25,6 +25,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_provenance
 from xkb_provenance import annotate
 
 STAGING_DIR = xkb_paths.WIKI_DIR / "_staging"
@@ -283,7 +284,7 @@ def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dic
         if not _safe_promotable(candidate) or not _topic_available(candidate):
             continue
         topic_path = TOPICS_DIR / f"{candidate.topic_key}.md"
-        marker = f"xkb-candidate:{candidate.candidate_id}"
+        marker = xkb_provenance.candidate_marker(candidate.candidate_id)
         content = topic_path.read_text(encoding="utf-8")
         if marker in content:
             continue
