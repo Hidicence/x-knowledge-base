@@ -134,11 +134,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
 
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"Direct API call failed: {e!r}")
+    data = _post_with_retry(req, timeout)
 
     if is_anthropic:
         # Handle thinking blocks: find first text block
@@ -158,6 +154,39 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
             text = _re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
             return text
         raise RuntimeError(f"Unexpected OpenAI response format: {data}")
+
+
+# Rate limiting and a briefly unavailable upstream are worth waiting out; a
+# rejected key or an unknown model will fail the same way five times in a row.
+TRANSIENT_STATUS = (429, 500, 502, 503, 504)
+MAX_ATTEMPTS = 5
+
+
+def _post_with_retry(req, timeout: int) -> dict:
+    """POST, retrying only the failures that another attempt could fix.
+
+    A long batch is only as reliable as its flakiest call: a run of a hundred
+    digestion calls used to end on whichever one happened to catch a 503.
+    """
+    import time as _time
+
+    last: Exception | None = None
+    for attempt in range(MAX_ATTEMPTS):
+        if attempt:
+            _time.sleep(4 * attempt)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            detail = err.read().decode("utf-8", "replace")[:200]
+            last = RuntimeError(f"Direct API call failed: {err!r} body={detail}")
+            if err.code not in TRANSIENT_STATUS:
+                raise last from err
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
+            last = RuntimeError(f"Direct API call failed: {err!r}")
+        except Exception as err:
+            raise RuntimeError(f"Direct API call failed: {err!r}") from err
+    raise last if last else RuntimeError("Direct API call failed with no error recorded")
 
 
 def call(system: str, user: str, *, model: str | None = None, timeout: int = 120) -> str:

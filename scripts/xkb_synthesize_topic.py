@@ -18,6 +18,9 @@
 這支做的是另一件事：把已經累積在頁面裡的條列，交給模型寫成「結論」，
 並保留出處。輸出到審閱檔，**不直接覆寫**主題頁。
 
+消化不出結論的條列會原封不動留在頁面上，不會被結論取代掉——模型給不出
+結論不代表那幾條筆記沒有價值，下一次消化會再試一次。
+
 --apply 併回去的，就是你剛剛看過的那一份審閱稿。它不會重跑模型——重跑會
 產出不一樣的結論，那樣審閱的稿子跟寫進 wiki 的稿子就不是同一份，審閱也就
 沒有意義。頁面在你審閱之後又變動了的話，它會停下來說明，而不是默默重產。
@@ -143,6 +146,7 @@ def synthesise(topic: str, prose: str, bullets: list[str],
 
 DIGEST_LINE = re.compile(r"^<!-- source-digest: ([0-9a-f]{16}) -->$", re.M)
 LOST_LINE = re.compile(r"^<!-- lost-bullets: (\d+) -->$", re.M)
+UNDIGESTED_HEADING = "## 尚未消化"
 
 
 def digest(bullets: list[str]) -> str:
@@ -166,19 +170,28 @@ def read_draft(review: pathlib.Path, bullets: list[str]) -> str | None:
     body = text.split("\n## 結論\n", 1)
     if len(body) != 2:
         return None
-    return body[1].split("\n## 出處\n", 1)[0].strip("\n")
+    # 到下一個標題為止。原本寫死找「## 出處」，於是後來插進來的
+    # 「## 尚未消化」整段都被當成結論讀了回來。
+    return body[1].split("\n## ", 1)[0].strip("\n")
 
 
-def draft_lost(review: pathlib.Path) -> int:
-    """審閱稿記下的「消化不出來而被丟掉」的條列數。"""
+def draft_lost(review: pathlib.Path) -> list[str]:
+    """審閱稿裡那些消化不出結論的原始條列。
+
+    存的是條列本身而不是數量，因為它們要原封不動跟著併回頁面——沒有消化
+    出結論不代表可以丟掉。
+    """
     if not review.exists():
-        return 0
-    found = LOST_LINE.search(review.read_text(encoding="utf-8", errors="replace"))
-    return int(found.group(1)) if found else 0
+        return []
+    text = review.read_text(encoding="utf-8", errors="replace")
+    if UNDIGESTED_HEADING + "\n" not in text:
+        return []
+    section = text.split(UNDIGESTED_HEADING + "\n", 1)[1].split("\n## ", 1)[0]
+    return [line.strip() for line in section.splitlines() if line.strip().startswith("- ")]
 
 
 def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str],
-           lost: int = 0) -> str:
+           lost: list[str] | None = None) -> str:
     stamp = datetime.now(timezone.utc).isoformat()
     return "\n".join([
         f"# {topic} — 消化後",
@@ -186,12 +199,21 @@ def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]
         f"> 由 {len(bullets_text)} 條累積筆記消化而成，{stamp}。",
         "> 這是審閱稿：確認無誤後再用 --apply 併回主題頁。",
         f"<!-- source-digest: {digest(bullets_text)} -->",
-        f"<!-- lost-bullets: {lost} -->",
+        f"<!-- lost-bullets: {len(lost or [])} -->",
         "",
         "## 結論",
         "",
         synthesis,
         "",
+        *((
+            UNDIGESTED_HEADING,
+            "",
+            "> 這幾條模型給不出結論（已重試一次）。它們會原封不動留在主題頁上，",
+            "> 下次消化會再試一次——沒有消化出結論，不代表可以丟掉。",
+            "",
+            *lost,
+            "",
+        ) if lost else ()),
         "## 出處",
         "",
         *(links or ["（無）"]),
@@ -223,8 +245,7 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
 
     review = REVIEW_DIR / f"{topic}-synthesis.md"
     synthesis = None if regenerate else read_draft(review, bullets)
-    lost: list[str] = []
-    lost_count = draft_lost(review) if synthesis else 0
+    lost: list[str] = draft_lost(review) if synthesis else []
     if synthesis:
         print(f"  沿用既有審閱稿：{review.name}")
     else:
@@ -234,7 +255,6 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
                   "或加 --regenerate 直接重產。", file=sys.stderr)
             return 3
         synthesis, lost = synthesise(topic, prose, bullets, per_chunk)
-        lost_count = len(lost)
     if not synthesis:
         print("模型沒有產出內容，未寫入任何檔案。", file=sys.stderr)
         return 2
@@ -245,20 +265,17 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     # 內容彼此不相關，本來就沒有共同主題可以收斂。
     # 不連貫的頁面該先拆開，硬消化只會得到換句話說的同一批東西。
     produced = len([b for b in synthesis.splitlines() if b.strip().startswith("- ")])
-    ratio = len(bullets) / max(produced, 1)
-    print(f"  壓縮比：{ratio:.1f}x（{len(bullets)} → {produced}）")
+    # 分子只算真的被消化的那些。把消化不出結論的條列也算進去，會讓壓縮比
+    # 看起來比實際好——那正是這一連串修正要消滅的那種數字。
+    digested = len(bullets) - len(lost)
+    ratio = digested / max(produced, 1)
+    print(f"  壓縮比：{ratio:.1f}x（{digested} → {produced}）")
 
     # 併回去是取代，不是附加。丟掉的那幾條會就此消失，而且壓縮比會因此
     # 好看得不像話——16.2x 看起來像消化得很好，其實是有整批不見了。
-    if lost_count:
-        print(f"  警告：有 {lost_count} 條筆記消化不出任何結論（重試過一次）。")
-        print("        壓縮比因此被高估；這些筆記不會出現在結論裡。")
-        if apply:
-            print("  已停止：併回去會用結論取代條列，那些筆記就真的沒了。",
-                  file=sys.stderr)
-            print("  請先加 --regenerate 重跑一次；仍然消化不出來的話，"
-                  "代表那一批內容彼此不相關，該拆頁而不是硬消化。", file=sys.stderr)
-            return 4
+    if lost:
+        print(f"  另有 {len(lost)} 條消化不出結論（已重試一次），"
+              f"會原封不動留在頁面上，下次再試。")
     if ratio < MIN_COMPRESSION:
         print(f"  警告：低於 {MIN_COMPRESSION}x，代表這一頁的內容彼此不相關，")
         print("        消化不出共同結論。建議先把它拆成幾個主題，而不是硬消化。")
@@ -267,7 +284,7 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
             apply = False
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    review.write_text(render(topic, synthesis, links, bullets, lost_count),
+    review.write_text(render(topic, synthesis, links, bullets, lost),
                       encoding="utf-8")
     print(f"  審閱稿：{review}")
 
@@ -279,7 +296,11 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     # 弄錯了沒有備份就回不來。
     backup = path.with_suffix(f".md.before-synthesis-{datetime.now().strftime('%Y%m%d-%H%M')}")
     shutil.copy2(path, backup)
-    merged = prose.rstrip() + "\n\n## 結論（消化自累積筆記）\n\n" + synthesis + "\n\n## 出處\n\n" + "\n".join(links) + "\n"
+    merged = prose.rstrip() + "\n\n## 結論（消化自累積筆記）\n\n" + synthesis
+    if lost:
+        merged += ("\n\n" + UNDIGESTED_HEADING + "\n\n"
+                   + "\n".join(lost))
+    merged += "\n\n## 出處\n\n" + "\n".join(links) + "\n"
     path.write_text(merged, encoding="utf-8")
     print(f"  已併回 {path.name}（備份：{backup.name}）")
     return 0
