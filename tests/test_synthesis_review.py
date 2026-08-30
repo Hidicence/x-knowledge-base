@@ -56,10 +56,11 @@ class SynthesisReviewTest(unittest.TestCase):
             self.addCleanup(patch.stop)
 
         self.calls: list[int] = []
+        self.lose: list[str] = []
 
         def fake(topic, prose, bullets, per_chunk):
             self.calls.append(len(bullets))
-            return f"- 第 {len(self.calls)} 次消化的結論。"
+            return f"- 第 {len(self.calls)} 次消化的結論。", list(self.lose)
 
         patch = mock.patch.object(syn, "synthesise", fake)
         patch.start()
@@ -90,6 +91,25 @@ class SynthesisReviewTest(unittest.TestCase):
 
         self.assertEqual(self.calls, [2, 2])
         self.assertIn("第 2 次消化的結論", self.text())
+
+
+    def test_a_batch_that_digested_to_nothing_blocks_the_merge(self) -> None:
+        # 併回去是取代不是附加，所以消化不出來的那一批會就此從 wiki 消失。
+        # 壓縮比也會因為分母少了而好看得不像話。
+        self.lose = ["- 這一批消化不出任何結論，它必須擋下合併，而不是被靜默丟掉。"]
+
+        self.assertEqual(syn.cmd_topic("t", apply=False), 0)
+        self.assertEqual(syn.cmd_topic("t", apply=True), 4)
+        self.assertNotIn("消化的結論", self.text())
+
+    def test_the_loss_is_remembered_by_the_draft(self) -> None:
+        self.lose = ["- 這一批消化不出任何結論，它必須擋下合併，而不是被靜默丟掉。"]
+        self.assertEqual(syn.cmd_topic("t", apply=False), 0)
+
+        # 隔一次執行才 --apply，也要擋——記錄在審閱稿裡，不在記憶體裡。
+        self.lose = []
+        self.assertEqual(syn.cmd_topic("t", apply=True), 4)
+        self.assertEqual(self.calls, [2], "應該沿用審閱稿，不是重跑一次")
 
 
 if __name__ == "__main__":

@@ -91,7 +91,13 @@ def take_bullets(markdown: str, limit: int) -> list[str]:
     return kept
 
 
-def synthesise(topic: str, prose: str, bullets: list[str], per_chunk: int) -> str:
+def synthesise(topic: str, prose: str, bullets: list[str],
+               per_chunk: int) -> tuple[str, list[str]]:
+    """回傳 (結論, 沒能消化的原始條列)。
+
+    第二個值幾乎總是空的。不是空的時候，代表模型對那一批沒有給出任何可用
+    的條列——那些筆記不能就這樣算了，因為 --apply 會用結論取代它們。
+    """
     from _llm import call as llm_call
 
     system = (
@@ -99,6 +105,7 @@ def synthesise(topic: str, prose: str, bullets: list[str], per_chunk: int) -> st
         "Write in Traditional Chinese (Taiwan). No emoji."
     )
     out: list[str] = []
+    lost: list[str] = []
     for start in range(0, len(bullets), CHUNK):
         batch = bullets[start:start + CHUNK]
         user = (
@@ -116,15 +123,26 @@ def synthesise(topic: str, prose: str, bullets: list[str], per_chunk: int) -> st
             "5. 沒有把握的地方標註『（待查證）』，不要編\n"
             "只輸出條列本身，不要開場白。"
         )
-        raw = llm_call(system, user)
-        cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        if cleaned:
-            out.append("\n".join(take_bullets(cleaned, per_chunk)))
+        # 一次重試。空回應多半是暫時的；連兩次都空，才算這一批真的消化不出來。
+        kept: list[str] = []
+        for attempt in range(2):
+            raw = llm_call(system, user)
+            cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            kept = take_bullets(cleaned, per_chunk) if cleaned else []
+            if kept:
+                break
+            if attempt == 0:
+                print(f"    第 {start // CHUNK + 1} 批沒有產出結論，重試一次", flush=True)
+        if kept:
+            out.append("\n".join(kept))
+        else:
+            lost.extend(batch)
         print(f"    已消化 {min(start + CHUNK, len(bullets))}/{len(bullets)} 條", flush=True)
-    return "\n\n".join(out)
+    return "\n\n".join(out), lost
 
 
 DIGEST_LINE = re.compile(r"^<!-- source-digest: ([0-9a-f]{16}) -->$", re.M)
+LOST_LINE = re.compile(r"^<!-- lost-bullets: (\d+) -->$", re.M)
 
 
 def digest(bullets: list[str]) -> str:
@@ -151,7 +169,16 @@ def read_draft(review: pathlib.Path, bullets: list[str]) -> str | None:
     return body[1].split("\n## 出處\n", 1)[0].strip("\n")
 
 
-def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]) -> str:
+def draft_lost(review: pathlib.Path) -> int:
+    """審閱稿記下的「消化不出來而被丟掉」的條列數。"""
+    if not review.exists():
+        return 0
+    found = LOST_LINE.search(review.read_text(encoding="utf-8", errors="replace"))
+    return int(found.group(1)) if found else 0
+
+
+def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str],
+           lost: int = 0) -> str:
     stamp = datetime.now(timezone.utc).isoformat()
     return "\n".join([
         f"# {topic} — 消化後",
@@ -159,6 +186,7 @@ def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]
         f"> 由 {len(bullets_text)} 條累積筆記消化而成，{stamp}。",
         "> 這是審閱稿：確認無誤後再用 --apply 併回主題頁。",
         f"<!-- source-digest: {digest(bullets_text)} -->",
+        f"<!-- lost-bullets: {lost} -->",
         "",
         "## 結論",
         "",
@@ -195,6 +223,8 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
 
     review = REVIEW_DIR / f"{topic}-synthesis.md"
     synthesis = None if regenerate else read_draft(review, bullets)
+    lost: list[str] = []
+    lost_count = draft_lost(review) if synthesis else 0
     if synthesis:
         print(f"  沿用既有審閱稿：{review.name}")
     else:
@@ -203,7 +233,8 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
             print("  請先重跑一次消化、看過新稿，再 --apply；"
                   "或加 --regenerate 直接重產。", file=sys.stderr)
             return 3
-        synthesis = synthesise(topic, prose, bullets, per_chunk)
+        synthesis, lost = synthesise(topic, prose, bullets, per_chunk)
+        lost_count = len(lost)
     if not synthesis:
         print("模型沒有產出內容，未寫入任何檔案。", file=sys.stderr)
         return 2
@@ -216,6 +247,18 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     produced = len([b for b in synthesis.splitlines() if b.strip().startswith("- ")])
     ratio = len(bullets) / max(produced, 1)
     print(f"  壓縮比：{ratio:.1f}x（{len(bullets)} → {produced}）")
+
+    # 併回去是取代，不是附加。丟掉的那幾條會就此消失，而且壓縮比會因此
+    # 好看得不像話——16.2x 看起來像消化得很好，其實是有整批不見了。
+    if lost_count:
+        print(f"  警告：有 {lost_count} 條筆記消化不出任何結論（重試過一次）。")
+        print("        壓縮比因此被高估；這些筆記不會出現在結論裡。")
+        if apply:
+            print("  已停止：併回去會用結論取代條列，那些筆記就真的沒了。",
+                  file=sys.stderr)
+            print("  請先加 --regenerate 重跑一次；仍然消化不出來的話，"
+                  "代表那一批內容彼此不相關，該拆頁而不是硬消化。", file=sys.stderr)
+            return 4
     if ratio < MIN_COMPRESSION:
         print(f"  警告：低於 {MIN_COMPRESSION}x，代表這一頁的內容彼此不相關，")
         print("        消化不出共同結論。建議先把它拆成幾個主題，而不是硬消化。")
@@ -224,7 +267,8 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
             apply = False
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    review.write_text(render(topic, synthesis, links, bullets), encoding="utf-8")
+    review.write_text(render(topic, synthesis, links, bullets, lost_count),
+                      encoding="utf-8")
     print(f"  審閱稿：{review}")
 
     if not apply:
