@@ -32,28 +32,19 @@ Two deliberate departures from the original:
 """
 from __future__ import annotations
 
-import re
+import sys
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
-# Each Han character is its own term: Chinese is unspaced, and a segmenter
-# would be a dependency and a source of disagreement between callers. ASCII
-# runs of two or more characters keep identifiers like "gpt-image-2" whole.
-_TERM_RE = re.compile(r"[一-鿿]|[a-z0-9_:-]{2,}")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_text
 
 DEFAULT_LAMBDA = 0.7
 
-
-def text_terms(value: str) -> set[str]:
-    return set(_TERM_RE.findall(value.lower()))
-
-
-def text_similarity(left: str, right: str) -> float:
-    """Term overlap over the larger of the two term sets, in 0..1."""
-    a = text_terms(left)
-    b = text_terms(right)
-    if not a or not b:
-        return 0.0
-    return len(a & b) / max(len(a), len(b))
+# Redundancy is measured by xkb_text, which owns every way this project
+# compares two pieces of text and documents why there is more than one.
+text_terms = xkb_text.terms
+text_similarity = xkb_text.similarity
 
 
 def _normalised(scores: Sequence[float]) -> list[float]:

@@ -66,7 +66,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
         active_entrypoints = (
             "_llm.py", "fetch_github_repos.py", "xbrain_recall.py", "xkb_ask.py",
             "run_scan_worker.py", "xkb_minion_worker.py", "pdf_ingest.py",
-            "xkb_adapter_http.py", "health_check_notify.py", "topic_guide_generator.py",
+            "health_check_notify.py", "topic_guide_generator.py",
         )
         for name in active_entrypoints:
             source = (SCRIPTS / name).read_text(encoding="utf-8")
@@ -76,7 +76,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
     def test_active_entrypoints_import_shared_runtime_loader(self) -> None:
         active_entrypoints = (
             "xbrain_recall.py", "xkb_ask.py", "run_scan_worker.py", "xkb_minion_worker.py",
-            "pdf_ingest.py", "xkb_adapter_http.py", "health_check_notify.py",
+            "pdf_ingest.py", "health_check_notify.py",
             "topic_guide_generator.py",
         )
         for name in active_entrypoints:

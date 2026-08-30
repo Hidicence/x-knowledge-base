@@ -51,15 +51,13 @@ from continuity_recall import (recall as continuity_recall, recall_from_wiki,
 from contrarian_recall import recall as contrarian_recall, format_hint as format_contrarian_hint
 from action_recall import recall as action_recall, format_hint as format_action_hint
 
-try:
-    from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
-    _DEDUP_AVAILABLE = True
-except ImportError:
-    _DEDUP_AVAILABLE = False
-    def _dedup_filter_new(results):  # type: ignore[misc]
-        return results, []
-    def _dedup_mark_shown(_results) -> None:  # type: ignore[misc]
-        pass
+# Imported like any other sibling. It used to be wrapped in a try/except that
+# fell back to a no-op, and on 2026-05-04 the module was archived rather than
+# deleted — so the import started failing, the fallback swallowed it, and the
+# "do not show the same knowledge twice in one conversation" filter was off
+# for four months without a single error. A guard that can silently become a
+# no-op is not a guard.
+from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
 
 import xkb_paths
 import xkb_relevance

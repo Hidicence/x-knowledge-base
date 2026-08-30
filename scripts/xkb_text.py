@@ -94,3 +94,30 @@ if __name__ == "__main__":
 
     for arg in sys.argv[1:] or ["我想做一支產品廣告影片"]:
         print(f"{arg!r}\n  → {tokenize(arg)}")
+
+# ── Redundancy ───────────────────────────────────────────────────────────────
+# A second way to compare text, for a different question. ``tokenize`` asks
+# "does this text match the query", and its 2/3-character n-grams are built for
+# precision. ``similarity`` asks "has this already been said", where precision
+# is the wrong instinct: two rephrasings of one claim are redundant, and the
+# n-grams score them at 0.39 while single characters score them at 0.73.
+#
+# Ported from Memmy's recallTextSimilarity (MemTensor/memmy-agent, MIT). It
+# lives here rather than beside its one caller so that the next thing needing
+# "are these two texts saying the same thing" finds it instead of writing a
+# ninth tokeniser.
+_TERM_RE = re.compile(r"[一-鿿]|[a-z0-9_:-]{2,}")
+
+
+def terms(value: str) -> set[str]:
+    """Comparison terms:每個漢字自成一詞, plus ASCII runs of two or more."""
+    return set(_TERM_RE.findall(value.lower()))
+
+
+def similarity(left: str, right: str) -> float:
+    """Term overlap over the larger term set, in 0..1."""
+    a = terms(left)
+    b = terms(right)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / max(len(a), len(b))
