@@ -894,72 +894,6 @@ class Store:
             })
         return {"schema": SCHEMA, "read_only": True, "control_plane": "observed_status_only", "count": len(jobs), "jobs": jobs}
 
-    def recover_stale_jobs(self, older_than_seconds: int = 3600, dry_run: bool = True, confirm: bool = False) -> dict[str, Any]:
-        """Requeue only this service's interrupted L1 worker jobs.
-
-        Recovery is deliberately opt-in: inspection is the default, the TTL
-        has a hard one-minute floor, and mutation requires ``confirm=true``.
-        The recovery decision is appended to job metadata for auditability;
-        this method never starts a worker or touches another worker's jobs.
-        """
-        try:
-            ttl = int(older_than_seconds)
-        except (TypeError, ValueError):
-            raise ValueError("older_than_seconds must be an integer")
-        if ttl < 60:
-            raise ValueError("older_than_seconds must be at least 60")
-        if ttl > 30 * 24 * 3600:
-            raise ValueError("older_than_seconds must be at most 2592000")
-        cutoff = datetime.now(timezone.utc).timestamp() - ttl
-        worker_name = "xkb_l1_to_candidate"
-
-        def stale(row: sqlite3.Row) -> bool:
-            raw = row["updated_at"] or row["started_at"]
-            try:
-                return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() <= cutoff
-            except (AttributeError, TypeError, ValueError):
-                return False
-
-        audit_at = now()
-        with self.lock, self.connect() as db:
-            rows = db.execute(
-                "SELECT * FROM jobs WHERE stage='distill' AND worker=? AND status='running' ORDER BY updated_at",
-                (worker_name,),
-            ).fetchall()
-            selected = [row for row in rows if stale(row)]
-            ids = [row["job_id"] for row in selected]
-            recovered = []
-            if not dry_run:
-                if not confirm:
-                    raise ValueError("confirm=true is required when dry_run=false")
-                for row in selected:
-                    metadata = json.loads(row["metadata_json"] or "{}")
-                    metadata["stale_recovery"] = {
-                        "recovered_at": audit_at,
-                        "older_than_seconds": ttl,
-                        "from_status": "running",
-                        "to_status": "queued",
-                        "reason": "worker_interruption_recovery",
-                    }
-                    db.execute(
-                        "UPDATE jobs SET status='queued',finished_at=NULL,retryable=1,error=NULL,metadata_json=?,updated_at=? WHERE job_id=? AND stage='distill' AND worker=? AND status='running'",
-                        (json.dumps(metadata, ensure_ascii=False), audit_at, row["job_id"], worker_name),
-                    )
-                    recovered.append(row["job_id"])
-        return {
-            "schema": SCHEMA,
-            "worker": worker_name,
-            "stage": "distill",
-            "dry_run": dry_run,
-            "confirmed": bool(confirm and not dry_run),
-            "older_than_seconds": ttl,
-            "selected": ids,
-            "recovered": recovered,
-            "count": len(recovered),
-            "audit": {"at": audit_at, "reason": "worker_interruption_recovery"} if recovered else None,
-            "worker_started": False,
-        }
-
     def open_session(self, body: dict[str, Any]) -> dict[str, Any]:
         source = text(body.get("source")) or "unknown"
         agent_id = text(body.get("agent_id") or body.get("agentId")) or source
@@ -1057,110 +991,24 @@ class Store:
                 (text(body.get("episode_id") or body.get("episodeId")) or f"episode:{turn_id}", query, answer, status, trace_id, json.dumps(payload, ensure_ascii=False), now(), turn_id),
             )
             retrieval = json.loads(existing["retrieval_json"] or "{}")
-            # Phase A+B boundary: persist an L1-backed distillation request, but
-            # do not call an LLM or promote anything into stable memory here.
-            episode_id = text(body.get("episode_id") or body.get("episodeId")) or f"episode:{turn_id}"
-            # Key the candidate by what was said, not by which turn said it.
+            # A turn used to also become a "candidate" here — the answer
+            # truncated to 2,000 characters, confidence hard-coded to zero —
+            # plus a job to analyse it. Promotion required the same claim in
+            # two distinct episodes, and an earlier fix keyed candidates on the
+            # answer text so repetition could accumulate. Free-form answers are
+            # never byte-identical, so the condition still could not occur: 154
+            # candidates in four weeks, none ever eligible, and the analysis
+            # queue ran 142 jobs deep before anyone noticed nothing consumed it.
             #
-            # Keying on trace_id gave every turn its own candidate holding
-            # exactly one episode — while the promotion gate requires two
-            # distinct episodes. Repetition could never accumulate, so nothing
-            # was ever eligible and the conversation-to-knowledge path was
-            # unreachable by construction.
+            # Conversations do become knowledge, through distill_memory_to_wiki:
+            # an LLM extracts durable claims from the day's notes, and claims do
+            # recur even when the sentences around them do not. That path put
+            # 913 entries into the wiki. This one stored transcripts.
             #
-            # Namespace is part of the key so two tenants saying the same thing
-            # never merge into one candidate.
-            session_row = db.execute("SELECT namespace FROM sessions WHERE session_id=?", (existing["session_id"],)).fetchone()
-            namespace = (session_row["namespace"] if session_row else None) or "private"
-            candidate_key = f"conversation:{namespace}:{digest({'value': _normalise(answer)})[:32]}"
-            candidate_id = f"candidate:{digest({'key': candidate_key})[:24]}"
-            timestamp = now()
-            existing_candidate = db.execute(
-                "SELECT source_trace_ids_json, episode_ids_json FROM candidates WHERE candidate_key=?",
-                (candidate_key,),
-            ).fetchone()
-            if existing_candidate:
-                traces = sorted(set(json.loads(existing_candidate["source_trace_ids_json"] or "[]")) | {trace_id})
-                episodes = sorted(set(json.loads(existing_candidate["episode_ids_json"] or "[]")) | {episode_id})
-                # Only accumulate evidence; never revive something already
-                # rejected or already promoted.
-                db.execute(
-                    "UPDATE candidates SET source_trace_ids_json=?, episode_ids_json=?, updated_at=?"
-                    " WHERE candidate_key=? AND status IN ('pending','approved')",
-                    (json.dumps(traces, ensure_ascii=False), json.dumps(episodes, ensure_ascii=False), timestamp, candidate_key),
-                )
-            else:
-                db.execute(
-                    "INSERT OR IGNORE INTO candidates(candidate_id,candidate_key,candidate_value,source_trace_ids_json,episode_ids_json,confidence,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (candidate_id, candidate_key, answer[:2000], json.dumps([trace_id]), json.dumps([episode_id]), 0.0, "pending", timestamp, timestamp),
-                )
-            row = db.execute("SELECT candidate_id FROM candidates WHERE candidate_key=?", (candidate_key,)).fetchone()
-            candidate_id = row["candidate_id"] if row else candidate_id
-            job_id = f"distill:{trace_id}"
-            db.execute(
-                "INSERT OR IGNORE INTO jobs(job_id,stage,worker,status,input_ref,output_ref,retryable,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (job_id, "distill", "xkb_l1_to_candidate", "queued", trace_id, candidate_id, 1, json.dumps({"source_trace_ids": [trace_id], "mode": "candidate_only"}, ensure_ascii=False), timestamp, timestamp),
-            )
-        return {"schema": SCHEMA, "turn_id": turn_id, "trace_id": trace_id, "status": status, "stored": True, "deduplicated": False, "retrieval": retrieval, "candidate_id": candidate_id, "distillation_job_id": job_id}
-
-    def run_l1_to_candidate(self, job_ids: list[str] | None = None, limit: int = 50, dry_run: bool = False) -> dict[str, Any]:
-        """Safely trigger the local rule-based distillation worker.
-
-        This is intentionally the only service control path for this worker:
-        it accepts existing service-owned jobs, records ``running`` before
-        execution, and never performs promotion. The worker is imported lazily
-        to avoid a module cycle (its CLI imports Store from this module).
-        """
-        worker_name = "xkb_l1_to_candidate"
-        stage = "distill"
-        with self.lock, self.connect() as db:
-            if job_ids:
-                placeholders = ",".join("?" for _ in job_ids)
-                rows = db.execute(f"SELECT job_id FROM jobs WHERE stage=? AND worker=? AND status IN ('queued','pending') AND job_id IN ({placeholders})", (stage, worker_name, *job_ids)).fetchall()
-            else:
-                rows = db.execute("SELECT job_id FROM jobs WHERE stage=? AND worker=? AND status IN ('queued','pending') ORDER BY created_at LIMIT ?", (stage, worker_name, max(1, min(limit, 200)))).fetchall()
-            selected = [row["job_id"] for row in rows]
-            if not dry_run:
-                timestamp = now()
-                for selected_id in selected:
-                    db.execute("UPDATE jobs SET status='running',started_at=COALESCE(started_at,?),updated_at=? WHERE job_id=? AND status IN ('queued','pending')", (timestamp, timestamp, selected_id))
-        if dry_run:
-            return {"schema": SCHEMA, "worker": worker_name, "stage": stage, "dry_run": True, "selected": selected, "results": []}
-        try:
-            import xkb_l1_to_candidate as worker
-        except ImportError as exc:
-            return {"schema": SCHEMA, "worker": worker_name, "stage": stage, "selected": selected, "results": [worker_error(self, job_id, exc) for job_id in selected]}
-        results = []
-        for selected_id in selected:
-            try:
-                results.append(worker.process_job(self, selected_id))
-            except Exception as exc:
-                results.append(worker.fail_job(self, selected_id, exc))
-        return {"schema": SCHEMA, "worker": worker_name, "stage": stage, "selected": selected, "processed": len(results), "results": results, "promotion_performed": False}
-
-    def query_candidates(self, status: str = "", limit: int = 50) -> dict[str, Any]:
-        clauses, values = [], []
-        if status:
-            clauses.append("status=?"); values.append(status)
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        limit = max(1, min(limit, 200))
-        with self.lock, self.connect() as db:
-            rows = db.execute(f"SELECT * FROM candidates{where} ORDER BY updated_at DESC LIMIT ?", (*values, limit)).fetchall()
-        candidates = [{
-            "candidate_id": row["candidate_id"],
-            "candidate_key": row["candidate_key"],
-            "candidate_value": row["candidate_value"],
-            "source_trace_ids": json.loads(row["source_trace_ids_json"] or "[]"),
-            "episode_ids": json.loads(row["episode_ids_json"] or "[]"),
-            "confidence": row["confidence"],
-            "status": row["status"],
-            "reject_reasons": json.loads(row["reject_reasons_json"] or "[]"),
-            "analysis": json.loads(row["analysis_json"] or "{}"),
-            "expires_at": row["expires_at"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        } for row in rows]
-        return {"schema": SCHEMA, "read_only": True, "count": len(candidates), "candidates": candidates}
+            # Turns are still captured in full — they are recalled semantically
+            # and are the shared conversation memory across machines. What is
+            # gone is the pretence that a transcript was a candidate fact.
+        return {"schema": SCHEMA, "turn_id": turn_id, "trace_id": trace_id, "status": status, "stored": True, "deduplicated": False, "retrieval": retrieval}
 
     def recall(self, query: str, limit: int = 5, namespace: str = "private") -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
@@ -1444,29 +1292,6 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/v1/ingest/status":
                 self.authorize(principal, READ_SCOPE)
                 self.send_json(200, self.store.catalog.pipeline_status()); return
-            if parsed.path == "/v1/pipeline/jobs/run":
-                self.authorize(principal, WRITE_SCOPE)
-                requested_worker = text(body.get("worker")) or "xkb_l1_to_candidate"
-                if requested_worker != "xkb_l1_to_candidate":
-                    raise ValueError("only xkb_l1_to_candidate is triggerable")
-                raw_ids = body.get("job_ids") or body.get("jobIds")
-                if raw_ids is not None and (not isinstance(raw_ids, list) or not all(isinstance(item, str) and item for item in raw_ids)):
-                    raise ValueError("job_ids must be a list of non-empty strings")
-                self.send_json(200, self.store.run_l1_to_candidate(raw_ids, bounded_int(body.get("limit"), name="limit", default=50, minimum=1, maximum=200), bool(body.get("dry_run")))); return
-            if parsed.path == "/v1/pipeline/jobs/recover-stale":
-                self.authorize(principal, WRITE_SCOPE)
-                self.send_json(200, self.store.recover_stale_jobs(
-                    body.get("older_than_seconds", 3600),
-                    bool(body.get("dry_run", True)),
-                    bool(body.get("confirm", False)),
-                )); return
-            if parsed.path == "/v1/candidates/query":
-                self.authorize(principal, READ_SCOPE)
-                params = parse_qs(parsed.query)
-                self.send_json(200, self.store.query_candidates(
-                    status=(params.get("status") or [""])[0],
-                    limit=int((params.get("limit") or ["50"])[0]),
-                )); return
             if parsed.path == "/v1/pipeline/jobs/events":
                 self.authorize(principal, WRITE_SCOPE)
                 self.send_json(200, self.store.record_job_event(body)); return

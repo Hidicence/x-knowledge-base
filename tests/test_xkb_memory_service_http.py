@@ -103,57 +103,6 @@ class XKBMemoryServiceHTTPTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("namespace", body["error"])
 
-    def test_run_endpoint_dry_run_then_lifecycle_without_promotion(self) -> None:
-        job_id = self.completed["distillation_job_id"]
-        status, dry = self.post("/v1/pipeline/jobs/run", {"job_ids": [job_id], "dry_run": True})
-        self.assertEqual(status, 200)
-        self.assertTrue(dry["dry_run"])
-        self.assertEqual(dry["selected"], [job_id])
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "queued")
-
-        status, result = self.post("/v1/pipeline/jobs/run", {"job_ids": [job_id]})
-        self.assertEqual(status, 200)
-        self.assertFalse(result["promotion_performed"])
-        self.assertEqual(result["results"][0]["status"], "succeeded")
-        self.assertEqual(result["results"][0]["decision"], "HOLD")
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "succeeded")
-        candidate = self.store.query_candidates()["candidates"][0]
-        self.assertEqual(candidate["status"], "pending")
-        self.assertFalse(candidate["analysis"]["promotion_performed"])
-
-    def test_run_endpoint_enforces_worker_allowlist_and_job_selection(self) -> None:
-        status, body = self.post("/v1/pipeline/jobs/run", {"worker": "build_vector_index.py"})
-        self.assertEqual(status, 400)
-        self.assertIn("only xkb_l1_to_candidate", body["error"])
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "queued")
-
-        status, body = self.post("/v1/pipeline/jobs/run", {"job_ids": ["not-a-real-job"]})
-        self.assertEqual(status, 200)
-        self.assertEqual(body["selected"], [])
-        self.assertEqual(body["processed"], 0)
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "queued")
-
-    def test_run_endpoint_rejects_malformed_job_ids(self) -> None:
-        status, body = self.post("/v1/pipeline/jobs/run", {"job_ids": "not-a-list"})
-        self.assertEqual(status, 400)
-        self.assertIn("job_ids must be a list", body["error"])
-
-    def test_stale_recovery_endpoint_requires_confirmation_for_mutation(self) -> None:
-        job_id = self.completed["distillation_job_id"]
-        with self.store.connect() as db:
-            db.execute("UPDATE jobs SET status='running',updated_at=? WHERE job_id=?", ("2026-01-01T00:00:00+00:00", job_id))
-        status, preview = self.post("/v1/pipeline/jobs/recover-stale", {"older_than_seconds": 3600})
-        self.assertEqual(status, 200)
-        self.assertTrue(preview["dry_run"])
-        self.assertEqual(preview["selected"], [job_id])
-        status, error = self.post("/v1/pipeline/jobs/recover-stale", {"older_than_seconds": 3600, "dry_run": False})
-        self.assertEqual(status, 400)
-        self.assertIn("confirm=true", error["error"])
-        status, recovered = self.post("/v1/pipeline/jobs/recover-stale", {"older_than_seconds": 3600, "dry_run": False, "confirm": True})
-        self.assertEqual(status, 200)
-        self.assertEqual(recovered["recovered"], [job_id])
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "queued")
-
     def test_http_recall_exposes_context_governance_packet(self) -> None:
         status, body = self.post("/v1/context", {"query": "http query", "namespace": "private"})
         self.assertEqual(status, 200)

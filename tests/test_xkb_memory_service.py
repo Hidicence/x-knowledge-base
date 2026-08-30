@@ -95,17 +95,11 @@ class XKBMemoryServiceTests(unittest.TestCase):
         )
         self.assertTrue(completed["stored"])
         self.assertEqual(completed["retrieval"]["query"], "shared memory query")
-        self.assertTrue(completed["candidate_id"].startswith("candidate:"))
         with self.store.connect() as db:
             persisted = db.execute("SELECT status, retrieval_json, trace_id FROM turns WHERE turn_id=?", ("turn-1",)).fetchone()
         self.assertEqual(persisted["status"], "succeeded")
         self.assertEqual(persisted["trace_id"], completed["trace_id"])
         self.assertEqual(__import__("json").loads(persisted["retrieval_json"])["query"], "shared memory query")
-        self.assertTrue(completed["distillation_job_id"].startswith("distill:"))
-        self.assertTrue(self.store.list_jobs(stage="distill", status="queued")["count"] == 1)
-        candidates = self.store.query_candidates(status="pending")
-        self.assertEqual(candidates["count"], 1)
-        self.assertEqual(candidates["candidates"][0]["source_trace_ids"], [completed["trace_id"]])
         self.assertTrue(duplicate["deduplicated"])
         recall = self.store.recall("shared memory")
         self.assertEqual(recall["count"], 1)
@@ -292,19 +286,6 @@ class XKBMemoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown session_id"):
             self.store.start_turn({"session_id": "missing", "turn_id": "missing-turn", "query": "q"})
 
-    def test_service_run_l1_worker_updates_job_and_keeps_candidate_pending(self) -> None:
-        session = self.store.open_session({"source": "fixture", "session_key": "worker-session"})
-        self.store.start_turn({"session_id": session["session_id"], "turn_id": "worker-turn", "query": "worker query"})
-        completed = self.store.complete_turn("worker-turn", {"query": "worker query", "answer": "user preference evidence", "content": {"answer": "user preference evidence"}})
-        dry = self.store.run_l1_to_candidate([completed["distillation_job_id"]], dry_run=True)
-        self.assertEqual(dry["selected"], [completed["distillation_job_id"]])
-        self.assertTrue(dry["dry_run"])
-        result = self.store.run_l1_to_candidate([completed["distillation_job_id"]])
-        self.assertFalse(result["promotion_performed"])
-        self.assertEqual(result["results"][0]["status"], "succeeded")
-        self.assertEqual(self.store.query_candidates()["candidates"][0]["status"], "pending")
-        self.assertEqual(self.store.list_jobs(stage="distill")["jobs"][0]["status"], "succeeded")
-
     def test_pipeline_snapshot_is_read_only_and_lists_known_stages(self) -> None:
         snapshot = self.store.catalog.pipeline_snapshot(days=7)
         self.assertTrue(snapshot["read_only"])
@@ -340,35 +321,6 @@ class XKBMemoryServiceTests(unittest.TestCase):
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["jobs"][0]["output_ref"], "vector-index:batch-1")
         self.assertFalse(self.store.list_jobs(stage="distill")["count"])
-
-    def test_stale_recovery_is_dry_run_by_default_and_scoped_audited_and_requeueable(self) -> None:
-        timestamp = "2026-01-01T00:00:00+00:00"
-        with self.store.connect() as db:
-            db.execute(
-                "INSERT INTO jobs(job_id,stage,worker,status,started_at,retryable,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                ("stale-1", "distill", "xkb_l1_to_candidate", "running", timestamp, 0, "{}", timestamp, timestamp),
-            )
-            db.execute(
-                "INSERT INTO jobs(job_id,stage,worker,status,started_at,retryable,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                ("other-1", "index", "build_vector_index.py", "running", timestamp, 0, "{}", timestamp, timestamp),
-            )
-        preview = self.store.recover_stale_jobs(3600)
-        self.assertTrue(preview["dry_run"])
-        self.assertEqual(preview["selected"], ["stale-1"])
-        self.assertEqual(self.store.list_jobs(status="running")["count"], 2)
-        with self.assertRaises(ValueError):
-            self.store.recover_stale_jobs(3600, dry_run=False)
-        recovered = self.store.recover_stale_jobs(3600, dry_run=False, confirm=True)
-        self.assertEqual(recovered["recovered"], ["stale-1"])
-        job = self.store.list_jobs(stage="distill")["jobs"][0]
-        self.assertEqual(job["status"], "queued")
-        self.assertEqual(job["metadata"]["stale_recovery"]["from_status"], "running")
-        self.assertEqual(self.store.list_jobs(stage="index")["jobs"][0]["status"], "running")
-
-
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RelevanceAndIntentTests(unittest.TestCase):
     """Injecting ten results into every turn is what makes an unrelated
@@ -516,54 +468,3 @@ class QueryEmbeddingCacheTests(unittest.TestCase):
         cr._QUERY_VECTORS.clear()
 
 
-class CandidateAggregationTests(unittest.TestCase):
-    """Repetition across sessions has to accumulate onto one candidate.
-
-    Keying candidates by trace id gave every turn its own candidate holding
-    exactly one episode, while promotion requires two distinct ones — so
-    nothing could ever become eligible and the conversation-to-knowledge path
-    was unreachable by construction.
-    """
-
-    STATEMENT = "recall must report which retrieval actually ran"
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.store = Store(Path(self.tmp.name) / "memory.sqlite")
-
-    def _say(self, session_key: str, turn_id: str, answer: str = STATEMENT) -> dict:
-        session = self.store.open_session({"source": "fixture", "session_key": session_key})
-        self.store.start_turn({"session_id": session["session_id"], "turn_id": turn_id, "query": "q"})
-        return self.store.complete_turn(turn_id, {"query": "q", "answer": answer})
-
-    def _candidate(self) -> dict:
-        return self.store.query_candidates()["candidates"][0]
-
-    def test_same_statement_in_two_sessions_becomes_one_candidate(self) -> None:
-        self._say("s1", "t1")
-        self._say("s2", "t2")
-        candidates = self.store.query_candidates()["candidates"]
-        self.assertEqual(len(candidates), 1)
-        self.assertEqual(len(set(candidates[0]["episode_ids"])), 2)
-        self.assertEqual(len(set(candidates[0]["source_trace_ids"])), 2)
-
-    def test_wording_drift_still_groups(self) -> None:
-        self._say("s1", "t1", self.STATEMENT)
-        self._say("s2", "t2", f"  {self.STATEMENT.upper()}  ")
-        self.assertEqual(self.store.query_candidates()["count"], 1)
-
-    def test_different_statements_stay_separate(self) -> None:
-        self._say("s1", "t1", "one thing")
-        self._say("s2", "t2", "an entirely different thing")
-        self.assertEqual(self.store.query_candidates()["count"], 2)
-
-    def test_a_rejected_candidate_is_not_revived_by_repetition(self) -> None:
-        self._say("s1", "t1")
-        with self.store.connect() as db:
-            db.execute("UPDATE candidates SET status='rejected'")
-            db.commit()
-        self._say("s2", "t2")
-        candidate = self._candidate()
-        self.assertEqual(candidate["status"], "rejected")
-        self.assertEqual(len(set(candidate["episode_ids"])), 1)
