@@ -377,6 +377,40 @@ python3 scripts/migrate_schema.py             # 執行
 - Data quality first — 先保品質再追覆蓋率
 - Knowledge cards 要服務回用，不只是保存
 
+## What the schedules run
+
+Schedules live on the host, not in this repository, so nothing here would
+otherwise say which scripts they call. These are the entry points; everything
+else runs because one of them, or one of the tools below, calls it.
+
+| When (Asia/Taipei) | Entry point | What it is for |
+| --- | --- | --- |
+| 02:00 | `run_bookmark_worker.py` | Queue newly fetched bookmarks and turn them into cards. |
+| 03:00 | `run_github_sync.sh` | Sync starred and forked repositories. |
+| 03:15 | `xkb_review.py --governance` | Absorb candidates that clear the gates into topic pages, bounded and reversible. |
+| 04:00 | `monitor_youtube_playlist.py` | Fetch new transcripts and prepare them for card generation. |
+| 09:00 | `health_check_notify.py` | The one message that says whether anything is wrong. Runs from plain cron, without a model, so it still speaks when everything else is down. |
+| 13:30 | `run_ingestion_batch.sh` | Sync enriched cards into the search index, embed what changed, and verify the index was actually written. |
+| 15:30, 21:30 | `distill_memory_to_wiki.py` | Extract durable claims from the day's notes into candidates. |
+| twice daily | `recommend_from_profile.sh` | Surface reading recommendations from the topic profile. |
+
+## Tools you run by hand
+
+Everything else in `scripts/` is either on a schedule or called by something
+that is. These six are neither, and that is correct — they answer a question
+or set something up, on demand. They are listed because an unlisted script
+with no caller is indistinguishable from one that was forgotten.
+
+| Tool | When you reach for it |
+| --- | --- |
+| `test_recall_regression.py` | After anything that touches recall. 15 cases: six that must find something, nine that must stay quiet. Isolates its own session state, so the result does not depend on what else ran today. |
+| `smoke_test_pipeline.sh` | After changing the wiki pipeline — checks each stage still produces what the next one expects. |
+| `xkb_synthesize_topic.py` | When a topic page has accumulated more bullets than anyone will read. Writes a review draft; `--apply` merges it back. The daily summary reports how many pages are past that point. |
+| `topic_guide_generator.py` | To produce a domain guide from the cards — terminology, reading order, where the consensus is and where it is missing. |
+| `setup_xbrain.sh` | Once per machine, to install the hybrid search runtime. |
+| `full_sync_v2.py` | To rebuild a workspace from its sources. |
+| `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
+
 ## Maintenance Verification
 
 Use this sequence for backup, health checks, and index maintenance:
