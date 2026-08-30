@@ -68,17 +68,95 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
         raise RuntimeError(f"telegram rejected: {body}")
 
 
+# Two things arrive as "a red light" and they are not the same thing. One is
+# the system being broken, which is nobody's decision. The other is work
+# waiting on a judgement only Pan can make. Reporting them in one list, in the
+# vocabulary of the check that produced them, is why the daily message stopped
+# being read: it never answered "is this mine to deal with?"
+DECISION_SECTIONS = {"staging_backlog", "governance_actionable"}
+
+# Section names are internal identifiers. This is the only place they are
+# turned into something worth reading.
+FAULT_LABELS = {
+    "wiki_canonical": "wiki 檔案結構",
+    "recall_wiki_source": "召回讀不到 wiki",
+    "recall_live": "召回本身跑不動",
+    "recall_telemetry": "召回沒有留下紀錄",
+    "semantic_index": "語意索引",
+    "topic_map": "分類對應表",
+    "index_freshness": "索引沒有跟上新內容",
+    "provenance_markers": "知識來源標記不一致",
+    "conversation_capture": "對話沒有被記錄下來",
+}
+
+
+def _decision_lines(sections: list[dict]) -> list[str]:
+    """Say what is waiting and what deciding it means, not the raw counts."""
+    counts: dict[str, int] = {}
+    for section in sections:
+        if section.get("name") == "governance_actionable":
+            counts = section.get("actionable_counts") or {}
+    lines = []
+    if counts.get("proposal"):
+        lines.append(f"  {counts['proposal']} 條想開新的 wiki 主題——要不要開，只有你能決定")
+    waiting = counts.get("pending", 0) - counts.get("proposal", 0) - counts.get("quarantine", 0)
+    if waiting > 0:
+        lines.append(f"  {waiting} 條等著進 wiki，但對應的主題頁還不存在")
+    if counts.get("overdue"):
+        lines.append(f"  {counts['overdue']} 條因為太舊被隔離，沒有刪除")
+    return lines
+
+
 def build_message(sections: list[dict], failures: list[tuple[str, str]]) -> str:
     host = socket.gethostname()
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if not failures:
-        total = sum(len(s["checks"]) for s in sections)
-        return f"XKB 健檢全綠（{total} 項）\n{host} · {stamp}"
+    faults = [(name, msg) for name, msg in failures if name not in DECISION_SECTIONS]
+    decisions = _decision_lines(sections)
 
-    lines = [f"XKB 健檢有 {len(failures)} 項紅燈", f"{host} · {stamp}", ""]
-    for section, msg in failures:
-        lines.append(f"[{section}] {msg}")
+    if faults:
+        head = f"XKB 有 {len(faults)} 個地方壞了"
+    elif decisions:
+        head = "XKB 運作正常，有事情等你決定"
+    else:
+        head = "XKB 一切正常"
+
+    lines = [head, f"{host} · {stamp}"]
+
+    if faults:
+        lines += ["", "● 壞掉了"]
+        for name, msg in faults:
+            lines.append(f"  {FAULT_LABELS.get(name, name)}")
+            lines.append(f"    {msg}")
+
+    if decisions:
+        lines += ["", "● 等你決定"] + decisions
+
+    inventory = _inventory_lines()
+    if inventory:
+        lines += [""] + inventory
     return "\n".join(lines)
+
+
+def _inventory_lines() -> list[str]:
+    """A one-glance sense of size, so the message says how things are going.
+
+    Best effort: a failure to count must never stop an alert being sent.
+    """
+    lines = []
+    try:
+        cards = len(list(xkb_paths.CARDS_DIR.glob("*.md")))
+        lines.append(f"知識庫：{cards:,} 張卡片")
+    except OSError:
+        pass
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xkb_pending_work import uncarded_bookmarks
+        pending = len(uncarded_bookmarks(xkb_paths.BOOKMARKS_DIR, xkb_paths.CARDS_DIR))
+        if pending:
+            lines.append(f"待消化：{pending} 筆書籤還沒變成知識")
+    except Exception:
+        pass
+    return lines
 
 
 def _failure_key(section: str, message: str) -> str:
