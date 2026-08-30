@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from functools import lru_cache
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -30,19 +31,40 @@ STOPWORDS = {
 # ── Suppress 規則 ─────────────────────────────────────────────────────────────
 SUPPRESS_EXACT = {"ok", "好", "收到", "謝謝", "thanks", "好的", "嗯", "哦", "喔"}
 
-SUPPRESS_PATTERNS = [
-    r"^哈+$", r"^哈哈", r"早安", r"晚安", r"午安",
-    # Compound acknowledgements are still acknowledgements; the short-message
-    # length check alone misses them once CJK is weighted as three characters.
-    r"^(?:ok|okay|好|好的)\s*(?:收到|了解|知道了|got it)?[。！!，,。 ]*$",
+# What is not worth searching for, and what kind of not-worth-it it is. The
+# kind is reported back to the caller and recorded, so "greeting" stays more
+# useful than a flat "noise" — grouping is for keeping the list in one place,
+# not for throwing away what it knows.
+NOISE_PATTERNS: dict[str, list[str]] = {
+    "greeting": [
+        r"^哈+$", r"^哈哈", r"早安", r"晚安", r"午安",
+        r"^你好$", r"^hi$", r"^hello$", r"^嗨$",
+    ],
+    "acknowledgement": [
+        # Compound acknowledgements are still acknowledgements; the short
+        # message length check alone misses them once CJK is weighted as
+        # three characters.
+        r"^(?:ok|okay|好|好的)\s*(?:收到|了解|知道了|got it)?[。！!，,。 ]*$",
+    ],
+    "off_topic": [
+        # A customer-specific pricing question, not a request to recall XKB
+        # knowledge. Kept narrow rather than weakening relevance globally.
+        r"^上次那個客戶的報價怎麼算的[？?。！!]*$",
+    ],
+}
+
+# These describe a task rather than a question — until the sentence also names
+# something this knowledge base holds. "計算 3+5" is a calculator; "計算碳排放
+# 要用什麼係數" is exactly the question XKB exists to answer, and a bare ^計算
+# was silencing it. A task verb plus a domain term is a domain question.
+TASK_PATTERNS = [
     r"^幫我翻譯", r"^翻譯[一下這個]",
     r"^幫我算", r"^計算",
     r"^寫一?個\s*(function|函?數|程式|腳本|class)",
-    r"^你好$", r"^hi$", r"^hello$",
-    # This is a customer-specific pricing question, not a request to recall
-    # XKB knowledge. Keep it narrow rather than weakening relevance globally.
-    r"^上次那個客戶的報價怎麼算的[？?。！!]*$",
 ]
+
+# Flat view, for callers that only ask "is this worth searching for".
+SUPPRESS_PATTERNS = [p for group in NOISE_PATTERNS.values() for p in group]
 
 # ── Hard Trigger 規則（continuity recall）────────────────────────────────────
 HARD_TRIGGER_PATTERNS = [
@@ -110,9 +132,48 @@ GENERIC_DOMAINS = [
     "agent", "llm", "workflow", "automation",
 ]
 
-def high_freq_domains() -> list[str]:
-    """只有「短訊息要不要略過」會用到。長訊息一律走 light scan，不靠清單判斷。"""
-    return GENERIC_DOMAINS
+@lru_cache(maxsize=1)
+def high_freq_domains() -> tuple[str, ...]:
+    """What this knowledge base is actually about, read from the wiki.
+
+    Used when deciding whether a short message is worth searching for. It was
+    a hand-written list of ten technical terms — openclaw, xkb, agent, llm —
+    while the wiki had grown to cover video workflows, GPT Image 2, Seedance,
+    SEO and medical imaging. A short question about any of those counted as
+    having no domain and was suppressed: the list had drifted away from the
+    knowledge it was supposed to describe, and nothing said so.
+
+    Topic filenames and their tags are that description, maintained by the
+    act of writing the wiki. Adding a topic about 碳盤查 makes questions about
+    碳盤查 recallable, with no list to remember to update.
+
+    Erring wide is deliberate. A term here makes suppression less likely, and
+    recalling something unnecessary costs a little context, while suppressing
+    a real question costs the answer.
+
+    Cached for the life of the process: a CLI run reads it once, and a
+    long-lived service picks up new topics when it restarts.
+    """
+    domains = set(GENERIC_DOMAINS)
+    try:
+        import xkb_paths
+        topics = sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))
+    except Exception:
+        return tuple(sorted(domains))
+    for path in topics:
+        domains.update(part for part in path.stem.lower().split("-") if len(part) >= 3)
+        try:
+            head = path.read_text(encoding="utf-8", errors="ignore")[:800]
+        except OSError:
+            continue
+        match = re.search(r"^tags:\s*\[(.*?)\]", head, re.M | re.S)
+        if not match:
+            continue
+        for tag in match.group(1).split(","):
+            tag = tag.strip().strip("\"'").lower()
+            if len(tag) >= 3:
+                domains.add(tag)
+    return tuple(sorted(domains))
 
 
 @dataclass
@@ -143,17 +204,47 @@ def _information_length(text: str) -> int:
     return (len(text) - cjk) + cjk * 3
 
 
-def _check_suppress(text: str) -> bool:
+def is_noise(text: str) -> bool:
+    """Acknowledgements, greetings and non-questions — the list, without the
+    length rule.
+
+    Two callers need "is this worth searching for", and they disagree about
+    one rule, so the shared part lives here and the disagreement is explicit.
+    The router also suppresses any short message with no domain keyword; the
+    knowledge service deliberately does not, because that rule counts
+    characters and eight Chinese characters is a complete question.
+
+    Splitting it this way exists because the service had copied the patterns
+    instead. The copy then drifted — it never received the compound
+    acknowledgement pattern, so "ok 收到" returned ten knowledge records into
+    a conversation that asked nothing. This project has already consolidated
+    one duplicated noise list for the same reason; this is the second.
+    """
+    return bool(noise_kind(text))
+
+
+def noise_kind(text: str) -> str:
+    """Which kind of not-a-question this is, or "" if it may be one."""
     stripped = text.strip().lower()
     if len(stripped) <= 4 and stripped in SUPPRESS_EXACT:
+        return "acknowledgement"
+    for kind, patterns in NOISE_PATTERNS.items():
+        if any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
+            return kind
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in TASK_PATTERNS):
+        if not any(domain in stripped for domain in high_freq_domains()):
+            return "task"
+    return ""
+
+
+def _check_suppress(text: str) -> bool:
+    if is_noise(text):
         return True
+    stripped = text.strip().lower()
     if _information_length(stripped) <= 8:
         # Short messages — only suppress if no domain keywords
         has_domain = any(d in stripped for d in high_freq_domains())
         if not has_domain:
-            return True
-    for p in SUPPRESS_PATTERNS:
-        if re.search(p, text, re.IGNORECASE):
             return True
     return False
 

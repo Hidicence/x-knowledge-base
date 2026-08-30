@@ -37,15 +37,11 @@ except ImportError:  # pragma: no cover - semantic backend is optional
 
 import xkb_relevance
 
-try:
-    from conversation_state_parser import SUPPRESS_EXACT as ACK_ONLY
-except ImportError:  # pragma: no cover - intent gating is best-effort
-    ACK_ONLY = {"ok", "好", "收到", "謝謝", "thanks", "好的", "嗯", "哦", "喔"}
-
-# Greetings only. Deliberately narrower than the parser's suppress list, which
-# also drops things like "^計算" — that would silence real questions.
-GREETING_PATTERNS = (r"^哈+$", r"^哈哈", r"^早安", r"^晚安", r"^午安",
-                     r"^你好$", r"^hi$", r"^hello$", r"^嗨$")
+# The list of what is not worth searching for lives with the parser, so the
+# router and this service cannot disagree about it. They used to: the copy
+# here was a subset that never gained the compound acknowledgement pattern,
+# and "ok 收到" retrieved ten records into a conversation that asked nothing.
+from conversation_state_parser import noise_kind as _noise_kind
 
 SCHEMA = "xkb-knowledge-service.v1"
 TRACE_SCHEMA = "xkb-l1-trace.v1"
@@ -1234,14 +1230,13 @@ class Store:
         "碳盤查的計算方式" is exactly eight, so trusting that rule would silence
         precisely the domain questions this knowledge base exists to answer.
         Relevance is decided after retrieval, by similarity, not by length.
+
+        The list itself comes from the parser rather than being copied here.
+        The copy that used to live in this file had drifted: it never gained
+        the compound acknowledgement pattern, so "ok 收到" retrieved ten
+        records into a conversation that had asked nothing.
         """
-        stripped = query.strip().lower()
-        if len(stripped) <= 4 and stripped in ACK_ONLY:
-            return "acknowledgement"
-        for pattern in GREETING_PATTERNS:
-            if re.search(pattern, query, re.IGNORECASE):
-                return "greeting"
-        return ""
+        return _noise_kind(query)
 
     def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private") -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
