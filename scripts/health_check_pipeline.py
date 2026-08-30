@@ -426,13 +426,21 @@ def check_provenance_markers() -> dict:
         return result
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from xkb_provenance import MARKER
+        from xkb_provenance import MARKER, is_self_derived
     except Exception as exc:
         result["checks"].append({"ok": False, "msg": f"provenance module unavailable: {exc}"})
         return result
 
-    governance_line = re.compile(r"<!-- xkb-candidate:[0-9a-f]+ -->")
-    unmarked = 0
+    # Three tools write knowledge into these pages and each annotates a line
+    # its own way — one names a memory file, one a URL, one a staging entry.
+    # That variety is fine; the annotations carry different facts. What must
+    # hold for every one of them is that a reader can tell where the line came
+    # from, because recall down-weights our own conclusions and cannot do that
+    # for a line it fails to classify. A fourth writer inventing a fourth
+    # format shows up here rather than in the ranking six months later.
+    annotated = re.compile(r"^\s*-\s.*\*\(")
+    external = re.compile(r"https?://")
+    unclassified = 0
     files = set()
     for path in sorted(topics_dir.glob("*.md")):
         try:
@@ -440,16 +448,23 @@ def check_provenance_markers() -> dict:
         except OSError:
             continue
         for line in content.splitlines():
-            if governance_line.search(line) and MARKER not in line:
-                unmarked += 1
-                files.add(path.name)
+            if not annotated.match(line):
+                continue
+            # Asked with the reader's own function, not a copy of its rule:
+            # a check that decides for itself what counts is checking
+            # something other than what happens at recall.
+            if is_self_derived(line) or external.search(line):
+                continue
+            unclassified += 1
+            files.add(path.name)
 
     result["checks"].append({
-        "ok": unmarked == 0,
-        "msg": (f"self-derived markers present on every governance line"
-                if unmarked == 0 else
-                f"{unmarked} governance lines missing the '{MARKER}' marker in "
-                f"{len(files)} page(s) — 跑 scripts/backfill_self_derived_marker.py --apply"),
+        "ok": unclassified == 0,
+        "msg": ("every knowledge line names an external source or is marked self-derived"
+                if unclassified == 0 else
+                f"{unclassified} knowledge lines in {len(files)} page(s) name neither a "
+                f"source URL nor '{MARKER}', so recall cannot weigh them — "
+                f"跑 scripts/backfill_self_derived_marker.py --apply"),
     })
     return result
 

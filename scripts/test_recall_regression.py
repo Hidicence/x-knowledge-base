@@ -26,9 +26,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import subprocess
+import tempfile
 import sys
 import time
 from pathlib import Path
@@ -76,11 +78,21 @@ def load_cases() -> tuple[list[str], list[str]]:
     )
 
 
+# The router will not show the same knowledge twice in one conversation, and
+# it remembers for four hours. Sharing that memory with whatever else has run
+# recently makes this suite answer a different question every time it is run:
+# four "should recall" cases failed here purely because the same queries had
+# been asked while testing something else. A suite whose result depends on the
+# last four hours is not measuring the code.
+_SESSION_STATE = Path(tempfile.gettempdir()) / f"xkb-regression-session-{os.getpid()}.json"
+
+
 def run_one(message: str) -> tuple[dict, float]:
     started = time.monotonic()
     proc = subprocess.run(
         [sys.executable, str(ROUTER), "--json", message],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        env={**os.environ, "XKB_SESSION_FILE": str(_SESSION_STATE)},
     )
     elapsed_ms = (time.monotonic() - started) * 1000
     if proc.returncode != 0:
@@ -89,6 +101,8 @@ def run_one(message: str) -> tuple[dict, float]:
 
 
 def main() -> int:
+    _SESSION_STATE.unlink(missing_ok=True)
+    atexit.register(lambda: _SESSION_STATE.unlink(missing_ok=True))
     parser = argparse.ArgumentParser(description="Recall layer regression test")
     parser.add_argument("--verbose", action="store_true", help="show what each query actually returned")
     parser.add_argument("--strict", action="store_true",

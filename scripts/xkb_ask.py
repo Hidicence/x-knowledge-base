@@ -36,6 +36,7 @@ from _llm import call as _llm_backend
 # ── gbrain bridge (optional) ──────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from runtime_config import runtime_env
 
@@ -83,14 +84,14 @@ def llm_call(prompt: str, api_key: str = "", max_tokens: int = 1000,
 # ── Tokenization ──────────────────────────────────────────────────────────────
 
 def tokenize(text: str) -> list[str]:
-    ascii_tokens = re.findall(r"[A-Za-z0-9_\-]{2,}", text.lower())
-    cjk_runs = re.findall(r"[\u4e00-\u9fff]{2,}", text.lower())
-    cjk_bigrams = []
-    for run in cjk_runs:
-        for i in range(len(run) - 1):
-            cjk_bigrams.append(run[i:i+2])
-    raw = ascii_tokens + cjk_bigrams
-    return [t for t in raw if t not in STOPWORDS]
+    """Shared with every other recall path — see xkb_text.
+
+    This used to be a private copy that only produced two-character CJK
+    n-grams, so it matched less precisely than the rest of the system and was
+    free to drift from it. The shared one also emits three-character n-grams
+    and keeps short runs whole.
+    """
+    return xkb_text.tokenize(text, STOPWORDS)
 
 
 # ── Wiki topic search ─────────────────────────────────────────────────────────
