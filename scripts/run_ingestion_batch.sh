@@ -104,31 +104,7 @@ fi
 # producing cards shows up in the delivered output instead of being noticed
 # weeks later.
 echo "> Pending work:" | tee -a "$LOG_FILE"
-python3 - <<'PY' 2>&1 | tee -a "$LOG_FILE" || echo "  (pending-work report unavailable)" | tee -a "$LOG_FILE"
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, "scripts")
-import xkb_paths
-
-carded = {p.stem for p in xkb_paths.CARDS_DIR.glob("*.md")}
-sources = {p.stem for p in xkb_paths.BOOKMARKS_DIR.rglob("*.md")}
-print(f"  bookmarks without a card: {len(sources - carded)}")
-
-raw_dir = xkb_paths.XKB_DATA_DIR / "youtube-raw"
-pending = []
-if raw_dir.exists():
-    for path in sorted(raw_dir.glob("*.json")):
-        try:
-            status = json.loads(path.read_text(encoding="utf-8")).get("status")
-        except (OSError, ValueError):
-            status = "unreadable"
-        if status != "completed":
-            pending.append(f"{path.name} ({status})")
-print(f"  youtube transcripts awaiting a card: {len(pending)}")
-for item in pending[:5]:
-    print(f"    {item}")
-PY
+python3 scripts/xkb_pending_work.py 2>&1 | tee -a "$LOG_FILE" \
+  || echo "  (pending-work report unavailable)" | tee -a "$LOG_FILE"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch done" | tee -a "$LOG_FILE"
