@@ -324,6 +324,38 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
     return "done", ""
 
 
+def _sync_queue() -> bool:
+    """Put newly fetched bookmarks on the queue before reading it.
+
+    Fetching writes a bookmark into the inbox; a separate step puts it on the
+    queue this worker reads. Those were two lines of one pipeline until that
+    pipeline was retired on 2026-08-26 and its stages were split across
+    scheduler jobs — the job that runs this worker did not inherit the queue
+    step. The worker then ran on time every night, found nothing to do,
+    reported success, and 33 bookmarks sat in the inbox accumulating at about
+    eight a day while every check stayed green.
+
+    Doing it here removes the ordering dependency instead of documenting it,
+    so no future caller can leave the step out. Skipped under --dry-run,
+    which must not write.
+    """
+    script = Path(__file__).with_name("sync_tiege_queue.py")
+    if not script.exists():
+        return False
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(WORKSPACE), capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        error = (proc.stderr or proc.stdout or "").strip()[-300:]
+        print(f"⚠️  queue sync failed: {error}", file=sys.stderr, flush=True)
+        return False
+    output = (proc.stdout or "").strip()
+    if output:
+        print(output, flush=True)
+    return True
+
+
 def _sync_enriched_index() -> bool:
     """Make cards immediately searchable after a worker batch completes."""
     script = Path(__file__).with_name("sync_enriched_index.py")
@@ -357,6 +389,9 @@ def main() -> int:
 
     api_key = runtime_env().get("LLM_API_KEY", "")
 
+    if not args.dry_run:
+        _sync_queue()
+
     data = _load_queue()
     items = data["items"]
 
@@ -367,7 +402,7 @@ def main() -> int:
 
     if not todo:
         print("✅ No todo items found")
-        return
+        return 0
 
     total_todo = len([i for i in items if i["status"] == "todo"])
     print(f"📋 Processing {len(todo)}/{total_todo} todo items  [worker: {args.worker}]")
@@ -388,7 +423,7 @@ def main() -> int:
             else:
                 print("missing bookmark file")
         print("\n✅ dry-run complete; queue unchanged")
-        return
+        return 0
 
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):
@@ -442,4 +477,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
