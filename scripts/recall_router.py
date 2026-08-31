@@ -40,6 +40,23 @@ from concurrent.futures import ThreadPoolExecutor
 
 # 卡片層的上限。原本由 subprocess 的 timeout=20 提供，改成同行程後要自己帶。
 ASSOCIATIVE_TIMEOUT_S = 20
+
+# 關鍵字分數的實際範圍：下限 6（min_score），實測上界約 20。換算成 0–1 時
+# 用固定的上界而不是這一批的最大值——用批內最大值的話，一批爛結果裡最好的
+# 那一個會被算成滿分，這正是 MMR 正規化當初犯過的錯。
+KEYWORD_SCORE_FLOOR = 6.0
+KEYWORD_SCORE_CEILING = 20.0
+
+
+def _as_unit_scale(score: float) -> float:
+    """把關鍵字分數換算到 0–1，好跟餘弦相似度放在一起比。"""
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return 0.0
+    span = KEYWORD_SCORE_CEILING - KEYWORD_SCORE_FLOOR
+    return max(0.0, min(1.0, (value - KEYWORD_SCORE_FLOOR) / span))
+
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -189,20 +206,27 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
         # 而它原本一秒都沒擋到。
         bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
         try:
-            items = bounded.submit(
-                lambda: _associative_search(query, limit=limit)["results"]
+            found = bounded.submit(
+                lambda: _associative_search(query, limit=limit)
             ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
+            items, mode = found["results"], found["search_mode"]
         finally:
             # wait=False：放棄它，不要等。執行緒是 daemon，所以卡住的請求
             # 也不會讓整個行程留著不走。
             bounded.shutdown(wait=False)
+        # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；RRF 是 0–1。
+        # 下游的 rank() 用 0.88 當錨點，對 RRF 是對的，對關鍵字分數會讓一張
+        # 得 15 分的卡片算出 0.94，壓過所有語意結果（最好也才 0.55）。
+        # 分數要帶著自己的尺度，不要讓下游用猜的——這一類錯誤這個專案犯了四次。
+        keyword_scale = mode in ("keyword", "keyword_fallback")
         results = [
             {
                 "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
                 "source_file": item.get("relative_path") or item.get("path", ""),
                 "section": xkb_provenance.strip_markers(item.get("title", "")),
                 "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
-                "score": item.get("score", 0.0),
+                "score": _as_unit_scale(item.get("score", 0.0)) if keyword_scale
+                         else item.get("score", 0.0),
                 "url": item.get("source_url") or item.get("url", ""),
             }
             for item in items

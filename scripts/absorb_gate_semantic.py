@@ -151,7 +151,9 @@ def main() -> int:
     print(f"{'合計':34}{sum(s[1] for s in summary):>6}{sum(s[2] for s in summary):>6}"
           f"{sum(s[3] for s in summary):>6}{sum(s[4] for s in summary):>6}")
 
-    if args.review:
+    # --write-decisions 原本宣告了卻沒有人讀，寫入只看 --review，
+    # 於是「跑一下看看」就覆寫了決策檔。宣告了的旗標要真的管事。
+    if args.review and args.write_decisions:
         return 0
 
     path = sync.REVIEW_DECISIONS_PATH

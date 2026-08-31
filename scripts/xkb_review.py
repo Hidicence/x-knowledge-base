@@ -358,6 +358,10 @@ def _promoted_ids(path: Path) -> set[str]:
 
 def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dict[str, str]]:
     changes = []
+    # 一頁只快照一次。原本快照在迴圈裡、以檔名為鍵，所以同一頁放行 N 條時，
+    # 備份是「已經寫了 N-1 條」的版本——rollback 會把你還原到一個從來沒有
+    # 存在過的狀態，而且回報「完整還原」。會說謊的保險比沒有保險更糟。
+    snapshotted: set[str] = set()
     for candidate in candidates:
         if not _safe_promotable(candidate) or not _topic_available(candidate):
             continue
@@ -367,8 +371,10 @@ def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dic
         if marker in content:
             continue
         backup = snapshot_dir / "topics" / topic_path.name
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(topic_path, backup)
+        if topic_path.name not in snapshotted:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(topic_path, backup)
+            snapshotted.add(topic_path.name)
         # Promotion used to append a bare bullet at end of file, so every
         # promoted claim joined whatever the last section happened to be. The
         # indexer caps a section at 4,000 characters, and two of the target
@@ -677,7 +683,13 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     _classify_relations(candidates)
     # 導向要在計數之前，跟 governance_batch 同一個順序。少了這一步，一個
     # 會被導向 general 的候選在這裡仍算成提案——報 1，實際 0。
-    _route_new_topics(candidates, _proposed_counts(candidates))
+    #
+    # 但這個函式的契約是「不寫任何東西」，而每天早上的健檢會呼叫它。
+    # _route_new_topics 會在頁面不存在時建立 general.md，所以這裡要先擋掉：
+    # 計數不能改變它所計的東西。
+    _routing_probe = _ensure_general_topic if (TOPICS_DIR / f"{GENERAL_TOPIC}.md").exists() else None
+    if _routing_probe:
+        _route_new_topics(candidates, _proposed_counts(candidates))
     promoted, registered, _ = _registry_state(registry)
     result = {"pending": len(candidates), "high": 0, "medium": 0, "low": 0,
               "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0,
