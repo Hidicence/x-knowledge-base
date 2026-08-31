@@ -27,6 +27,8 @@ from typing import Any, Callable, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import xkb_failures
+
 # 真實餘弦相似度的門檻。低於它就不值得送到使用者面前。
 #
 # 0.55 是實測出來的分水嶺：知識庫真的有內容的主題落在 0.60 以上，
@@ -77,7 +79,10 @@ def similarities(query: str, keys: Iterable[str]) -> dict[str, float] | None:
         return None
     try:
         return card_similarities(query, keys)
-    except Exception:
+    except Exception as err:
+        # None 的意思是「算不出來」，呼叫端會因此不做過濾——
+        # 那跟「算出來大家都相關」是完全不同的狀況。
+        xkb_failures.note("relevance scoring", err)
         return None
 
 

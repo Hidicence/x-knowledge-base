@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import xkb_failures
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -84,7 +86,9 @@ def load_existing_queue() -> dict[str, dict]:
     try:
         data = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
         return {str(item.get("id")): item for item in data.get("items", []) if item.get("id")}
-    except Exception:
+    except Exception as err:
+        # 佇列讀不動會被當成空佇列，於是已經處理過的東西全部重排一次。
+        xkb_failures.note("tiege queue", err, detail=str(QUEUE_PATH))
         return {}
 
 

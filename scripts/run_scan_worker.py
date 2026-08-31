@@ -34,6 +34,8 @@ from category_classifier import classify_content
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+
+import xkb_failures
 from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -52,7 +54,9 @@ def _get_index_items() -> list[dict]:
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
         return data.get("items", []) if isinstance(data, dict) else []
-    except Exception:
+    except Exception as err:
+        # 索引壞掉會被當成「索引是空的」，於是整批重做或跳過去重。
+        xkb_failures.note("search index", err, detail=str(index_path))
         return []
 
 

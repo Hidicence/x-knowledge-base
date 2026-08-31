@@ -31,6 +31,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+
+import xkb_failures
 from runtime_config import runtime_env
 
 import xkb_provenance
@@ -142,7 +144,10 @@ def xbrain_query(
     except FileNotFoundError:
         # bun not in PATH
         return []
-    except Exception:
+    except Exception as err:
+        # 語意搜尋的後端掛掉，跟「這個主題我們沒有知識」是兩件事。
+        # 2026-05-04 的十二週靜默故障，就是因為這兩者長得一模一樣。
+        xkb_failures.note("semantic recall (xbrain)", err)
         return []
 
     if result.returncode != 0:

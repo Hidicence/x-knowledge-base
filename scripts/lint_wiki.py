@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import xkb_failures
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -79,7 +81,8 @@ def load_search_index() -> list[dict]:
         if isinstance(data, list):
             return data
         return data.get("items", [])
-    except Exception:
+    except Exception as err:
+        xkb_failures.note("search index", err, detail=str(SEARCH_INDEX_PATH))
         return []
 
 

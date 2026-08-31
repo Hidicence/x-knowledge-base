@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import xkb_failures
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -52,7 +54,8 @@ def load_review_decisions() -> dict:
         return {}
     try:
         return json.loads(REVIEW_DECISIONS_PATH.read_text()).get("decisions", {})
-    except Exception:
+    except Exception as err:
+        xkb_failures.note("review decisions", err, detail=str(REVIEW_DECISIONS_PATH))
         return {}
 
 

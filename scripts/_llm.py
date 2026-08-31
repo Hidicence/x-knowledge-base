@@ -23,6 +23,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+
+import xkb_failures
 from runtime_config import runtime_env
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -40,7 +42,12 @@ def _load_model() -> str:
     try:
         cfg = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
         return cfg.get("model", "sub2api-gpt/gpt-5.5")
-    except Exception:
+    except Exception as err:
+        # 設定檔存在卻讀不動，跟沒有設定檔是兩件事。退回的這個預設值目前在
+        # 代理上會回 server_error，所以一個打錯字的設定會表現成「每次呼叫模型
+        # 都失敗」，而不是「你的設定檔壞了」。
+        if _CONFIG_FILE.exists():
+            xkb_failures.note("LLM config", err, detail=str(_CONFIG_FILE))
         return "sub2api-gpt/gpt-5.5"
 
 

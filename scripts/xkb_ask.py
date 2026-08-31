@@ -38,6 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+
+import xkb_failures
 from runtime_config import runtime_env
 
 def _resolve_gbrain_dir(settings: dict[str, str]) -> Path:
@@ -220,7 +222,8 @@ def search_cards_gbrain(query: str, limit: int = MAX_CARDS,
 
     try:
         raw = gbrain_query(query, limit=limit, env_file=env_file)
-    except Exception:
+    except Exception as err:
+        xkb_failures.note("card search (gbrain)", err)
         return []
 
     results = []

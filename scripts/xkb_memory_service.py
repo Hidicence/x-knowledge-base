@@ -35,6 +35,7 @@ try:
 except ImportError:  # pragma: no cover - semantic backend is optional
     xbrain_query = None
 
+import xkb_failures
 import xkb_relevance
 
 # The list of what is not worth searching for lives with the parser, so the
@@ -379,7 +380,10 @@ class KnowledgeCatalog:
             return []
         try:
             hits = xbrain_query(query, limit=limit, no_expand=True, semantic=True)
-        except Exception:
+        except Exception as err:
+            # 每一台機器都是透過這個服務問 XKB。這裡回空的，對方收到的是
+            # 「我們沒有這方面的知識」——跟一切正常時的回答一模一樣。
+            xkb_failures.note("service semantic search", err)
             return []
         records = []
         filtered = 0
@@ -422,7 +426,8 @@ class KnowledgeCatalog:
             return []
         try:
             hits = recall_semantic(query, top_k=max(2, limit // 2))
-        except Exception:
+        except Exception as err:
+            xkb_failures.note("service wiki search", err)
             return []
         if not hits:            # None means unavailable, [] means nothing relevant
             return []
