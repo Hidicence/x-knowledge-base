@@ -26,10 +26,13 @@ MARKER = "self-derived"
 
 # Governance stamps every line it promotes with the candidate's fingerprint, so
 # a batch stays reversible. It is bookkeeping, and readers should never see it.
-# Excerpts are cut to length before anyone strips them, so the tail of a
-# marker can arrive without its closing "-->". Match that too, or the
-# reader gets "<!-- xkb-candi" instead of nothing.
-CANDIDATE_MARKER_RE = re.compile(r"\s*<!--\s*xkb-candidate:[0-9a-f]*\s*(?:-->|\Z)")
+CANDIDATE_MARKER_RE = re.compile(r"\s*<!--\s*xkb-candidate:[0-9a-f]+\s*-->")
+
+# Excerpts are cut to length and then an ellipsis is appended, so a marker can
+# reach the reader as an opening with no close and one more character after it.
+# Anything that opens a comment and never closes it is noise to the end of the
+# string, whatever the truncator chose to add.
+UNCLOSED_COMMENT_RE = re.compile(r"\s*<!--(?:(?!-->).)*\Z", re.S)
 
 
 def candidate_marker(candidate_id: str) -> str:
@@ -38,7 +41,8 @@ def candidate_marker(candidate_id: str) -> str:
 
 def strip_markers(text: str) -> str:
     """Remove the bookkeeping a person is not meant to read."""
-    return CANDIDATE_MARKER_RE.sub("", text or "").rstrip()
+    cleaned = CANDIDATE_MARKER_RE.sub("", text or "")
+    return UNCLOSED_COMMENT_RE.sub("", cleaned).rstrip()
 
 # Also matches the older distillation style, which names a memory file
 # directly instead of carrying the marker.

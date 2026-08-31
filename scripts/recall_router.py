@@ -60,6 +60,7 @@ from action_recall import recall as action_recall, format_hint as format_action_
 from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
 
 import xkb_paths
+import xkb_provenance
 import xkb_relevance
 import xkb_score
 
@@ -192,8 +193,9 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
                 results.append({
                     "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
                     "source_file": item.get("relative_path") or item.get("path", ""),
-                    "section": item.get("title", ""),
-                    "excerpt": (item.get("summary") or "")[:200],
+                    "section": xkb_provenance.strip_markers(item.get("title", "")),
+                    "excerpt": xkb_provenance.strip_markers(
+                        (item.get("summary") or "")[:200]),
                     "score": item.get("score", 0.0),
                     "url": item.get("source_url") or item.get("url", ""),
                 })
@@ -289,7 +291,8 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             if action_text:
                 text_parts.append(action_text)
                 result_dicts += [{"source_type": "action", "source_file": r.path,
-                                   "section": r.name, "excerpt": r.description,
+                                   "section": xkb_provenance.strip_markers(r.name),
+                                   "excerpt": xkb_provenance.strip_markers(r.description),
                                    "score": r.score, "url": ""} for r in action_results]
 
         # 各層分數尺度不同，換算成可比的 unified_score 之後才排序

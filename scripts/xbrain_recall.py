@@ -29,8 +29,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from runtime_config import runtime_env
+
+import xkb_provenance
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -244,11 +247,12 @@ def format_for_conversation(results: list[dict], query: str) -> str:
     if not results:
         return ""
 
-    lines = [f"📚 相關既有知識（query: {query!r}）\n"]
+    lines = [f"◆ 相關既有知識（query: {query!r}）\n"]
     for i, r in enumerate(results[:5], 1):
-        title = r["title"] or r["slug"]
+        title = xkb_provenance.strip_markers(r["title"] or r["slug"])
         url = r["source_url"]
-        snippet = r["chunk_text"][:200].replace("\n", " ").strip()
+        snippet = xkb_provenance.strip_markers(
+            r["chunk_text"][:200].replace("\n", " ").strip())
         score_pct = f"{r['score'] * 100:.1f}%"
 
         lines.append(f"{i}. **{title}** ({score_pct})")
