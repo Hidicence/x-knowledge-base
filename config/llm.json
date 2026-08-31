@@ -1,9 +1,10 @@
 {
-  "_comment": "XKB unified LLM config. Change model here to switch all scripts at once.",
-  "model": "sub2api-claude/claude-sonnet-4-6",
+  "_comment": "XKB unified LLM config. Change model here to switch all scripts at once. Credentials come from LLM_API_URL / LLM_API_KEY (process env or XKB_ENV_FILE).",
+  "model": "gpt-5.6-luna",
   "_examples": {
-    "gpt_5_5": "sub2api-gpt/gpt-5.5",
-    "gpt_5_4": "openai-codex/gpt-5.4",
-    "gpt_5_4_mini": "sub2api-gpt/gpt-5.4-mini"
-  }
+    "tuzi_gpt_5_6_luna": "gpt-5.6-luna",
+    "sub2api_claude_sonnet": "sub2api-claude/claude-sonnet-4-6",
+    "sub2api_claude_haiku": "claude-haiku-4-5-20251001"
+  },
+  "_note": "先前的範例列了 sub2api-gpt/gpt-5.5 與 gpt-5.4，那兩個在這台機器上已經回 server_error——範例會被照抄，所以只列活的。"
 }

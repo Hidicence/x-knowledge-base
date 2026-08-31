@@ -81,6 +81,9 @@ class Candidate:
     relation: str = "unique"
     near_duplicate_of: str = ""
     topic_key: str = ""
+    # 被導向 general 時，原本提議的主題名。留著它，日後這些散落的條目
+    # 才撈得回來組成那一頁。
+    proposed_topic: str = ""
     episode_count: int = 1
     source_count: int = 1
 
@@ -232,6 +235,40 @@ def _expired(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
         return date.fromisoformat(candidate.source_date) <= as_of - timedelta(days=ttl_days)
     except ValueError:
         return False
+
+
+# 一個名字被提議過幾次，才算「重複出現」而值得開一頁。五次是刻意保守的：
+# 開一頁很便宜，但一頁只放一條就是把佇列的問題搬進 wiki 裡。
+PROMOTE_AFTER = 5
+GENERAL_TOPIC = "general"
+
+
+def _proposed_counts(candidates: list[Candidate]) -> dict[str, int]:
+    """每個被提議的新主題名，在這一批裡出現幾次。"""
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        if candidate.topic.startswith("[NEW:") and candidate.topic_key:
+            counts[candidate.topic_key] = counts.get(candidate.topic_key, 0) + 1
+    return counts
+
+
+def _route_new_topics(candidates: list[Candidate], counts: dict[str, int]) -> int:
+    """把只出現過一兩次的新主題導向 general，保留原本提議的名字。
+
+    這些條目原本會無限期停在提案區——不是因為內容不好，是因為沒有人替它們
+    命名。累積到門檻的仍然留作提案，因為決定要不要開一頁是領域判斷。
+    """
+    routed = 0
+    for candidate in candidates:
+        if not candidate.topic.startswith("[NEW:") or not candidate.topic_key:
+            continue
+        if counts.get(candidate.topic_key, 0) >= PROMOTE_AFTER:
+            continue
+        candidate.proposed_topic = candidate.topic_key
+        candidate.topic = GENERAL_TOPIC
+        candidate.topic_key = GENERAL_TOPIC
+        routed += 1
+    return routed
 
 
 def _would_promote(candidate: Candidate, ttl_days: int, as_of: date) -> bool:
@@ -407,7 +444,10 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
                 retained_reasons[row["candidate_id"]] = row.get("retained_reason", "")
     eligible = [c for c in pending if c.candidate_id not in already_promoted and (
         c.candidate_id not in registered_ids
-        or (retained_reasons.get(c.candidate_id) == "missing_topic" and _topic_available(c))
+        # 條件拿掉了。原本要求「主題已經存在」，但被扣住的多半是 [NEW: x]，
+        # 而 _topic_available 對這種形狀一律回 False——它們在等一個不可能
+        # 成立的條件，等了 155 條。現在 _route_new_topics 會給每一條去處。
+        or retained_reasons.get(c.candidate_id) == "missing_topic"
         or retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
     )]
     # A bounded batch taken in staging-file order can spend weeks registering
@@ -417,13 +457,22 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     # existing order, while a backlog pass with a relaxed TTL reaches the
     # candidates it was run for.
     as_of = date.today()
+
+    # 導向要在排序之前。_would_promote 對 [NEW: x] 一律回 False，所以還沒
+    # 導向的話，這些候選會被排到最後，永遠進不了 bounded 批次——那正是
+    # 212 條提案卡了幾個月的原因。計數用全部 eligible，不是這一批，
+    # 否則「重複出現」會被批次大小切碎。
+    proposed_counts = _proposed_counts(eligible)
+    routed_to_general = _route_new_topics(eligible, proposed_counts)
+
     eligible.sort(key=lambda c: not _would_promote(c, ttl_days, as_of))
     bounded = eligible[: max(0, limit)]
     topic_groups: dict[str, list[Candidate]] = {}
     stats = {"discovered": len(bounded), "new": len(bounded), "promoted": 0,
              "approved": 0, "skipped": 0, "retained": 0, "ttl": 0,
              "quarantine": 0, "review_queue": 0, "proposal_queue": 0,
-             "duplicates": 0, "near_duplicates": 0}
+             "duplicates": 0, "near_duplicates": 0,
+             "routed_to_general": routed_to_general}
     queues: dict[str, list[dict[str, Any]]] = {"review_queue": [], "proposal_queue": [], "quarantine": []}
     topic_changes: list[dict[str, str]] = []
     for candidate in bounded:
@@ -472,7 +521,10 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     new_topics = sorted({c.topic_key for c in bounded if c.topic.startswith("[NEW:")})
     topic_suggestions.extend({"action": "proposal", "topic": topic,
                               "candidate_ids": [c.candidate_id for c in bounded if c.topic_key == topic],
-                              "reason": "new topic requires explicit proposal review"} for topic in new_topics)
+                              "proposed_count": proposed_counts.get(topic, 0),
+                              "reason": f"proposed {proposed_counts.get(topic, 0)}x "
+                                        f"(>= {PROMOTE_AFTER}); 開不開這一頁是領域判斷"}
+                             for topic in new_topics)
     if not dry_run:
         batch_key = "\n".join(f"{c.candidate_id}:{int(_topic_available(c))}" for c in bounded)
         batch_id = hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16]

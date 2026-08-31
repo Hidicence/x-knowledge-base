@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -351,6 +352,51 @@ def check_governance_actionable() -> dict:
     result["actionable_counts"] = actionable
     warning = counts["pending"] > threshold or counts["overdue"] > 0
     result["checks"].append({"ok": not warning, "msg": "governance actionable counts: " + json.dumps(actionable, ensure_ascii=False) + (f" — threshold {threshold}" if warning else "")})
+    return result
+
+
+def check_external_dependencies() -> dict:
+    """The two things XKB needs and does not ship.
+
+    gbrain holds the card side of retrieval; ten scripts query it. openclaw
+    copies the wiki into the memory vault for other agents. Both are meant to
+    be here, and both fail quietly — gbrain by returning an empty result that
+    is indistinguishable from "nothing on that subject", openclaw by a mirror
+    that silently stops being written.
+    """
+    result = {"name": "external_dependencies", "checks": []}
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xbrain_recall import GBRAIN_AVAILABLE, xbrain_query
+    except Exception as err:  # noqa: BLE001
+        result["checks"].append(
+            {"ok": False, "msg": f"gbrain 橋接載不進來：{type(err).__name__}: {err}"})
+        return result
+
+    if not GBRAIN_AVAILABLE:
+        result["checks"].append(
+            {"ok": False, "msg": "找不到 gbrain — 卡片那一半的召回會靜靜回空"})
+    else:
+        # 一次真的查詢。「裝在那裡」跟「回答得出來」是兩件事。
+        try:
+            hits = xbrain_query("知識", limit=1)
+            if hits:
+                result["checks"].append({"ok": True, "msg": "gbrain 查得到東西"})
+            else:
+                result["checks"].append(
+                    {"ok": False, "msg": "gbrain 在，但一個常見詞查不到任何東西 — 索引可能是空的"})
+        except Exception as err:  # noqa: BLE001
+            result["checks"].append(
+                {"ok": False, "msg": f"gbrain 查詢失敗：{type(err).__name__}: {err}"})
+
+    if shutil.which("openclaw"):
+        result["checks"].append({"ok": True, "msg": "openclaw 在（wiki 鏡像需要它）"})
+    else:
+        result["checks"].append(
+            {"ok": False,
+             "msg": "找不到 openclaw — wiki 不會再被複製到記憶庫，agent 搜不到它。"
+                    "XKB 自己的召回不受影響"})
     return result
 
 

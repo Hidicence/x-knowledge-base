@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import socket
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -168,9 +169,18 @@ def _inventory_lines() -> list[str]:
         # so this line asked for four pages on 2026-08-31 and three of them had
         # been digested the evening before.
         from xkb_synthesize_topic import undigested
+
+        def _needs_digesting(path) -> bool:
+            body = path.read_text(encoding="utf-8", errors="ignore")
+            # 封存的主題不再要求消化。一個你已經決定不做的待辦是噪音，
+            # 而噪音正是讓人停止閱讀這則訊息的東西。
+            if re.search(r"^status:\s*archived\s*$", body, re.M):
+                return False
+            return len(undigested(body)[1]) >= 200
+
         bloated = [
             path.stem for path in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))
-            if len(undigested(path.read_text(encoding="utf-8", errors="ignore"))[1]) >= 200
+            if _needs_digesting(path)
         ]
         if bloated:
             lines.append(f"待整理：{len(bloated)} 個主題頁條列過多"
@@ -229,6 +239,7 @@ def main() -> int:
         hc.check_governance_actionable(),
         hc.check_provenance_markers(),
         hc.check_conversation_capture(),
+        hc.check_external_dependencies(),
         hc.check_index_freshness(),
     ]
     failures = [

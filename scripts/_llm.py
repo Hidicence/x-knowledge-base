@@ -30,6 +30,12 @@ from runtime_config import runtime_env
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = _SKILL_DIR / "config" / "llm.json"
 
+# 設定壞掉時退回的模型。它的職責是「在你修設定的期間讓事情繼續動」，
+# 所以它必須是活的——原本寫的是 sub2api-gpt/gpt-5.5，而那個模型在這台機器上
+# 回 server_error，於是一個打錯字的設定會表現成「每次呼叫模型都失敗」。
+# 這個值跟 Hermes 的主模型一致（config.yaml: gpt-5.6-luna @ api.tu-zi.com）。
+FALLBACK_MODEL = "gpt-5.6-luna"
+
 def _runtime_settings() -> dict[str, str]:
     """Read credentials from process env or explicit XKB_ENV_FILE only."""
     return runtime_env()
@@ -41,14 +47,14 @@ def _load_model() -> str:
         return env_model
     try:
         cfg = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
-        return cfg.get("model", "sub2api-gpt/gpt-5.5")
+        return cfg.get("model", FALLBACK_MODEL)
     except Exception as err:
         # 設定檔存在卻讀不動，跟沒有設定檔是兩件事。退回的這個預設值目前在
         # 代理上會回 server_error，所以一個打錯字的設定會表現成「每次呼叫模型
         # 都失敗」，而不是「你的設定檔壞了」。
         if _CONFIG_FILE.exists():
             xkb_failures.note("LLM config", err, detail=str(_CONFIG_FILE))
-        return "sub2api-gpt/gpt-5.5"
+        return FALLBACK_MODEL
 
 
 def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
@@ -66,7 +72,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
             "Set them to use a direct OpenAI-compatible API fallback:\n"
             "  export LLM_API_URL=https://your-openai-compatible-endpoint/v1\n"
             "  export LLM_API_KEY=your-key\n"
-            "  export LLM_MODEL=sub2api-gpt/gpt-5.5"
+            "  export LLM_MODEL=gpt-5.6-luna"
         )
 
     model = _load_model()

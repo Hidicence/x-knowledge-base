@@ -43,14 +43,53 @@ class GovernanceTests(unittest.TestCase):
             xkb_review.STAGING_DIR = old
             temp.cleanup()
 
-    def test_low_confidence_and_new_topic_are_queued(self):
-        text = FIXTURE.replace("topic-a", "[NEW: proposed-topic]").replace("high", "low").replace("https://example.test/evidence", "")
+    def _proposals(self, times: int) -> str:
+        """同一個新主題被提議 times 次的 staging 內容。"""
+        return "\n".join(
+            FIXTURE.replace("Candidate 1", f"Candidate {i + 1}")
+                   .replace("topic-a", "[NEW: proposed-topic]")
+                   .replace("Reusable claim", f"Reusable claim number {i + 1}")
+            for i in range(times)
+        )
+
+    def test_a_one_off_new_topic_goes_to_general_instead_of_waiting(self):
+        """提一次的新主題不該無限期停在提案區。
+
+        原本它會，而且唯一的出路是「主題已經存在」——對 [NEW: x] 而言那個
+        條件永遠不成立。155 條就是這樣卡住的。現在它進 general，並且帶著
+        當初提議的名字，日後撈得回來。
+        """
+        temp, staging, old = self.with_staging(self._proposals(1))
+        try:
+            result = xkb_review.governance_batch(limit=10, dry_run=True, ttl_days=9999)
+            self.assertEqual(result["stats"]["routed_to_general"], 1)
+            self.assertEqual(result["stats"]["proposal_queue"], 0)
+            self.assertEqual(result["topic_suggestions"], [])
+        finally:
+            xkb_review.STAGING_DIR = old
+            temp.cleanup()
+
+    def test_a_repeated_new_topic_becomes_a_proposal(self):
+        """反覆出現才值得開一頁,而開不開仍然是領域判斷。"""
+        temp, staging, old = self.with_staging(self._proposals(xkb_review.PROMOTE_AFTER))
+        try:
+            result = xkb_review.governance_batch(limit=20, dry_run=True, ttl_days=9999)
+            self.assertEqual(result["stats"]["routed_to_general"], 0)
+            proposals = [t for t in result["topic_suggestions"] if t["action"] == "proposal"]
+            self.assertEqual(len(proposals), 1)
+            self.assertEqual(proposals[0]["proposed_count"], xkb_review.PROMOTE_AFTER)
+        finally:
+            xkb_review.STAGING_DIR = old
+            temp.cleanup()
+
+    def test_low_confidence_never_promotes(self):
+        """信心不足擋放行,這跟主題存不存在是兩件獨立的事。"""
+        text = FIXTURE.replace("high", "low").replace("https://example.test/evidence", "")
         temp, staging, old = self.with_staging(text)
         try:
             result = xkb_review.governance_batch(limit=10, dry_run=True, ttl_days=9999)
-            self.assertEqual(result["stats"]["proposal_queue"], 1)
-            self.assertEqual(len(result["topic_suggestions"]), 1)
             self.assertEqual(result["stats"]["promoted"], 0)
+            self.assertEqual(result["stats"]["review_queue"], 1)
         finally:
             xkb_review.STAGING_DIR = old
             temp.cleanup()

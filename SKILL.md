@@ -383,21 +383,25 @@ Schedules live on the host, not in this repository, so nothing here would
 otherwise say which scripts they call. These are the entry points; everything
 else runs because one of them, or one of the tools below, calls it.
 
-Every one of them is a script. A scheduled job that hands a model a fixed
-command and asks it to report back can report success without having run it,
-which is exactly how the 2026-08-28 ingestion "succeeded" while writing
-nothing. Models make judgements here; they do not carry pipelines.
+Every one of them is a script except the YouTube sync, which genuinely needs
+a model — it reads transcripts and writes cards. The rest were agent prompts
+until 2026-08-31, and each carried the same defect: a job that hands a model a
+fixed command and asks it to report back can report success without having run
+it. That is how the 08-28 ingestion "succeeded" while writing nothing, how
+governance absorbed a batch it could not embed, and how distillation ran for
+seven days reading an inbox nobody writes to. Models make judgements here;
+they do not carry pipelines.
 
 | When (Asia/Taipei) | Entry point | What it is for |
 | --- | --- | --- |
-| 02:00 | `run_bookmark_worker.py` | Queue newly fetched bookmarks and turn them into cards. |
+| 02:00 | `run_bookmark_batch.sh` | Turn fetched bookmarks into cards, embed them, and say so when the queue is not shrinking — at five items a night it never was. |
 | 03:00 | `run_github_sync.sh` | Sync starred and forked repositories. |
 | 03:15 | `run_candidate_governance.sh` | Absorb candidates that clear the gates into topic pages, bounded and reversible, then embed what it wrote — knowledge in the wiki but not in the index is findable by keyword and invisible to recall, so the embedding failing fails the job. |
 | 04:00 | `monitor_youtube_playlist.py` | Fetch new transcripts and prepare them for card generation. |
 | 09:00 | `health_check_notify.py` | The one message that says whether anything is wrong. Runs from plain cron, without a model, so it still speaks when everything else is down. |
 | 13:30 | `run_ingestion_batch.sh` | Sync enriched cards into the search index, embed what changed, and verify the index was actually written. |
 | 14:30, 22:30 | `run_wiki_mirror.sh` | Copy the wiki into the OpenClaw memory-wiki vault so agents can reach it through `openclaw wiki search`, and fail loudly if the vault was not written. |
-| 15:30, 21:30 | `distill_memory_to_wiki.py` | Extract durable claims from the day's notes into candidates. |
+| 15:30, 21:30 | `run_distill_batch.sh` | Extract durable claims from the day's conversations and notes into candidates. Fails when it can read nothing at all — that is how it was blind for seven days without complaining. |
 | twice daily | `recommend_from_profile.sh` | Surface reading recommendations from the topic profile. |
 
 ## Tools you run by hand
