@@ -38,7 +38,9 @@ class ConversationCaptureTests(unittest.TestCase):
             path = Path(tmp) / "knowledge.sqlite"
             if store:
                 _store(path, **store)
-            with mock.patch.dict("os.environ", {"XKB_SERVICE_DB": str(path)}):
+            # xkb_paths resolves every path once at import, so setting
+            # XKB_SERVICE_DB here would change nothing. Patch the source.
+            with mock.patch.object(self.hc.xkb_paths, "SERVICE_DB", path):
                 return self.hc.check_conversation_capture()["checks"][0]
 
     def test_sessions_recording_nothing_is_a_failure(self) -> None:

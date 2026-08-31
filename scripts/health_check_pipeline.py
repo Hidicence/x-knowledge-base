@@ -369,7 +369,7 @@ def check_conversation_capture(days: int = 3) -> dict:
     zero turns is the signature, and it is visible from the store alone.
     """
     result = {"name": "conversation_capture", "checks": []}
-    db_path = Path(os.getenv("XKB_SERVICE_DB", str(Path.home() / ".xkb-runtime" / "knowledge.sqlite")))
+    db_path = xkb_paths.SERVICE_DB
     if not db_path.exists():
         result["checks"].append({"ok": True, "msg": "no knowledge service store on this host"})
         return result

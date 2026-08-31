@@ -86,6 +86,13 @@ TOPIC_PROFILE_FILE = Path(
 TELEMETRY_PATH = XKB_DATA_DIR / "recall-telemetry.jsonl"
 MEMORY_MD = WORKSPACE / "MEMORY.md"
 
+# The knowledge service's store: sessions, turns, cards, evidence. Two readers
+# already wanted it — the pipeline health check and the daily distillation —
+# and a third would have written the path out by hand a third time.
+SERVICE_DB = Path(
+    os.getenv("XKB_SERVICE_DB", str(Path.home() / ".xkb-runtime" / "knowledge.sqlite"))
+)
+
 
 def subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """給 subprocess 用的環境變數。

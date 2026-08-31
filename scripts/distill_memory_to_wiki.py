@@ -138,9 +138,65 @@ def load_recent_l1_traces(days: int) -> list[tuple[str, str]]:
     return entries
 
 
+def load_recent_conversations(days: int) -> list[tuple[str, str]]:
+    """Recent conversations, read from the store the hook actually writes to.
+
+    One entry per session, rendered the way a transcript reads, because a
+    single turn out of context rarely carries a decision — the reasoning is
+    usually spread across the exchange either side of it.
+    """
+    if not xkb_paths.SERVICE_DB.exists():
+        return []
+
+    import sqlite3
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        with sqlite3.connect(f"file:{xkb_paths.SERVICE_DB}?mode=ro", uri=True) as db:
+            rows = db.execute(
+                """SELECT t.session_id, t.query, t.answer, t.completed_at
+                     FROM turns t
+                    WHERE t.completed_at > ?
+                      AND t.status = 'succeeded'
+                 ORDER BY t.session_id, t.completed_at""",
+                (since,),
+            ).fetchall()
+    except sqlite3.Error as err:
+        print(f"[WARN] could not read conversations: {err}")
+        return []
+
+    sessions: dict[str, list[str]] = {}
+    dates: dict[str, str] = {}
+    for session_id, query, answer, completed_at in rows:
+        lines = sessions.setdefault(session_id, [])
+        if query:
+            lines.append(f"user: {query.strip()}")
+        if answer:
+            lines.append(f"assistant: {answer.strip()}")
+        dates.setdefault(session_id, (completed_at or "")[:10])
+
+    return [
+        (dates[session_id], "\n\n".join(lines))
+        for session_id, lines in sessions.items()
+        if lines
+    ]
+
+
 def load_recent_inputs(days: int) -> list[tuple[str, str]]:
-    """Return daily memory plus complete recent L1 conversation snapshots."""
+    """Daily memory, plus the recent conversations, from wherever they are.
+
+    The knowledge service is the live store. The trace directory is the older
+    inbox — still read when there is no service on this host, because an
+    external writer may be filling it.
+    """
     entries = load_recent_memory(days)
+
+    conversations = load_recent_conversations(days)
+    if conversations:
+        print(f"Loaded {len(conversations)} recent conversation(s)")
+        entries.extend(conversations)
+        return entries
+
     traces = load_recent_l1_traces(days)
     if traces:
         print(f"Loaded {len(traces)} recent L1 trace snapshot(s)")

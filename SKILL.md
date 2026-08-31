@@ -392,7 +392,7 @@ nothing. Models make judgements here; they do not carry pipelines.
 | --- | --- | --- |
 | 02:00 | `run_bookmark_worker.py` | Queue newly fetched bookmarks and turn them into cards. |
 | 03:00 | `run_github_sync.sh` | Sync starred and forked repositories. |
-| 03:15 | `xkb_review.py --governance` | Absorb candidates that clear the gates into topic pages, bounded and reversible. |
+| 03:15 | `run_candidate_governance.sh` | Absorb candidates that clear the gates into topic pages, bounded and reversible, then embed what it wrote — knowledge in the wiki but not in the index is findable by keyword and invisible to recall, so the embedding failing fails the job. |
 | 04:00 | `monitor_youtube_playlist.py` | Fetch new transcripts and prepare them for card generation. |
 | 09:00 | `health_check_notify.py` | The one message that says whether anything is wrong. Runs from plain cron, without a model, so it still speaks when everything else is down. |
 | 13:30 | `run_ingestion_batch.sh` | Sync enriched cards into the search index, embed what changed, and verify the index was actually written. |
