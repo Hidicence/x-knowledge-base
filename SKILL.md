@@ -377,6 +377,36 @@ python3 scripts/migrate_schema.py             # 執行
 - Data quality first — 先保品質再追覆蓋率
 - Knowledge cards 要服務回用，不只是保存
 
+## Before you push
+
+Run `/code-review high <base>..HEAD` over the diff, and act on what comes back.
+
+This is not ceremony. On 2026-08-31 a 48-file change had been through six
+rounds of self-checking, including one billed as a complete sweep, and 233
+tests passed. An outside review found eleven issues; eight were real and none
+had been found from the inside. Two of them silently destroyed knowledge:
+synthesis erasing every claim governance had promoted since the last run, while
+reporting that the page had nothing to digest, and deduplicated cards no longer
+counting as processed, so the worker would regenerate the duplicates
+deduplication had just removed.
+
+Tests catch what used to work and stopped. They cannot catch something that was
+wrong from the first line — both of those bugs were green. And the owner of
+this system does not read code, so there is no second reader by default.
+
+What makes it work is that the reviewer starts cold. It does not inherit the
+author's reasoning, so it cannot be persuaded by intent; it only sees what the
+code does. A reviewer given the author's context agrees with the author, and
+carries the same blind spots.
+
+Verify each finding before acting. Three of the eleven were not worth changing,
+and its read of three failing tests as Windows environment artefacts was
+correct. It is wrong sometimes — differently from how you are wrong, which is
+the entire value.
+
+`/code-review ultra` is a deeper cloud review, but it is billed and only the
+owner can start it; never attempt to launch it.
+
 ## What the schedules run
 
 Schedules live on the host, not in this repository, so nothing here would
