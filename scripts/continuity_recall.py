@@ -431,8 +431,38 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na * nb > 1e-9 else 0.0
 
 
+# 索引用 @N 標示「同一段被切成好幾塊」、~N 標示「同名標題的第幾個」，兩個都
+# 加在 # 之後，所以讀取端會拿「做法-Workflow~2」去找標題。實測索引裡有 895
+# 個這種鍵，648 個是 wiki 的——每一個都佔掉名額然後顯示空白。
+_INDEX_SUFFIX = re.compile(r"[@~]\d+$")
+
+
+def _base_heading(source: str, section: str) -> str:
+    """把索引加上的 @N / ~N 拿掉，還原成真正的標題。
+
+    只在「原樣找不到、去掉後綴找得到」時才換：真的以 ~2 結尾的標題照樣能用。
+    """
+    if not section or not _INDEX_SUFFIX.search(section):
+        return section
+    if _section_text(source, section):
+        return section
+    stripped = _INDEX_SUFFIX.sub("", section)
+    return stripped if _section_text(source, stripped) else section
+
+
 def _section_text(topic_file: str, section: str) -> str:
-    path = WIKI_TOPICS_DIR / topic_file
+    """一個 wiki 段落的內文。
+
+    索引鍵長這樣：wiki/topics/learning-base.md#做法-Workflow。呼叫端拿掉
+    wiki/ 之後傳進來的是 topics/learning-base.md，而 WIKI_TOPICS_DIR 本身
+    就以 topics 結尾——原本直接相接，於是每一次都在找
+    .../wiki/topics/topics/learning-base.md，讀不到、回空字串。
+
+    每一個 wiki 命中都是空的，而 format_chat 在摘要為空時會退回顯示標題，
+    所以看起來一直像正常運作。
+    """
+    name = topic_file[len("topics/"):] if topic_file.startswith("topics/") else topic_file
+    path = WIKI_TOPICS_DIR / name
     try:
         content = re.sub(r"^---\n.*?\n---\n", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
     except OSError:
@@ -484,6 +514,7 @@ def recall_semantic(query: str, top_k: int = 2) -> list[RecallResult] | None:
         prefix = next((p for p in SEMANTIC_PREFIXES if key.startswith(p)), "")
         source_type = SEMANTIC_PREFIXES.get(prefix, "wiki_semantic")
         rest, _, section = key[len(prefix):].partition("#")
+        section = _base_heading(rest, section)
         if rest in seen_topics:            # 同一份文件只取最相關的一段
             continue
         seen_topics.add(rest)
