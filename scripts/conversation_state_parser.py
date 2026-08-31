@@ -37,8 +37,12 @@ SUPPRESS_EXACT = {"ok", "好", "收到", "謝謝", "thanks", "好的", "嗯", "�
 # not for throwing away what it knows.
 NOISE_PATTERNS: dict[str, list[str]] = {
     "greeting": [
-        r"^哈+$", r"^哈哈", r"早安", r"晚安", r"午安",
-        r"^你好$", r"^hi$", r"^hello$", r"^嗨$",
+        # 整句就是問候才算。原本 早安/晚安/午安 沒有錨定、^哈哈 只錨了開頭，
+        # 所以「早安，幫我看一下 XKB 的碳盤查計算方式」被判成問候，整個召回
+        # 被跳過——禮貌地開場等於把知識庫關掉。
+        r"^哈+[。！!～~ ]*$",
+        r"^(?:早安|晚安|午安|早|安安)[。！!～~，, ]*$",
+        r"^你好[。！!～~ ]*$", r"^hi[.! ]*$", r"^hello[.! ]*$", r"^嗨[。！!～~ ]*$",
     ],
     "acknowledgement": [
         # Compound acknowledgements are still acknowledgements; the short

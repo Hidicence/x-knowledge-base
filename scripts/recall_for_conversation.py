@@ -281,12 +281,19 @@ def _category_penalty(item: Dict[str, Any]) -> float:
 SELF_DERIVED_PENALTY = float(os.getenv("XKB_SELF_DERIVED_PENALTY", "-0.15"))
 
 
+# 索引項目實際有的欄位：category, enriched, mtime, path, relative_path,
+# searchable, size, source_type, source_url, summary, tags, title。
+# 原本這裡讀的是 provenance / content / source_file / section_text——四個
+# 都不存在，所以這道防護從第一天起就沒有觸發過一次。
+PROVENANCE_FIELDS = ("summary", "searchable", "relative_path", "path", "title")
+
+
 def _provenance_penalty(item: Dict[str, Any]) -> float:
     if (item.get("provenance") or "").strip().lower() == "self-derived":
         return SELF_DERIVED_PENALTY
-    text = " ".join(
-        str(item.get(k) or "") for k in ("summary", "content", "source_file", "section_text")
-    )
+    # 路徑要一起看：self-derived 的標記常常在 memory/YYYY-MM-DD 這種路徑上，
+    # 而不是在摘要文字裡。
+    text = " ".join(str(item.get(k) or "") for k in PROVENANCE_FIELDS)
     if is_self_derived(text):
         return SELF_DERIVED_PENALTY
     return 0.0
@@ -399,7 +406,10 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
             "topic_boost": 0.0,
             "matched_categories": [],
             "matched_tags": [],
-            "ranking_adjustments": {},
+            # gbrain 是這台機器上實際會走的模式，而它原本完全不算調整——
+            # 於是回音室防護在主要路徑上等於不存在。
+            "ranking_adjustments": {"provenance": _provenance_penalty(hit),
+                                    "total_adjustment": _provenance_penalty(hit)},
             "relevance_reason": f"gbrain 語意+關鍵字混合 RRF ({score:.4f})",
         })
     return results

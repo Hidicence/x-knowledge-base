@@ -658,6 +658,21 @@ def text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _as_int(raw: Any, fallback: int) -> int:
+    """把 query string 的值轉成整數，轉不動就用預設。
+
+    bounded_int 刻意不接受字串（它擋的是 bool 與 float 這種會靜靜通過的型別），
+    所以 HTTP 這一層要先轉。
+    """
+    if raw is None:
+        return fallback
+    value = raw[0] if isinstance(raw, list) else raw
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
 def bounded_int(value: Any, *, name: str, default: int, minimum: int, maximum: int) -> int:
     """Validate API numeric knobs without accepting bools, floats, or strings."""
     if value is None:
@@ -1054,10 +1069,26 @@ class Store:
         context = "\n\n".join(f"[歷史證據] Q: {item['query']}\nA: {item['answer']}" for item in memories)
         return {"schema": SCHEMA, "query": query, "memories": memories, "context": context, "count": len(memories)}
 
-    def artifact(self, trace_id: str) -> dict[str, Any] | None:
+    def artifact(self, trace_id: str, namespace: str = "private") -> dict[str, Any] | None:
+        """一次對話的完整內容。要過 namespace，跟其他讀取端點一樣。
+
+        turn 的 namespace 在它的 session 上，所以這裡要 join。讀不到與不存在
+        回同一個答案——否則 trace_id 就成了一個可以探測「這筆存不存在」的
+        工具，而 trace_id 是 complete_turn 與 recall 主動交給客戶端的。
+        """
         with self.lock, self.connect() as db:
-            row = db.execute("SELECT payload_json, retrieval_json, trace_id FROM turns WHERE trace_id=?", (trace_id,)).fetchone()
+            row = db.execute(
+                """SELECT t.payload_json, t.retrieval_json, t.trace_id, s.namespace
+                     FROM turns t
+                     LEFT JOIN sessions s ON s.session_id = t.session_id
+                    WHERE t.trace_id=?""",
+                (trace_id,),
+            ).fetchone()
         if not row:
+            return None
+        # _allowed 在 KnowledgeCatalog 上，Store 透過 self.catalog 用它——
+        # 跟這個檔案裡其他地方（例如 _acl_policy）同一個模式。
+        if not self.catalog._allowed({"namespace": row["namespace"]}, namespace):
             return None
         payload = json.loads(row["payload_json"])
         payload.update({
@@ -1247,7 +1278,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, self.store.list_jobs(
                     stage=(params.get("stage") or [""])[0],
                     status=(params.get("status") or [""])[0],
-                    limit=bounded_int((params.get("limit") or ["50"])[0], name="limit", default=50, minimum=1, maximum=200),
+                    # query string 一定是字串，而 bounded_int 明確拒絕字串——
+                    # 所以這個端點原本每一次呼叫都回 400，連沒帶參數的也是。
+                    limit=bounded_int(_as_int(params.get("limit"), 50), name="limit",
+                                      default=50, minimum=1, maximum=200),
                 ))
                 return
             if parsed.path == "/v1/knowledge/cold":
@@ -1258,7 +1292,10 @@ class Handler(BaseHTTPRequestHandler):
                 ))
                 return
             if parsed.path.startswith("/v1/artifacts/"):
-                item = self.store.artifact(unquote(parsed.path.rsplit("/", 1)[-1]))
+                item = self.store.artifact(
+                    unquote(parsed.path.rsplit("/", 1)[-1]),
+                    self.namespace(principal, (params.get("namespace") or [""])[0]),
+                )
                 self.send_json(200 if item else 404, item or {"error": "not found"})
                 return
             self.send_json(404, {"error": "not found"})
