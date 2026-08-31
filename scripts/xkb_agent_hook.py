@@ -87,9 +87,32 @@ def session_key(event: dict) -> str:
     return str(event.get("cwd") or "default")
 
 
-def turn_id(key: str, prompt: str) -> str:
-    digest = hashlib.sha256(f"{key}\0{prompt}".encode("utf-8")).hexdigest()[:24]
+def turn_id(key: str, prompt: str, ordinal: int = 0) -> str:
+    """這一輪對話的識別碼。
+
+    原本只有 session_key 與提示詞內容，所以同一個 session 裡重複的話會撞
+    id——而人最常重複的正是「繼續」「好」「ok」這種詞。撞到之後：start_turn
+    回 resumed 並附上第一次的召回結果（於是注入的是為另一個時刻查的知識），
+    stop 時 complete_turn 發現摘要對不上而回 400，hook 的 fail-open 把它吞掉。
+    第二輪從來沒有被記錄，也沒有任何地方說過。
+    """
+    digest = hashlib.sha256(
+        f"{key}\0{ordinal}\0{prompt}".encode("utf-8")
+    ).hexdigest()[:24]
     return f"turn:{digest}"
+
+
+def next_ordinal(key: str) -> int:
+    """這個 session 的第幾輪。存在 hook 本來就有的狀態檔裡。
+
+    續接的 session 要接著數，不是從零開始——否則重開一次就又從頭相撞。
+    讀不到就當第一輪：這裡寧可多算一輪，也不要讓一輪消失。
+    """
+    path = state_path(key)
+    try:
+        return int(json.loads(path.read_text(encoding="utf-8")).get("ordinal", 0)) + 1
+    except Exception:  # noqa: BLE001 — 讀不到就從頭數，不能因此中斷對話
+        return 1
 
 
 def state_path(key: str) -> Path:
@@ -155,7 +178,8 @@ def on_prompt(event: dict, cfg: dict) -> None:
         "session_key": key,
         "workspace_path": event.get("cwd"),
     }, cfg)
-    current = turn_id(key, prompt)
+    ordinal = next_ordinal(key)
+    current = turn_id(key, prompt, ordinal)
     turn = call("/v1/turns/start", {
         "session_id": session["session_id"],
         "turn_id": current,
@@ -166,6 +190,7 @@ def on_prompt(event: dict, cfg: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     state_path(key).write_text(json.dumps({
         "session_id": session["session_id"], "turn_id": current, "query": prompt,
+        "ordinal": ordinal,
     }, ensure_ascii=False), encoding="utf-8")
 
     records = (turn.get("retrieval") or {}).get("records") or []
@@ -217,6 +242,21 @@ def read_event() -> dict:
     return event if isinstance(event, dict) else {}
 
 
+def _note_failure(event_name: str, err: BaseException) -> None:
+    """把失敗說出來，但絕不因此中斷對話。
+
+    同一個原因只說一次：hook 每一則訊息都會跑，重複印會把有用的訊息淹掉。
+    自己不能失敗——會報告失敗的東西壞掉，比沒有報告更糟。
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import xkb_failures
+
+        xkb_failures.note(f"agent hook ({event_name or 'UserPromptSubmit'})", err)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     event = read_event()
     if not event:
@@ -228,8 +268,13 @@ def main() -> int:
             on_stop(event, cfg)
         else:
             on_prompt(event, cfg)
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, KeyError, ValueError, TimeoutError):
-        # Reading fails open: never block the agent because XKB is unavailable.
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, KeyError,
+            ValueError, TimeoutError) as err:
+        # 讀取失敗要放行：不能因為 XKB 連不上就擋住使用者工作。
+        # 但寫入失敗不一樣——一輪對話沒被記錄，跟「那一輪沒有內容」長得
+        # 一模一樣，而這台機器上每一次呼叫都被回 401 且從來沒有人知道。
+        # 行為不變（照樣 exit 0、照樣不擋對話），只是留下痕跡。
+        _note_failure(name, err)
         return 0
     return 0
 
