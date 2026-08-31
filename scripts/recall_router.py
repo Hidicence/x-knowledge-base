@@ -36,6 +36,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,7 @@ from action_recall import recall as action_recall, format_hint as format_action_
 from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
 
 import xkb_paths
+import xkb_failures
 import xkb_provenance
 import xkb_relevance
 import xkb_score
@@ -159,52 +161,38 @@ def _format_assoc_chat(results: list[dict]) -> str:
 
 
 def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]:
-    """Returns (formatted_text, results_list)."""
-    script = SCRIPTS / "recall_for_conversation.py"
-    if not script.exists():
-        # 隔壁檔案不見了是安裝壞掉，不是「查無資料」——要出聲，不要靜靜回空
-        msg = f"associative recall unavailable: {script} not found"
+    """Returns (formatted_text, results_list).
+
+    Calls recall_for_conversation.search() directly. It used to spawn the same
+    file as a child process, which cost an interpreter start and turned every
+    failure into an unparseable stdout — indistinguishable from "found
+    nothing". gbrain's own 1.2 s is paid either way; what this removes is the
+    part that was never doing any work.
+    """
+    try:
+        from recall_for_conversation import search as _associative_search
+    except ImportError as err:
+        # 隔壁模組載不進來是安裝壞掉，不是「查無資料」——要出聲，不要靜靜回空
+        msg = f"associative recall unavailable: {err}"
         print(msg, file=sys.stderr)
         return f"（{msg}）", []
     try:
-        _sub_env = xkb_paths.subprocess_env({"OPENCLAW_WORKSPACE": str(WORKSPACE)})
-
-        # 只跑一次。原本跑兩次（一次要 chat 文字、一次要 JSON），而這支每次都要做
-        # 一輪語意搜尋，等於整個召回的成本平白翻倍。文字從 JSON 自己組就好。
-        result_json = subprocess.run(
-            [sys.executable, str(script), query, "--json", "--limit", str(limit)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
-            env=_sub_env,
-        )
-        chat_text = ""
-        try:
-            raw = json.loads(result_json.stdout)
-            # recall_for_conversation.py 回的是 {"query", "wiki_hits", "results", ...}，
-            # 不是一個 list。舊寫法用 isinstance(list) 判斷，永遠不成立，
-            # 於是所有書籤/卡片結果都被靜靜丟掉。
-            if isinstance(raw, dict):
-                items = raw.get("results") or []
-            elif isinstance(raw, list):
-                items = raw
-            else:
-                items = []
-            results = []
-            for item in items:
-                results.append({
-                    "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
-                    "source_file": item.get("relative_path") or item.get("path", ""),
-                    "section": xkb_provenance.strip_markers(item.get("title", "")),
-                    "excerpt": xkb_provenance.strip_markers(
-                        (item.get("summary") or "")[:200]),
-                    "score": item.get("score", 0.0),
-                    "url": item.get("source_url") or item.get("url", ""),
-                })
-            chat_text = _format_assoc_chat(results)
-        except Exception:
-            results = []
-
-        return chat_text, results
+        results = [
+            {
+                "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
+                "source_file": item.get("relative_path") or item.get("path", ""),
+                "section": xkb_provenance.strip_markers(item.get("title", "")),
+                "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
+                "score": item.get("score", 0.0),
+                "url": item.get("source_url") or item.get("url", ""),
+            }
+            for item in _associative_search(query, limit=limit)["results"]
+        ]
+        return _format_assoc_chat(results), results
     except Exception as e:
+        # 後端壞掉不能長得像「查無資料」。這裡原本還套了一層 except，
+        # 把例外變成空陣列，於是下面這行報告從來沒有機會執行。
+        xkb_failures.note("associative recall", e)
         return f"（associative recall error: {e}）", []
 
 
@@ -262,8 +250,13 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
     # Step 2: Execute recall
     if parsed.trigger_class == "hard":
-        # Continuity recall (primary)
-        raw_results = continuity_recall(query, source="both", top_k=4)
+        # 兩個貴的層平行跑。continuity 花 2.7 秒在本機向量運算，卡片層花 1.2 秒
+        # 等外部行程，而且互不相依——排隊跑只是因為當初就那樣寫。
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assoc_future = pool.submit(run_associative_recall, query, 2)
+            raw_results = continuity_recall(query, source="both", top_k=4)
+            assoc_text, assoc_results = assoc_future.result()
+
         filtered = _filter_results(raw_results, MIN_SCORE_HARD)
         filtered, _ = _dedup_filter_new(filtered)
         result_dicts = _results_to_dicts(filtered[:3])
@@ -276,7 +269,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # hard trigger 是「我們之前怎麼…」這種明確的回想要求，而使用者存最多東西的地方
         # 就是卡片（wiki 只有十幾個 topic，卡片上千張）。原本這條路徑只查 wiki 與記憶檔，
         # 等於問「之前怎麼做的」反而查不到主要的知識來源。
-        assoc_text, assoc_results = run_associative_recall(query, limit=2)
+        # （結果在上面就跟 continuity 一起平行取回了。）
         assoc_results = _drop_irrelevant_cards(message, assoc_results)
         assoc_results, _ = _dedup_filter_new(assoc_results)
         if assoc_results:

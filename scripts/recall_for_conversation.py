@@ -746,6 +746,76 @@ def print_chat(wiki_hits: List[Dict[str, Any]], results: List[Dict[str, Any]], q
                 print(f"  原文：{item['source_url']}")
 
 
+MODE_LABELS = {
+    "gbrain": "gbrain 混合搜尋（RRF + Gemini）",
+    "semantic": "語意向量搜尋",
+    "keyword": "關鍵字搜尋",
+    "keyword_fallback": "關鍵字搜尋（語意降級）",
+}
+
+
+def search(
+    query: str,
+    limit: int = 3,
+    min_score: int = 6,
+    *,
+    index_file: Path | None = None,
+    vector_file: Path | None = None,
+    topic_profile_file: Path | None = None,
+    no_wiki: bool = False,
+    no_semantic: bool = False,
+    force_semantic: bool = False,
+    force_gbrain: bool = False,
+) -> dict:
+    """兩層召回：先查合成過的 wiki 知識，再查卡片細節。
+
+    這段原本長在 main() 裡，所以想用它的人只能另外開一個 Python 行程——
+    父行程已經為了語意召回載入過向量索引，子行程再載入一次，一次 hard 召回
+    因此多付 1.3 秒，而 hook 只給六秒。搬出來之後兩邊呼叫同一份程式，
+    main() 回歸它本來的角色：命令列的殼。
+    """
+    index_path = Path(index_file) if index_file else INDEX_FILE
+    vector_path = Path(vector_file) if vector_file else VECTOR_FILE
+    profile_path = Path(topic_profile_file) if topic_profile_file else TOPIC_PROFILE_FILE
+
+    # 第一層：wiki 知識層（先查合成知識）
+    wiki_hits: List[Dict[str, Any]] = [] if no_wiki else wiki_recall(query, limit=2)
+
+    # 第二層：cards 細節層（gbrain > semantic > keyword）
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from xbrain_recall import GBRAIN_AVAILABLE as _gbrain_available, GEMINI_API_KEY as _gemini_key
+    except ImportError:
+        _gbrain_available = False
+        _gemini_key = ""
+    use_gbrain = force_gbrain or (not no_semantic and _gbrain_available and bool(_gemini_key))
+
+    search_mode = "keyword"
+    if use_gbrain:
+        results = gbrain_semantic_recall(query, limit)
+        if results:
+            search_mode = "gbrain"
+        else:
+            results = recall(query, limit, min_score, index_path, profile_path)
+            search_mode = "keyword_fallback"
+    elif (not no_semantic) and (force_semantic or vector_path.exists()):
+        results = semantic_recall(query, limit, vector_path, index_path, profile_path)
+        if results:
+            search_mode = "semantic"
+        else:
+            results = recall(query, limit, min_score, index_path, profile_path)
+            search_mode = "keyword_fallback"
+    else:
+        results = recall(query, limit, min_score, index_path, profile_path)
+
+    return {
+        "query": query,
+        "wiki_hits": wiki_hits,
+        "results": results,
+        "search_mode": search_mode,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Recall relevant X bookmarks for conversation use")
     parser.add_argument("query", nargs="?", help="當前對話查詢")
