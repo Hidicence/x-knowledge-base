@@ -245,7 +245,10 @@ class GovernanceTests(unittest.TestCase):
             counts = xkb_review.governance_health_counts(ttl_days=9999)
             self.assertEqual(counts["pending"], 2)
             self.assertEqual(counts["low"], 1)
-            self.assertEqual(counts["proposal"], 1)
+            # 提一次的新主題會先被導向 general，所以它不是提案。這裡數的必須
+            # 跟治理真的會做的一致——報 1 而治理看到 0，就是「77 待處理」
+            # 與「實際 3 條」並存的那個病。
+            self.assertEqual(counts["proposal"], 0)
             self.assertEqual(counts["safe_promotion"], 1)
             self.assertEqual(counts["quarantine"], 0)
         finally:

@@ -100,9 +100,14 @@ def _decision_lines(sections: list[dict]) -> list[str]:
     lines = []
     if counts.get("proposal"):
         lines.append(f"  {counts['proposal']} 條想開新的 wiki 主題——要不要開，只有你能決定")
+    # 原本這一行寫「對應的主題頁還不存在」，但算式是 pending 減掉提案與隔離，
+    # 那是「因為任何理由被擋住的全部」。標籤跟數字對不上，會把人帶去查錯方向。
     waiting = counts.get("pending", 0) - counts.get("proposal", 0) - counts.get("quarantine", 0)
     if waiting > 0:
-        lines.append(f"  {waiting} 條等著進 wiki，但對應的主題頁還不存在")
+        lines.append(f"  {waiting} 條治理下一輪會處理")
+    held = counts.get("held", 0)
+    if held > 0:
+        lines.append(f"  {held} 條看過了但證據或信心不足，留著沒丟——不用你做什麼")
     if counts.get("overdue"):
         lines.append(f"  {counts['overdue']} 條因為太舊被隔離，沒有刪除")
     return lines

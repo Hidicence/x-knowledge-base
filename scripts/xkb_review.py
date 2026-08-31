@@ -430,26 +430,9 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
     candidates = load_candidates(classify=False)
     pending = [c for c in candidates if c.status == "pending"]
     _classify_relations(pending)
+    # _eligible 自己會算一次，但下面還有兩處要用同一份名單。
     already_promoted = _promoted_ids(registry)
-    registered_ids: set[str] = set()
-    retained_reasons: dict[str, str] = {}
-    if registry.exists():
-        for line in registry.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if row.get("candidate_id"):
-                registered_ids.add(row["candidate_id"])
-                retained_reasons[row["candidate_id"]] = row.get("retained_reason", "")
-    eligible = [c for c in pending if c.candidate_id not in already_promoted and (
-        c.candidate_id not in registered_ids
-        # 條件拿掉了。原本要求「主題已經存在」，但被扣住的多半是 [NEW: x]，
-        # 而 _topic_available 對這種形狀一律回 False——它們在等一個不可能
-        # 成立的條件，等了 155 條。現在 _route_new_topics 會給每一條去處。
-        or retained_reasons.get(c.candidate_id) == "missing_topic"
-        or retained_reasons.get(c.candidate_id) == "topic_needs_synthesis"
-    )]
+    eligible = _eligible(pending, registry)
     # A bounded batch taken in staging-file order can spend weeks registering
     # candidates it will not promote before reaching one it would. Sorting is
     # stable and keyed on the outcome under the TTL actually in force, so a
@@ -601,18 +584,60 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
             "topic_changes": topic_changes}
 
 
+def _registry_state(registry: Path) -> tuple[set[str], set[str], dict[str, str]]:
+    """(已放行, 已登記, 每一筆的扣留理由)。"""
+    promoted = _promoted_ids(registry)
+    registered: set[str] = set()
+    reasons: dict[str, str] = {}
+    if registry.exists():
+        for line in registry.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("candidate_id"):
+                registered.add(row["candidate_id"])
+                reasons[row["candidate_id"]] = row.get("retained_reason", "")
+    return promoted, registered, reasons
+
+
+def _eligible(candidates: list[Candidate], registry: Path) -> list[Candidate]:
+    """治理下一輪真的會處理的那些。
+
+    「還沒被登記過」才算待處理。治理刻意不動 staging，所以一個已經被看過、
+    判定證據或信心不足而扣住的候選，在 staging 裡永遠還是 pending——把它算成
+    積壓，會得到一個永遠亮著的紅燈，而永遠亮著的紅燈跟永遠不亮的綠燈一樣，
+    看久了就不看了。
+
+    兩種例外會重新進場：主題後來出現了，以及主題頁需要先消化。
+    """
+    promoted, registered, reasons = _registry_state(registry)
+    return [c for c in candidates if c.candidate_id not in promoted and (
+        c.candidate_id not in registered
+        or reasons.get(c.candidate_id) == "missing_topic"
+        or reasons.get(c.candidate_id) == "topic_needs_synthesis"
+    )]
+
+
 def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     """Return secret-free actionable counts without writing governance artifacts."""
     # A promoted candidate is still marked pending in its staging file, because
     # governance never edits the source. Counting it as outstanding work would
     # keep the alert red no matter how much was absorbed, and an alert that can
     # never clear stops being read.
-    promoted = _promoted_ids(GOVERNANCE_DIR / "candidate-registry.jsonl")
-    candidates = [c for c in load_candidates(classify=False)
-                  if c.status == "pending" and c.candidate_id not in promoted]
+    registry = GOVERNANCE_DIR / "candidate-registry.jsonl"
+    staged = [c for c in load_candidates(classify=False) if c.status == "pending"]
+    candidates = _eligible(staged, registry)
     _classify_relations(candidates)
+    # 導向要在計數之前，跟 governance_batch 同一個順序。少了這一步，一個
+    # 會被導向 general 的候選在這裡仍算成提案——報 1，實際 0。
+    _route_new_topics(candidates, _proposed_counts(candidates))
+    promoted, registered, _ = _registry_state(registry)
     result = {"pending": len(candidates), "high": 0, "medium": 0, "low": 0,
-              "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0}
+              "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0,
+              # 已經看過、判定不放行而扣住的。它們不是待辦，但也沒有被丟掉。
+              "held": sum(1 for c in staged
+                          if c.candidate_id in registered and c.candidate_id not in promoted)}
     today = date.today()
     for candidate in candidates:
         result[candidate.confidence] = result.get(candidate.confidence, 0) + 1
