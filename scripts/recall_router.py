@@ -37,6 +37,9 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+
+# 卡片層的上限。原本由 subprocess 的 timeout=20 提供，改成同行程後要自己帶。
+ASSOCIATIVE_TIMEOUT_S = 20
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -177,6 +180,13 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
         print(msg, file=sys.stderr)
         return f"（{msg}）", []
     try:
+        # subprocess 版本有 timeout=20，改成同行程之後那個界線消失了，而
+        # recall_for_conversation 的嵌入路徑本身沒有任何逾時。hook 只給六秒，
+        # 所以一個卡住的端點會無限期擋住整條召回。界線要留著。
+        with ThreadPoolExecutor(max_workers=1) as bounded:
+            items = bounded.submit(
+                lambda: _associative_search(query, limit=limit)["results"]
+            ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
         results = [
             {
                 "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
@@ -186,7 +196,7 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
                 "score": item.get("score", 0.0),
                 "url": item.get("source_url") or item.get("url", ""),
             }
-            for item in _associative_search(query, limit=limit)["results"]
+            for item in items
         ]
         return _format_assoc_chat(results), results
     except Exception as e:

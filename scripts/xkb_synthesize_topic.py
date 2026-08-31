@@ -96,18 +96,32 @@ def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
 
     human, tail = text[: min(positions)], text[min(positions) :]
     blocks: dict[str, list[str]] = {}
+    # 治理在消化之後還會往檔尾追加知識（### 標題加一段文字），那些行落在
+    # 我們的區塊後面，卻不屬於任何一個。原本它們被歸進最後一個區塊、只留
+    # 「- 」開頭的行，於是既看不到、也在下次 --apply 時被整段刪掉。
+    foreign: list[str] = []
     current: str | None = None
     for line in tail.splitlines():
         if line.strip() in GENERATED_HEADINGS:
             current = line.strip()
             blocks[current] = []
+        elif line.startswith("#") and not line.strip().startswith("####"):
+            # 出現了不是我們寫的標題：從這裡開始都不是我們的東西。
+            current = None
+            foreign.append(line)
         elif current is not None:
             blocks[current].append(line)
+        else:
+            foreign.append(line)
 
     def bullets_of(heading: str) -> list[str]:
         return [l.strip() for l in blocks.get(heading, []) if l.strip().startswith("- ")]
 
     conclusions = "\n".join(blocks.get(CONCLUSIONS_HEADING, [])).strip("\n")
+    # 別人寫的東西併回人寫的那一半，這樣它會被保留，而且下次會被當成素材。
+    extra = "\n".join(foreign).strip("\n")
+    if extra:
+        human = human.rstrip() + "\n\n" + extra + "\n"
     return human, conclusions, bullets_of(UNDIGESTED_HEADING), bullets_of(SOURCES_HEADING)
 
 

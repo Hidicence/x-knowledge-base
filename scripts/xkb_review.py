@@ -252,6 +252,44 @@ def _proposed_counts(candidates: list[Candidate]) -> dict[str, int]:
     return counts
 
 
+GENERAL_PAGE = """---
+title: 一般
+tags: [general, unsorted]
+sources: 0
+last_updated: {today}
+status: seeded
+slug: general
+---
+
+# 一般
+
+還沒有自己主題頁的知識。每一條後面都留著它當初被提議的主題名稱——同一個名稱
+累積到門檻之後，這些散落的條目就可以被撈出來組成那一頁。
+
+這裡不是垃圾場，是候診室。條目長期停在這裡而且從不重複，通常代表它本來就是
+一次性的資訊，那也是一個答案。
+
+"""
+
+
+def _ensure_general_topic() -> bool:
+    """確保 general 這一頁存在。回傳它現在是否可用。
+
+    wiki 是資料不是程式，不在版控裡，所以這一頁不會隨 repo 散佈。少了它，
+    導向會把每一條提案變成 missing_topic 扣留——提案數歸零、看起來修好了，
+    實際上什麼都沒吸收。
+    """
+    page = TOPICS_DIR / f"{GENERAL_TOPIC}.md"
+    if page.exists():
+        return True
+    try:
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(GENERAL_PAGE.format(today=date.today()), encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
 def _route_new_topics(candidates: list[Candidate], counts: dict[str, int]) -> int:
     """把只出現過一兩次的新主題導向 general，保留原本提議的名字。
 
@@ -259,6 +297,9 @@ def _route_new_topics(candidates: list[Candidate], counts: dict[str, int]) -> in
     命名。累積到門檻的仍然留作提案，因為決定要不要開一頁是領域判斷。
     """
     routed = 0
+    if any(c.topic.startswith("[NEW:") for c in candidates) and not _ensure_general_topic():
+        # 送到一個不存在的頁面，比讓它們留在提案區更糟：看起來被處理了。
+        return 0
     for candidate in candidates:
         if not candidate.topic.startswith("[NEW:") or not candidate.topic_key:
             continue
@@ -636,8 +677,12 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     result = {"pending": len(candidates), "high": 0, "medium": 0, "low": 0,
               "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0,
               # 已經看過、判定不放行而扣住的。它們不是待辦，但也沒有被丟掉。
+              # 要扣掉 eligible——被扣住卻又重新進場的候選（missing_topic）
+              # 兩邊都算的話，同一批東西會用兩個互相矛盾的標籤各印一次。
               "held": sum(1 for c in staged
-                          if c.candidate_id in registered and c.candidate_id not in promoted)}
+                          if c.candidate_id in registered
+                          and c.candidate_id not in promoted
+                          and c not in candidates)}
     today = date.today()
     for candidate in candidates:
         result[candidate.confidence] = result.get(candidate.confidence, 0) + 1

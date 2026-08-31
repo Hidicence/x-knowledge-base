@@ -106,7 +106,8 @@ def should_skip_path(path: Path) -> bool:
 
 def main() -> int:
     existing = load_existing_queue()
-    existing_card_ids = xkb_paths.card_ids()
+    # 去重移走的卡片也算「處理過」，否則來源書籤會被重排、重新產出重複的卡。
+    existing_card_ids = xkb_paths.carded_ids()
     ts = now_iso()
 
     rows: list[dict] = []

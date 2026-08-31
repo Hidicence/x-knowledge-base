@@ -379,19 +379,30 @@ def check_external_dependencies() -> dict:
             {"ok": False, "msg": "找不到 gbrain — 卡片那一半的召回會靜靜回空"})
     else:
         # 一次真的查詢。「裝在那裡」跟「回答得出來」是兩件事。
-        try:
-            hits = xbrain_query("知識", limit=1)
-            if hits:
-                result["checks"].append({"ok": True, "msg": "gbrain 查得到東西"})
-            else:
-                result["checks"].append(
-                    {"ok": False, "msg": "gbrain 在，但一個常見詞查不到任何東西 — 索引可能是空的"})
-        except Exception as err:  # noqa: BLE001
+        #
+        # xbrain_query 不會拋例外——它把 timeout、找不到執行檔、非零離開碼
+        # 全部接住並回 []。所以這裡不能寫成 try/except：那個分支永遠不會執行，
+        # 而所有失敗都會被說成「索引可能是空的」，在一個專門為了「不要說錯
+        # 原因」而寫的檢查裡說錯原因。空結果本身只能說明「查不到」。
+        hits = xbrain_query("知識", limit=1)
+        if hits:
+            result["checks"].append({"ok": True, "msg": "gbrain 查得到東西"})
+        else:
             result["checks"].append(
-                {"ok": False, "msg": f"gbrain 查詢失敗：{type(err).__name__}: {err}"})
+                {"ok": False,
+                 "msg": "gbrain 一個常見詞查不到東西 — 可能是索引空的，也可能是它根本沒回應"
+                        "（xbrain_query 兩種情況都回空，分不出來）"})
 
-    if shutil.which("openclaw"):
-        result["checks"].append({"ok": True, "msg": "openclaw 在（wiki 鏡像需要它）"})
+    # which() 只看呼叫者的 PATH，而健檢從純 cron 跑，PATH 通常只有
+    # /usr/bin:/bin。openclaw 是使用者裝的，所以光靠 which 會每天早上
+    # 通報一個正常運作的鏡像壞了。
+    openclaw = shutil.which("openclaw") or next(
+        (p for p in (Path("/usr/bin/openclaw"), Path("/usr/local/bin/openclaw"),
+                     Path.home() / ".local" / "bin" / "openclaw") if p.exists()),
+        None,
+    )
+    if openclaw:
+        result["checks"].append({"ok": True, "msg": f"openclaw 在（wiki 鏡像需要它）"})
     else:
         result["checks"].append(
             {"ok": False,

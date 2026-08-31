@@ -87,6 +87,17 @@ def card_files() -> list[Path]:
 def card_ids() -> set[str]:
     """The stems of :func:`card_files` — what callers usually want."""
     return {p.stem for p in card_files()}
+
+
+def carded_ids() -> set[str]:
+    """Every bookmark that has ever been turned into a card, deduplicated ones included.
+
+    Not the same question as :func:`card_ids`. "How many cards are there" must
+    not count cards/_deduped_redundant/ — those were set aside as duplicates.
+    "Has this bookmark been processed" must, because it was: queueing it again
+    makes the worker regenerate the duplicate that deduplication removed.
+    """
+    return {p.stem for p in CARDS_DIR.rglob("*.md") if p.is_file()}
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(DATA_DIR / "bookmarks")))
 XKB_DATA_DIR = DATA_DIR / "x-knowledge-base"
 

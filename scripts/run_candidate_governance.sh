@@ -52,13 +52,18 @@ log() { echo "$*" >>"$LOG_FILE"; }
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] governance start (limit=$LIMIT)"
 
 GOV_OUT=$(mktemp)
-trap 'rm -f "$GOV_OUT"' EXIT
+GOV_ERR=$(mktemp)
+trap 'rm -f "$GOV_OUT" "$GOV_ERR"' EXIT
 
+# stdout 是 JSON，stderr 不是。原本合在一起，於是任何一行警告——包括這一天
+# 才加上的 xkb_failures 提示——都會讓解析失敗，腳本在嵌入之前就結束，
+# 留下的正是它存在要防止的那個狀態：進了 wiki、沒進索引。
 set +e
-python3 scripts/xkb_review.py --governance --limit "$LIMIT" --write-governance >"$GOV_OUT" 2>&1
+python3 scripts/xkb_review.py --governance --limit "$LIMIT" --write-governance \
+  >"$GOV_OUT" 2>"$GOV_ERR"
 gov_status=$?
 set -e
-cat "$GOV_OUT" >>"$LOG_FILE"
+cat "$GOV_OUT" "$GOV_ERR" >>"$LOG_FILE"
 
 if [[ "$gov_status" -ne 0 ]]; then
   echo "XKB 候選治理失敗：離開碼 $gov_status（詳見 $LOG_FILE）" >&2
