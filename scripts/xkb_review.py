@@ -585,8 +585,13 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
                 pre_write.append({"artifact": str(artifact), "snapshot": str(snapshot), "existed": True})
             else:
                 pre_write.append({"artifact": str(artifact), "snapshot": str(snapshot), "existed": False})
+        # _expired 必須在這裡再檢查一次。上面的迴圈對過期候選 continue，
+        # 所以乾跑看起來有擋住；實跑走的是這條路，而這裡原本沒有過濾——
+        # 同一批統計會同時說「隔離 1 條」和「放行 1 條」，指的是同一條。
+        # 一個永遠攔不下東西的閘門，比沒有閘門更糟：它讓人以為擋住了。
         topic_changes = _promote_topics(
             [c for c in bounded if _safe_promotable(c)
+             and not _expired(c, ttl_days, as_of)
              and c.candidate_id not in already_promoted], snapshot_dir
         )
         promoted_ids = {item["candidate_id"] for item in topic_changes}

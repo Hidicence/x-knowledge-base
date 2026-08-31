@@ -183,10 +183,19 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
         # subprocess 版本有 timeout=20，改成同行程之後那個界線消失了，而
         # recall_for_conversation 的嵌入路徑本身沒有任何逾時。hook 只給六秒，
         # 所以一個卡住的端點會無限期擋住整條召回。界線要留著。
-        with ThreadPoolExecutor(max_workers=1) as bounded:
+        # 不能用 with。Executor.__exit__ 會 shutdown(wait=True)，所以逾時
+        # 之後那個區塊還是會等到工作結束——實測宣稱 0.5 秒、實際 3.00 秒。
+        # 這個界線存在的理由就是不要被卡住的端點拖住六秒的 hook 預算，
+        # 而它原本一秒都沒擋到。
+        bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
+        try:
             items = bounded.submit(
                 lambda: _associative_search(query, limit=limit)["results"]
             ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
+        finally:
+            # wait=False：放棄它，不要等。執行緒是 daemon，所以卡住的請求
+            # 也不會讓整個行程留著不走。
+            bounded.shutdown(wait=False)
         results = [
             {
                 "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
