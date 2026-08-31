@@ -345,6 +345,8 @@ def _sync_queue() -> bool:
     proc = subprocess.run(
         [sys.executable, str(script)],
         cwd=str(WORKSPACE), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=900,
+        env=xkb_paths.subprocess_env(),
     )
     if proc.returncode != 0:
         error = (proc.stderr or proc.stdout or "").strip()[-300:]
@@ -364,6 +366,10 @@ def _sync_enriched_index() -> bool:
         cwd=str(WORKSPACE),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=900,
+        env=xkb_paths.subprocess_env(),
     )
     output = (proc.stdout or "").strip()
     if output:

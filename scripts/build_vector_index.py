@@ -372,9 +372,20 @@ def main() -> int:
             print(f"    → \"{text[:80]}...\"")
         return 0
 
-    if not to_embed:
+    # 分區檔不完整就不能提早結束：一旦 semantic_index.bin 或 cards_index.bin
+    # 被刪掉或寫到一半，之後每一次增量執行都會「沒有新東西」然後離開，
+    # 而召回永遠停在慢的 JSON 路徑上——安靜地、永久地。
+    #
+    # write_semantic_index 會寫兩個檔（.json 的鍵表與 .bin 的向量），兩個都要在。
+    def _partition_ok(path: Path) -> bool:
+        return path.exists() and path.with_suffix(".bin").exists()
+
+    _partitions_ok = _partition_ok(SEMANTIC_FILE) and _partition_ok(CARDS_FILE)
+    if not to_embed and _partitions_ok:
         print("✅ Nothing to embed.")
         return 0
+    if not to_embed:
+        print("沒有新內容要嵌入，但分區索引檔不完整——從既有向量重新寫出。")
 
     # Init provider
     try:

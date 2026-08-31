@@ -29,7 +29,7 @@ from pathlib import Path
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import build_prompt, find_related_context, llm_call as _llm_call, gbrain_put as _gbrain_put
-from category_classifier import classify_content
+from category_classifier import apply_category, classify_content
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths

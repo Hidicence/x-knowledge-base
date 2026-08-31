@@ -71,9 +71,11 @@ status=$?
 set -e
 cat "$OUT" >>"$LOG_FILE"
 
+# worker 對單筆失敗也回非零，而這裡原本直接結束——於是十九張成功的卡片
+# 寫進了磁碟卻沒進語意索引，正是這支腳本註解裡說「最不該有的狀態」。
+# 單筆失敗交給下面的 failed_count 報告；只有連 done 都讀不出來才算整批壞掉。
 if [[ "$status" -ne 0 ]]; then
-  echo "XKB 書籤批次失敗：離開碼 $status（詳見 $LOG_FILE）" >&2
-  exit "$status"
+  log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] worker exited $status — 仍會嘗試嵌入已產出的卡片"
 fi
 
 done_count=$(sed -n 's/.*done=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
