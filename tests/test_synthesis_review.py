@@ -124,6 +124,41 @@ class SynthesisReviewTest(unittest.TestCase):
         self.assertEqual(self.calls, [BULLETS], "應該沿用審閱稿，不是重跑一次")
         self.assertIn(UNDIGESTED, self.text())
 
+    def test_digesting_twice_does_not_digest_the_conclusions(self) -> None:
+        """再跑一次，素材是剩下的條列，不是上一輪的結論。
+
+        2026-08-31 的 09:00 通知要求消化四頁，其中三頁前一晚才消化完——因為
+        結論本身也是條列。照著做的話，會把結論再壓一次，那些讓結論值得留下
+        的具體細節就沒了。
+        """
+        self.assertEqual(syn.cmd_topic("t", apply=True), 0)
+        first = self.text()
+        self.assertIn("第 1 次消化的結論", first)
+
+        self.calls.clear()
+        self.assertEqual(syn.cmd_topic("t", apply=True, regenerate=True), 0)
+
+        # 素材空了就直接結束，連模型都不用叫——這一頁已經沒有東西好消化了。
+        self.assertEqual(self.calls, [], "結論不該被當成素材再消化一次")
+        self.assertIn("第 1 次消化的結論", self.text(), "既有結論必須原封不動保留")
+
+    def test_the_undigested_bullets_are_offered_again(self) -> None:
+        """「尚未消化」的相反：它們本來就在等下一次。"""
+        self.lose = [UNDIGESTED]
+        self.assertEqual(syn.cmd_topic("t", apply=True), 0)
+
+        self.calls.clear()
+        self.lose = []
+        syn.cmd_topic("t", apply=False, regenerate=True)
+        self.assertEqual(self.calls, [1], "上次消化不出來的那條要再試一次")
+
+    def test_the_daily_summary_counts_the_same_thing(self) -> None:
+        """通知不要自己數一套。數錯的那一套，就是每天叫你做已經做完的事。"""
+        self.assertEqual(syn.cmd_topic("t", apply=True), 0)
+        _, waiting, _, conclusions = syn.undigested(self.text())
+        self.assertEqual(waiting, [], "消化完之後就沒有待消化的素材了")
+        self.assertIn("第 1 次消化的結論", conclusions)
+
 
 if __name__ == "__main__":
     unittest.main()

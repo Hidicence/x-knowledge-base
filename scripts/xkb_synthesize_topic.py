@@ -77,6 +77,54 @@ def split_page(text: str) -> tuple[str, list[str], list[str]]:
     return "\n".join(prose), bullets, links
 
 
+CONCLUSIONS_HEADING = "## 結論（消化自累積筆記）"
+UNDIGESTED_HEADING = "## 尚未消化"
+SOURCES_HEADING = "## 出處"
+GENERATED_HEADINGS = (CONCLUSIONS_HEADING, UNDIGESTED_HEADING, SOURCES_HEADING)
+
+
+def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
+    """拆成 (人寫的部分, 既有結論, 尚未消化的條列, 出處)。
+
+    消化寫出來的區塊要認得出來，否則再跑一次就會把結論當成素材，再壓一次
+    結論——原本那些具體細節就是這樣消失的。而「尚未消化」相反：它們本來
+    就在等下一次，所以要重新交出去。
+    """
+    positions = [text.index(h) for h in GENERATED_HEADINGS if h in text]
+    if not positions:
+        return text, "", [], []
+
+    human, tail = text[: min(positions)], text[min(positions) :]
+    blocks: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in tail.splitlines():
+        if line.strip() in GENERATED_HEADINGS:
+            current = line.strip()
+            blocks[current] = []
+        elif current is not None:
+            blocks[current].append(line)
+
+    def bullets_of(heading: str) -> list[str]:
+        return [l.strip() for l in blocks.get(heading, []) if l.strip().startswith("- ")]
+
+    conclusions = "\n".join(blocks.get(CONCLUSIONS_HEADING, [])).strip("\n")
+    return human, conclusions, bullets_of(UNDIGESTED_HEADING), bullets_of(SOURCES_HEADING)
+
+
+def undigested(text: str) -> tuple[str, list[str], list[str], str]:
+    """(前言, 待消化的條列, 出處, 既有結論) —— 給每個想知道「還剩多少」的人。
+
+    「還沒消化的有幾條」在三個地方各自被算過一次，其中兩種算法會把結論也
+    算進去。這是唯一的定義。
+    """
+    human, conclusions, waiting, prior_links = split_generated(text)
+    prose, bullets, links = split_page(human)
+    for line in prior_links:
+        if line not in links:
+            links.append(line)
+    return prose, bullets + waiting, links, conclusions
+
+
 def take_bullets(markdown: str, limit: int) -> list[str]:
     """只留前 limit 條。
 
@@ -146,7 +194,6 @@ def synthesise(topic: str, prose: str, bullets: list[str],
 
 DIGEST_LINE = re.compile(r"^<!-- source-digest: ([0-9a-f]{16}) -->$", re.M)
 LOST_LINE = re.compile(r"^<!-- lost-bullets: (\d+) -->$", re.M)
-UNDIGESTED_HEADING = "## 尚未消化"
 
 
 def digest(bullets: list[str]) -> str:
@@ -224,7 +271,7 @@ def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]
 def cmd_list() -> int:
     print(f"{'主題':34}{'敘述條列':>8}{'純連結':>8}{'值得消化':>10}")
     for path in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md")):
-        _, bullets, links = split_page(path.read_text(encoding="utf-8", errors="replace"))
+        _, bullets, links, _ = undigested(path.read_text(encoding="utf-8", errors="replace"))
         worth = "是" if len(bullets) >= 10 else ""
         print(f"{path.stem[:32]:34}{len(bullets):>8}{len(links):>8}{worth:>10}")
     return 0
@@ -236,7 +283,7 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
         print(f"找不到主題頁：{path}", file=sys.stderr)
         return 1
     text = path.read_text(encoding="utf-8", errors="replace")
-    prose, bullets, links = split_page(text)
+    prose, bullets, links, existing = undigested(text)
     per_chunk = PER_CHUNK
     if not bullets:
         print("這一頁沒有累積的條列可以消化。")
@@ -296,11 +343,12 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     # 弄錯了沒有備份就回不來。
     backup = path.with_suffix(f".md.before-synthesis-{datetime.now().strftime('%Y%m%d-%H%M')}")
     shutil.copy2(path, backup)
-    merged = prose.rstrip() + "\n\n## 結論（消化自累積筆記）\n\n" + synthesis
+    conclusions = f"{existing}\n\n{synthesis}" if existing else synthesis
+    merged = prose.rstrip() + "\n\n" + CONCLUSIONS_HEADING + "\n\n" + conclusions
     if lost:
         merged += ("\n\n" + UNDIGESTED_HEADING + "\n\n"
                    + "\n".join(lost))
-    merged += "\n\n## 出處\n\n" + "\n".join(links) + "\n"
+    merged += "\n\n" + SOURCES_HEADING + "\n\n" + "\n".join(links) + "\n"
     path.write_text(merged, encoding="utf-8")
     print(f"  已併回 {path.name}（備份：{backup.name}）")
     return 0

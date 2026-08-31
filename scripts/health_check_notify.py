@@ -163,10 +163,14 @@ def _inventory_lines() -> list[str]:
     # tool nobody remembers to run. openclaw-agent-workflows reached 3,278
     # bullets before anyone counted.
     try:
+        # Ask the tool that would do the work what is left to do. Counting
+        # "- " lines here counted the conclusions synthesis had just written,
+        # so this line asked for four pages on 2026-08-31 and three of them had
+        # been digested the evening before.
+        from xkb_synthesize_topic import undigested
         bloated = [
             path.stem for path in sorted(xkb_paths.WIKI_TOPICS_DIR.glob("*.md"))
-            if sum(1 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
-                   if line.lstrip().startswith("- ")) >= 200
+            if len(undigested(path.read_text(encoding="utf-8", errors="ignore"))[1]) >= 200
         ]
         if bloated:
             lines.append(f"待整理：{len(bloated)} 個主題頁條列過多"
