@@ -27,8 +27,13 @@ WORKSPACE = Path(os.getenv(
     "OPENCLAW_WORKSPACE",
     os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))
 ))
-CARDS_DIR = WORKSPACE / "memory" / "cards"
-INDEX_FILE = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
+
+CARDS_DIR = xkb_paths.CARDS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 
 
 def infer_source_type(stem: str) -> str:
@@ -97,7 +102,7 @@ def fix_frontmatter(text: str, stem: str) -> tuple[str, list[str]]:
 
 def migrate_cards(dry_run: bool) -> dict:
     stats = {"fixed": 0, "skipped": 0, "changes": {}}
-    for card_path in sorted(CARDS_DIR.glob("*.md")):
+    for card_path in xkb_paths.card_files():
         stem = card_path.stem
         text = card_path.read_text(encoding="utf-8", errors="ignore")
         new_text, changes = fix_frontmatter(text, stem)

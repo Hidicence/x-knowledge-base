@@ -402,6 +402,11 @@ nothing. Models make judgements here; they do not carry pipelines.
 
 ## Tools you run by hand
 
+| Tool | When you would reach for it |
+| --- | --- |
+| `xkb_import_l1_traces.py` | A machine other than this one wrote conversation traces into `runtime/l1-traces/`; this carries them into the shared knowledge service. Nothing on the VPS has written there since 2026-08-24, when Hermes replaced OpenClaw as the scheduler — conversations now reach the service directly through the agent hook. |
+
+
 Everything else in `scripts/` is either on a schedule or called by something
 that is. These six are neither, and that is correct — they answer a question
 or set something up, on demand. They are listed because an unlisted script

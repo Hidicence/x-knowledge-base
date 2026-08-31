@@ -30,6 +30,7 @@ from _card_prompt import (
 )
 from category_classifier import classify_content
 from category_classifier import apply_category
+import xkb_paths
 SOURCE_LABELS["youtube"] = "YouTube 影片"   # ensure registered
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -40,8 +41,8 @@ WORKSPACE_DIR = Path(
         os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))
     )
 )
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 YOUTUBE_DIR = BOOKMARKS_DIR / "youtube"
 COOKIES_FILE = Path.home() / ".config" / "yt-dlp" / "cookies.txt"
 

@@ -144,7 +144,7 @@ def _inventory_lines() -> list[str]:
     """
     lines = []
     try:
-        cards = len(list(xkb_paths.CARDS_DIR.glob("*.md")))
+        cards = len(xkb_paths.card_files())
         lines.append(f"知識庫：{cards:,} 張卡片")
     except OSError:
         pass

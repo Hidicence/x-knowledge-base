@@ -31,8 +31,8 @@ WIKI_DIR = xkb_paths.WIKI_DIR
 TOPICS_DIR = WIKI_DIR / "topics"
 STAGING_DIR = WIKI_DIR / "_staging"
 MEMORY_DIR = WORKSPACE / "memory"
-BOOKMARKS_DIR = MEMORY_DIR / "bookmarks"
-CARDS_DIR = MEMORY_DIR / "cards"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
 SEARCH_INDEX_PATH = BOOKMARKS_DIR / "search_index.json"
 REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
 LOG_PATH = WIKI_DIR / "log.md"
@@ -108,7 +108,7 @@ def status_bookmarks(items: list[dict], days: int) -> dict:
 def status_cards() -> dict:
     if not CARDS_DIR.exists():
         return {"total": 0}
-    cards = list(CARDS_DIR.glob("*.md"))
+    cards = xkb_paths.card_files()
     return {"total": len(cards)}
 
 

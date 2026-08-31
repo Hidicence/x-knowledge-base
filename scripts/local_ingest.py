@@ -35,13 +35,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _card_prompt import gbrain_put as _gbrain_put
 from _card_prompt import condense_long_content
 from category_classifier import classify_content, apply_category
+import xkb_paths
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
     os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-CARDS_DIR     = WORKSPACE_DIR / "memory" / "cards"
-INDEX_FILE    = BOOKMARKS_DIR / "search_index.json"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 _SKILL_DIR = Path(__file__).resolve().parent.parent

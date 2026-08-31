@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
-CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
 QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
 
 VALID_STATUSES = {"todo", "processing", "done", "failed", "skipped"}
@@ -102,7 +102,7 @@ def should_skip_path(path: Path) -> bool:
 
 def main() -> int:
     existing = load_existing_queue()
-    existing_card_ids = {p.stem for p in CARDS_DIR.rglob("*.md") if p.is_file()}
+    existing_card_ids = xkb_paths.card_ids()
     ts = now_iso()
 
     rows: list[dict] = []

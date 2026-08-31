@@ -29,7 +29,7 @@ import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
 _SKILL_DIR = Path(__file__).resolve().parent.parent
-WIKI_DIR = Path(os.getenv("XKB_WIKI_DIR", str(WORKSPACE / "memory" / "x-knowledge-base" / "wiki")))
+WIKI_DIR = xkb_paths.WIKI_DIR
 TOPICS_DIR = WIKI_DIR / "topics"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"

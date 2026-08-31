@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 YOUTUBE_CARD_DIR = BOOKMARKS_DIR / "youtube"
 RAW_DIR = WORKSPACE / "memory" / "x-knowledge-base" / "youtube-raw"
 SKILL_DIR = Path(__file__).resolve().parent.parent

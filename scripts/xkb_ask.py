@@ -46,9 +46,9 @@ def _resolve_gbrain_dir(settings: dict[str, str]) -> Path:
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORKSPACE_DIR = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE_DIR / "memory" / "bookmarks")))
-INDEX_FILE     = BOOKMARKS_DIR / "search_index.json"
-VECTOR_FILE    = BOOKMARKS_DIR / "vector_index.json"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
+VECTOR_FILE = xkb_paths.VECTOR_FILE
 _SKILL_DIR     = Path(__file__).resolve().parent.parent
 WIKI_DIR       = xkb_paths.WIKI_DIR
 TOPICS_DIR     = WIKI_DIR / "topics"

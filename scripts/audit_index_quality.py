@@ -30,8 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = WORKSPACE / "memory" / "bookmarks"
-INDEX_FILE = BOOKMARKS_DIR / "search_index.json"
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 
 LOW_SIGNAL_SUMMARIES = {"", "（待整理）", "待整理", "todo", "tbd", "n/a"}
 

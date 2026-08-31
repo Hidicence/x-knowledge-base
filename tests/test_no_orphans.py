@@ -10,11 +10,24 @@ SCRIPTS = ROOT / "scripts"
 DOCS = ("SKILL.md", "README.md", "README.zh.md")
 
 
+def _is_own_test(path: Path, stem: str) -> bool:
+    """A script's own test is not a caller.
+
+    xkb_daily_pipeline.py was superseded on 2026-08-26 and stayed in the tree
+    for a week, because tests/test_xkb_daily_pipeline.py imports it and this
+    check counted that as a caller. A file kept alive only by its own test is
+    still called by nothing; the test is exercising something nothing runs.
+    """
+    return path.name in (f"test_{stem}.py", f"{stem}_test.py")
+
+
 def _referenced_anywhere(name: str, stem: str) -> bool:
     """Called by other code, or named in the documentation."""
     for directory in (SCRIPTS, ROOT / "tests", ROOT / "tools"):
         for path in directory.rglob("*"):
             if path.suffix not in (".py", ".sh") or path.name == name:
+                continue
+            if _is_own_test(path, stem):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             if name in text or re.search(rf"\b(?:import|from)\s+{re.escape(stem)}\b", text):

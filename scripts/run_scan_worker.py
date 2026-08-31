@@ -37,8 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
-CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
 
 
 def _get_api_key() -> str:
@@ -154,7 +154,7 @@ def _is_junk_content(content: str) -> bool:
 def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str, str, str, str]]:
     """Return list of (filepath, content, card_id, source_url, category) for unenriched files."""
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
-    existing_card_ids = {f.stem for f in CARDS_DIR.glob("*.md")}
+    existing_card_ids = xkb_paths.card_ids()
 
     results = []
     skip_dirs = {"notebooklm_exports", "__pycache__", "youtube"}

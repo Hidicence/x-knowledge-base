@@ -519,7 +519,7 @@ def check_index_freshness() -> dict:
 
     # cards vs index coverage
     if CARDS_DIR.exists():
-        card_count = len(list(CARDS_DIR.glob("*.md")))
+        card_count = len(xkb_paths.card_files())
         result["checks"].append({
             "ok": enriched >= card_count * 0.9,
             "msg": f"Cards in memory/cards/: {card_count} | enriched in index: {enriched}"

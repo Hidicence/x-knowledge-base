@@ -69,7 +69,24 @@ DATA_DIR, DATA_DIR_SOURCE = _resolve_data_dir()
 # 保留這個名字讓它們能平移過來。
 WORKSPACE = DATA_DIR.parent
 
-CARDS_DIR = DATA_DIR / "cards"
+CARDS_DIR = Path(os.getenv("CARDS_DIR", str(DATA_DIR / "cards")))
+
+
+def card_files() -> list[Path]:
+    """The knowledge cards: the .md files directly under cards/.
+
+    Subdirectories are not cards. cards/_deduped_redundant/ holds ones
+    governance set aside as duplicates — still on disk, no longer part of the
+    knowledge base. One script counted with rglob and every other with glob,
+    so "how many cards are there" had two answers, 1,538 and 1,539, and the
+    gap widens with every deduplication.
+    """
+    return sorted(p for p in CARDS_DIR.glob("*.md") if p.is_file())
+
+
+def card_ids() -> set[str]:
+    """The stems of :func:`card_files` — what callers usually want."""
+    return {p.stem for p in card_files()}
 BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(DATA_DIR / "bookmarks")))
 XKB_DATA_DIR = DATA_DIR / "x-knowledge-base"
 

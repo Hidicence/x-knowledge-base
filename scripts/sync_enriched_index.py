@@ -30,9 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 
 WORKSPACE = xkb_paths.WORKSPACE
-BOOKMARKS_DIR = Path(os.getenv("BOOKMARKS_DIR", str(WORKSPACE / "memory" / "bookmarks")))
-CARDS_DIR = Path(os.getenv("CARDS_DIR", str(WORKSPACE / "memory" / "cards")))
-INDEX_FILE = Path(os.getenv("INDEX_FILE", str(BOOKMARKS_DIR / "search_index.json")))
+BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
+CARDS_DIR = xkb_paths.CARDS_DIR
+INDEX_FILE = xkb_paths.INDEX_FILE
 
 
 def _extract_summary(text: str) -> str:
@@ -186,7 +186,7 @@ def main() -> None:
         if item_id:
             id_to_idx[item_id] = idx
 
-    card_files = sorted(CARDS_DIR.glob("*.md"))
+    card_files = xkb_paths.card_files()
     print(f"📁 {len(card_files)} enriched cards  |  {len(id_to_idx)} indexed items")
 
     updated = 0
