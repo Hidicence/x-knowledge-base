@@ -131,6 +131,8 @@ class SynthesisReviewTest(unittest.TestCase):
         結論本身也是條列。照著做的話，會把結論再壓一次，那些讓結論值得留下
         的具體細節就沒了。
         """
+        # 先產審閱稿再併回——沒有稿就 --apply 現在會被擋（回 5）。
+        self.assertEqual(syn.cmd_topic("t", apply=False), 0)
         self.assertEqual(syn.cmd_topic("t", apply=True), 0)
         first = self.text()
         self.assertIn("第 1 次消化的結論", first)
@@ -145,6 +147,7 @@ class SynthesisReviewTest(unittest.TestCase):
     def test_the_undigested_bullets_are_offered_again(self) -> None:
         """「尚未消化」的相反：它們本來就在等下一次。"""
         self.lose = [UNDIGESTED]
+        self.assertEqual(syn.cmd_topic("t", apply=False), 0)
         self.assertEqual(syn.cmd_topic("t", apply=True), 0)
 
         self.calls.clear()
@@ -154,11 +157,27 @@ class SynthesisReviewTest(unittest.TestCase):
 
     def test_the_daily_summary_counts_the_same_thing(self) -> None:
         """通知不要自己數一套。數錯的那一套，就是每天叫你做已經做完的事。"""
+        self.assertEqual(syn.cmd_topic("t", apply=False), 0)
         self.assertEqual(syn.cmd_topic("t", apply=True), 0)
         _, waiting, _, conclusions = syn.undigested(self.text())
         self.assertEqual(waiting, [], "消化完之後就沒有待消化的素材了")
         self.assertIn("第 1 次消化的結論", conclusions)
 
+
+    def test_apply_without_a_draft_is_refused(self) -> None:
+        """沒有審閱稿就併回，等於產完直接寫進 wiki——兩段式流程就沒有意義了。
+
+        原本這道關卡只在「稿子存在但對不上」時才擋，所以一個全新的主題頁
+        用一次 --apply 就會被產生並覆寫，中間沒有人看過。
+        """
+        self.assertEqual(syn.cmd_topic("t", apply=True), 5)
+        self.assertEqual(self.calls, [], "被擋下時不該花錢跑模型")
+        self.assertNotIn("消化的結論", self.text(), "也不該寫進頁面")
+
+    def test_regenerate_is_the_explicit_way_to_skip_review(self) -> None:
+        """明確表示不需要審閱時，仍然放行——擋的是預設行為，不是能力。"""
+        self.assertEqual(syn.cmd_topic("t", apply=True, regenerate=True), 0)
+        self.assertIn("第 1 次消化的結論", self.text())
 
 if __name__ == "__main__":
     unittest.main()

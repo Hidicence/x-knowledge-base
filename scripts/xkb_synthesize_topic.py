@@ -310,6 +310,12 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     if synthesis:
         print(f"  沿用既有審閱稿：{review.name}")
     else:
+        if apply and not review.exists() and not regenerate:
+            # 沒有審閱稿就 --apply，等於產生完直接寫進 wiki——而兩段式流程
+            # 存在的理由就是中間要有人看過。這比舊稿對不上更值得擋。
+            print("  這一頁還沒有審閱稿。先不加 --apply 跑一次，看過再併回；", file=sys.stderr)
+            print("  確定不需要審閱的話，加 --regenerate 明確表示。", file=sys.stderr)
+            return 5
         if apply and review.exists() and not regenerate:
             print("  審閱稿是針對舊版頁面產生的，頁面之後又有變動。", file=sys.stderr)
             print("  請先重跑一次消化、看過新稿，再 --apply；"
@@ -341,8 +347,10 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
         print(f"  警告：低於 {MIN_COMPRESSION}x，代表這一頁的內容彼此不相關，")
         print("        消化不出共同結論。建議先把它拆成幾個主題，而不是硬消化。")
         if apply:
+            # 另外兩條拒絕路徑分別回 3 與 4；這裡原本印個警告就回 0，
+            # 於是呼叫端分不出「併好了」與「拒絕併」。
             print("  已停止：不會把沒有消化過的內容併回主題頁。", file=sys.stderr)
-            apply = False
+            return 6
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     review.write_text(render(topic, synthesis, links, bullets, lost),

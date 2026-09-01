@@ -139,8 +139,13 @@ def main() -> int:
         # 同一區間內優先收最相關的
         scored.sort(key=lambda kv: kv[0], reverse=True)
         chosen = scored[: args.cap]
-        for _, card in scored[args.cap:]:
-            skip.setdefault(topic, []).append(card.url)
+        # 超過上限的不寫進 skip。skip 是持久的人工決策清單，
+        # check_manual_decision 把它當成「這張卡不要收」的永久判定——而 cap
+        # 的意思只是「這一輪先收這麼多」。把批次大小記成對卡片的判決，
+        # 等於第 21 張從此再也不會被考慮。
+        overflow = len(scored) - len(chosen)
+        if overflow:
+            print(f"  {topic}：超過上限 {args.cap}，{overflow} 張留待下次（未列入 skip）")
         allow[topic] = [c.url for _, c in chosen]
 
         summary.append((topic, len(cards), off_topic, redundant, len(chosen)))

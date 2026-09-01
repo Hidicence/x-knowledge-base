@@ -597,8 +597,13 @@ class KnowledgeCatalog:
             "warnings": [],
         }
 
-    def relations(self, card_id: str) -> dict[str, Any]:
-        card = self.card(card_id)
+    def relations(self, card_id: str, namespace: str = "private") -> dict[str, Any]:
+        """一張卡的關聯資訊。要帶 namespace，跟其他讀取端點一樣。
+
+        原本用預設的 private 去查卡片，所以被釘在別的 namespace 的 token
+        也分得出「這張卡存在但沒有關聯區」與「查無此卡」——那就是一個
+        存在性探測。"""
+        card = self.card(card_id, namespace)
         content = card.get("content", "") if card else ""
         return {"schema": KNOWLEDGE_SCHEMA, "card_id": card_id, "relations": [], "status": "derived_from_card_content", "note": "No canonical relation store is currently exposed." if card else "card_not_found", "content_has_relation_section": bool(re.search(r"relation|關係|補充|衝突|延伸", content, re.I))}
 
@@ -1284,7 +1289,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path.startswith("/v1/cards/") and parsed.path.endswith("/relations"):
                 card_id = unquote(parsed.path.split("/")[3])
-                item = self.store.catalog.relations(card_id)
+                item = self.store.catalog.relations(
+                    card_id, self.namespace(principal, (params.get("namespace") or [""])[0])
+                )
                 self.send_json(200, item)
                 return
             if parsed.path.startswith("/v1/cards/"):
