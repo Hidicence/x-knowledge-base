@@ -41,6 +41,11 @@ from concurrent.futures import ThreadPoolExecutor
 # 卡片層的上限。原本由 subprocess 的 timeout=20 提供，改成同行程後要自己帶。
 ASSOCIATIVE_TIMEOUT_S = 20
 
+# side_hint 的門檻。兩個尺度，兩個值——用同一個數字比對餘弦相似度與關鍵字
+# 分數，是這個專案反覆犯的那一類錯。
+SIDE_HINT_KEYWORD = 2.0
+SIDE_HINT_SEMANTIC = 0.5
+
 # 關鍵字分數的實際範圍：下限 6（min_score），實測上界約 20。換算成 0–1 時
 # 用固定的上界而不是這一批的最大值——用批內最大值的話，一批爛結果裡最好的
 # 那一個會被算成滿分，這正是 MMR 正規化當初犯過的錯。
@@ -336,7 +341,11 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
         delivery_mode = "inline_injection" if text_parts else "none"
         formatted_text = "\n\n".join(text_parts) if text_parts else ""
+        # 卡片層的結果也進了 result_dicts 與輸出文字，卻沒有被標記為已顯示，
+        # 所以同一張卡在整個 session 視窗（四小時）裡每次 hard trigger 都會
+        # 再推一次。soft 路徑本來就做對了。
         _dedup_mark_shown(filtered[:3])
+        _dedup_mark_shown(assoc_results)
         duration_ms = int((time.monotonic() - t0) * 1000)
         _write_telemetry(_build_telemetry(message, parsed, len(result_dicts), delivery_mode, duration_ms))
 
@@ -412,7 +421,14 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
         # Delivery mode based on content quality, not trigger confidence
         best_wiki_score = max((r.score for r in wiki_results_filtered), default=0.0)
-        if best_wiki_score >= 2.0 or (not has_wiki and parsed.confidence >= 0.6):
+        # 2.0 是關鍵字時代的門檻（wiki 分數當時是 0.40–3.65）。改用語意之後
+        # 分數上限是 1.0，所以這個條件永遠不成立：只要有 wiki 命中就一定走
+        # expandable_hint，而卡片層算完、過濾完、去重完，然後完全不顯示。
+        wiki_is_semantic = any(
+            r.source_type.endswith("_semantic") for r in wiki_results_filtered
+        )
+        wiki_threshold = SIDE_HINT_SEMANTIC if wiki_is_semantic else SIDE_HINT_KEYWORD
+        if best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
             delivery_mode = "side_hint"
         else:
             delivery_mode = "expandable_hint"

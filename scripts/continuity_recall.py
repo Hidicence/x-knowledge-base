@@ -631,7 +631,15 @@ def format_chat(results: list[RecallResult]) -> str:
         return ""
     lines = ["【知識庫補位】"]
     for r in results:
-        source_label = "MEMORY" if r.source_type == "memory" else f"wiki/{r.url.split('/')[-1] if r.url else r.source_file}"
+        # 語意路徑產生的是 memory_semantic / wiki_semantic，不是 memory /
+        # wiki——原本只比對 "memory"，所以每一筆語意召回的記憶檔都被標成
+        # wiki/memory/xxx.md：說它是 wiki 頁，還給一個不存在的路徑。
+        if r.source_type.startswith("memory"):
+            source_label = "MEMORY"
+        elif r.url:
+            source_label = f"wiki/{r.url.split('/')[-1]}"
+        else:
+            source_label = f"wiki/{Path(r.source_file).stem}"
         lines.append(f"• [{source_label}] {r.section}")
         if r.excerpt:
             lines.append(f"  {r.excerpt[:150]}")

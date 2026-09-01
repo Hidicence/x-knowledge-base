@@ -288,6 +288,12 @@ SELF_DERIVED_PENALTY = float(os.getenv("XKB_SELF_DERIVED_PENALTY", "-0.15"))
 PROVENANCE_FIELDS = ("summary", "searchable", "relative_path", "path", "title")
 
 
+def _provenance_only(item: Dict[str, Any]) -> Dict[str, float]:
+    """只帶出處降權的調整包。gbrain 路徑沒有主題加權可算。"""
+    penalty = _provenance_penalty(item)
+    return {"provenance": penalty, "total_adjustment": penalty}
+
+
 def _provenance_penalty(item: Dict[str, Any]) -> float:
     if (item.get("provenance") or "").strip().lower() == "self-derived":
         return SELF_DERIVED_PENALTY
@@ -408,8 +414,13 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
             "matched_tags": [],
             # gbrain 是這台機器上實際會走的模式，而它原本完全不算調整——
             # 於是回音室防護在主要路徑上等於不存在。
-            "ranking_adjustments": {"provenance": _provenance_penalty(hit),
-                                    "total_adjustment": _provenance_penalty(hit)},
+            # 要看組好的欄位（摘要、路徑），不是 gbrain 回傳的原始 item：
+            # self-derived 的線索在 relative_path 與 summary 上。
+            "ranking_adjustments": _provenance_only({
+                "summary": summary,
+                "relative_path": f"cards/{slug}.md",
+                "title": title,
+            }),
             "relevance_reason": f"gbrain 語意+關鍵字混合 RRF ({score:.4f})",
         })
     return results
@@ -854,51 +865,28 @@ def main() -> int:
         print("請提供 query", file=sys.stderr)
         return 1
 
-    # 第一層：wiki 知識層（先查合成知識）
-    wiki_hits: List[Dict[str, Any]] = []
-    if not args.no_wiki:
-        wiki_hits = wiki_recall(query, limit=2)
+    # 檢索本身在 search() 裡。原本這裡有一份一模一樣的副本，於是 CLI 與
+    # hook 走的是兩份會各自漂移的程式——而 commit message 宣稱這裡已經只是
+    # 命令列的殼了。
+    found = search(
+        query,
+        limit=args.limit,
+        min_score=args.min_score,
+        index_file=Path(args.index_file),
+        vector_file=Path(args.vector_file),
+        topic_profile_file=Path(args.topic_profile_file),
+        no_wiki=args.no_wiki,
+        no_semantic=args.no_semantic,
+        force_semantic=args.semantic,
+        force_gbrain=args.gbrain,
+    )
+    wiki_hits = found["wiki_hits"]
+    results = found["results"]
+    search_mode = found["search_mode"]
 
-    # 第二層：cards 細節層（gbrain > semantic > keyword）
-    vector_path = Path(args.vector_file)
-    topic_profile_path = Path(args.topic_profile_file)
-
-    # Auto-detect gbrain: read config from xbrain_recall (openclaw.json + env vars)
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from xbrain_recall import GBRAIN_AVAILABLE as _gbrain_available, GEMINI_API_KEY as _gemini_key
-    except ImportError:
-        _gbrain_available = False
-        _gemini_key = ""
-    use_gbrain = args.gbrain or (not args.no_semantic and _gbrain_available and bool(_gemini_key))
-
-    search_mode = "keyword"
-    if use_gbrain:
-        results = gbrain_semantic_recall(query, args.limit)
-        if results:
-            search_mode = "gbrain"
-        else:
-            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
-            search_mode = "keyword_fallback"
-    elif (not args.no_semantic) and (args.semantic or vector_path.exists()):
-        results = semantic_recall(query, args.limit, vector_path, Path(args.index_file), topic_profile_path)
-        if results:
-            search_mode = "semantic"
-        else:
-            results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
-            search_mode = "keyword_fallback"
-    else:
-        results = recall(query, args.limit, args.min_score, Path(args.index_file), topic_profile_path)
-
-    _mode_labels = {
-        "gbrain": "⚡ gbrain 混合搜尋（RRF + Gemini）",
-        "semantic": "🔍 語意向量搜尋",
-        "keyword": "🔤 關鍵字搜尋",
-        "keyword_fallback": "🔤 關鍵字搜尋（語意降級）",
-    }
     if not args.json:
-        wiki_label = "" if args.no_wiki else f" + 📖 Wiki({'有' if wiki_hits else '無'}命中)"
-        print(f"[搜尋模式：{_mode_labels.get(search_mode, search_mode)}{wiki_label}]")
+        wiki_label = "" if args.no_wiki else f" + Wiki({'有' if wiki_hits else '無'}命中)"
+        print(f"[搜尋模式：{MODE_LABELS.get(search_mode, search_mode)}{wiki_label}]")
 
     if args.json:
         print(json.dumps({
