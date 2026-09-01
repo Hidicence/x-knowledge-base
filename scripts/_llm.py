@@ -57,7 +57,8 @@ def _load_model() -> str:
         return FALLBACK_MODEL
 
 
-def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
+def _direct_api_call(system: str, user: str, *, timeout: int = 120,
+                     max_tokens: int = 4096) -> str:
     """
     Fallback when openclaw CLI is not available.
     Uses LLM_API_URL + LLM_API_KEY env vars for direct HTTP calls.
@@ -116,7 +117,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         messages = [{"role": "user", "content": user}]
         payload = {
             "model": model,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
             "messages": messages,
         }
         if system:
@@ -138,7 +139,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120) -> str:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
         }
         headers = {
             "Content-Type": "application/json",
@@ -202,7 +203,8 @@ def _post_with_retry(req, timeout: int) -> dict:
     raise last if last else RuntimeError("Direct API call failed with no error recorded")
 
 
-def call(system: str, user: str, *, model: str | None = None, timeout: int = 120) -> str:
+def call(system: str, user: str, *, model: str | None = None, timeout: int = 120,
+         max_tokens: int = 4096) -> str:
     """
     Call the configured LLM via `openclaw capability model run`.
 
@@ -228,7 +230,7 @@ def call(system: str, user: str, *, model: str | None = None, timeout: int = 120
     # same provider contract.
     settings = _runtime_settings()
     if settings.get("LLM_API_URL") and settings.get("LLM_API_KEY"):
-        return _direct_api_call(system, user, timeout=timeout)
+        return _direct_api_call(system, user, timeout=timeout, max_tokens=max_tokens)
 
     # The OpenClaw CLI is a legacy fallback, and it does not share the
     # direct API's model contract: it requires <provider/model> while the
@@ -312,7 +314,7 @@ def call(system: str, user: str, *, model: str | None = None, timeout: int = 120
         raise RuntimeError(f"Failed to parse openclaw JSON output: {e!r}\nraw={raw_out[:300]}")
     except FileNotFoundError:
         # openclaw not installed — fall back to direct API call
-        return _direct_api_call(system, user, timeout=timeout)
+        return _direct_api_call(system, user, timeout=timeout, max_tokens=max_tokens)
 
 
 def call_raw(prompt: str, *, model: str | None = None, timeout: int = 120) -> str:

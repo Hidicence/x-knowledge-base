@@ -29,7 +29,10 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
                 llm = importlib.import_module("_llm")
                 with mock.patch.object(llm, "_direct_api_call", return_value="ok") as direct:
                     self.assertEqual(llm.call("system", "user"), "ok")
-                direct.assert_called_once_with("system", "user", timeout=120)
+                # max_tokens 現在會一路傳到 API payload。原本 _card_prompt.llm_call
+        # 收下它就丟掉，於是 condense_long_content 每段傳 600、實際拿到 4096。
+        # （目前的供應商不理這個欄位，但參數確實傳到底了——換供應商就會生效。）
+        direct.assert_called_once_with("system", "user", timeout=120, max_tokens=4096)
 
     def test_missing_direct_credential_fails_actionably_without_private_fallback(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):

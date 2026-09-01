@@ -278,15 +278,27 @@ def _read_bookmark(source_path: str) -> str:
     找不到時就用 id 再找一次。
     """
     candidate = Path(source_path)
+    # 絕對路徑與 .. 都不直接採信，但不能因此連「用 id 再找一次」都放棄——
+    # BOOKMARKS_DIR 被指到 WORKSPACE 之外時（.env.example 有寫這是支援的），
+    # sync_tiege_queue 記下來的就是絕對路徑，而那正是這個 fallback 存在的
+    # 場景。守衛的職責是不信任來源，不是取消復原。
     if candidate.is_absolute() or ".." in candidate.parts:
-        return ""
-    full_path = (WORKSPACE / candidate).resolve()
+        full_path = Path("/nonexistent")
+    else:
+        full_path = (WORKSPACE / candidate).resolve()
     bookmarks_root = BOOKMARKS_DIR.resolve()
     if full_path.is_file() and (full_path == bookmarks_root or bookmarks_root in full_path.parents):
         return full_path.read_text(encoding="utf-8", errors="ignore")
     moved = next(xkb_paths.BOOKMARKS_DIR.rglob(f"{Path(source_path).stem}.md"), None)
     if moved and (moved.resolve() == bookmarks_root or bookmarks_root in moved.resolve().parents):
-        print(f"    （書籤已移動：{source_path} → {moved.relative_to(WORKSPACE)}）", flush=True)
+        # relative_to 只是為了訊息好看，但 BOOKMARKS_DIR 在 WORKSPACE 之外時
+        # 它會拋 ValueError——於是一筆「已經成功找到」的書籤被標成失敗。
+        # 一行日誌不該有能力讓它在描述的那個動作失敗。
+        try:
+            shown = moved.relative_to(WORKSPACE)
+        except ValueError:
+            shown = moved
+        print(f"    （書籤已移動：{source_path} → {shown}）", flush=True)
         return moved.read_text(encoding="utf-8", errors="ignore")
     return ""
 

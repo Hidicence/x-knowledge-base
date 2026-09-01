@@ -181,8 +181,20 @@ def source_label(source_type: str) -> str:
 def llm_call(prompt: str, api_key: str = "", max_tokens: int = 2000,
              system: str | None = SYSTEM_PROMPT) -> str:
     """api_key kept for backwards compatibility but is no longer used.
-    Model is configured via config/llm.json."""
-    return _llm_call(system or "", prompt)
+    Model is configured via config/llm.json.
+
+    max_tokens 原本收下來就丟掉，現在會一路傳進 API payload。
+
+    但要說清楚：**目前的供應商（tu-zi 的 gpt-5.6-luna）不理這個欄位**。
+    2026-09-01 實測 max_tokens=16 與 =400 回傳長度完全相同，finish_reason
+    都是 stop；換成 max_completion_tokens 也一樣。所以這個參數現在是「有
+    傳，但不保證生效」——換供應商時它會自己開始起作用，不需要再改程式。
+
+    留著它而不是拿掉，是因為長度控制真正靠的是提示詞裡那句「400 字以內」，
+    而這個參數是第二道保險。一個被宣告、被刻意傳入、然後被默默丟棄的參數
+    比不存在更糟，但一個傳到底、只是供應商不理的參數是誠實的。
+    """
+    return _llm_call(system or "", prompt, max_tokens=max_tokens)
 
 
 # ── 長文 map-reduce 濃縮（TODOS 2026-07-13）─────────────────────────────────
@@ -204,9 +216,19 @@ def condense_long_content(content: str, verbose: bool = False) -> str:
     LLM 失敗時退回舊行為（截斷），絕不阻斷 ingest 主流程。"""
     if len(content) <= MAPREDUCE_THRESHOLD:
         return content
-    chunks = [content[i:i + MAPREDUCE_CHUNK]
-              for i in range(0, len(content), MAPREDUCE_CHUNK)][:MAPREDUCE_MAX_CHUNKS]
-    summaries = []
+    all_chunks = [content[i:i + MAPREDUCE_CHUNK]
+                  for i in range(0, len(content), MAPREDUCE_CHUNK)]
+    chunks = all_chunks[:MAPREDUCE_MAX_CHUNKS]
+    # 超過上限的部分會被丟掉。原本丟得無聲無息，而產出的標頭還寫著「原文 N
+    # 字元」——一份 20 萬字的文件少掉三分之二，卡片上看不出來。這正是這支
+    # 函式要取代的那個行為，換一層又出現。
+    dropped_chars = sum(len(c) for c in all_chunks[MAPREDUCE_MAX_CHUNKS:])
+    if dropped_chars:
+        print(f"  [map-reduce] 超出 {MAPREDUCE_MAX_CHUNKS} 段上限，"
+              f"最後 {dropped_chars} 字元未納入濃縮", file=sys.stderr, flush=True)
+
+    summaries: list[str] = []
+    failed = 0
     for i, chunk in enumerate(chunks, 1):
         try:
             s = llm_call(_MAP_PROMPT.format(i=i, n=len(chunks), chunk=chunk),
@@ -215,12 +237,26 @@ def condense_long_content(content: str, verbose: bool = False) -> str:
             if verbose:
                 print(f"  [map-reduce] chunk {i}/{len(chunks)} → {len(s)} chars")
         except Exception as e:
+            # 一段失敗不該丟掉已經付過錢的其他段。原本直接退回截斷，
+            # 等於把十一次成功的呼叫連同結果一起扔掉。
+            failed += 1
+            summaries.append(f"（第 {i} 段濃縮失敗，內容未納入）")
             if verbose:
-                print(f"  [map-reduce] chunk {i} failed ({e}), falling back to truncation")
-            return content[:MAPREDUCE_THRESHOLD]
+                print(f"  [map-reduce] chunk {i} failed ({e})")
+    if not any(not x.startswith("（第 ") for x in summaries):
+        # 全部都失敗才退回截斷——那時候確實沒有東西可用。
+        return content[:MAPREDUCE_THRESHOLD]
+
+    notes = []
+    if dropped_chars:
+        notes.append(f"末尾 {dropped_chars} 字元超出分段上限未納入")
+    if failed:
+        notes.append(f"{failed}/{len(chunks)} 段濃縮失敗")
+    caveat = f"（{'；'.join(notes)}）" if notes else ""
+
     head = content[:800]
-    reduced = "（以下為長文件分段濃縮，原文 %d 字元）\n\n%s\n\n--- 原文開頭 ---\n%s" % (
-        len(content), "\n\n".join(summaries), head)
+    reduced = "（以下為長文件分段濃縮，原文 %d 字元%s）\n\n%s\n\n--- 原文開頭 ---\n%s" % (
+        len(content), caveat, "\n\n".join(summaries), head)
     return reduced
 
 

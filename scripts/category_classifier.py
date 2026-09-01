@@ -150,4 +150,9 @@ def apply_category(card_content: str, category: str) -> str:
     if re.search(r"^category:\s*.*$", card_content, re.MULTILINE):
         return re.sub(r"^category:\s*.*$", f"category: {category}", card_content,
                       count=1, flags=re.MULTILINE)
-    return card_content.replace("---\n", f"---\ncategory: {category}\n", 1)
+    # 只有在檔案真的以 frontmatter 開頭時才插入。原本是找「第一個 ---」，
+    # 而卡片模板本身充滿分隔線，所以模型沒寫 YAML 區塊時，category 會被插進
+    # 正文中間，卡片反而完全沒有分類欄位。
+    if card_content.startswith("---\n"):
+        return card_content.replace("---\n", f"---\ncategory: {category}\n", 1)
+    return f"---\ncategory: {category}\n---\n\n{card_content}"
