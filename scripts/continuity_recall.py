@@ -456,13 +456,25 @@ def _base_heading(source: str, section: str) -> str:
     """把索引加上的 @N / ~N 拿掉，還原成真正的標題。
 
     只在「原樣找不到、去掉後綴找得到」時才換：真的以 ~2 結尾的標題照樣能用。
+
+    後綴會**疊加**，所以要一層一層剝。寫入端加兩種：`~N` 是同名標題在這一頁
+    的第幾次出現，`@N` 是那個段落切成的第幾塊，於是會出現
+    `#結論（消化自累積筆記）~2@7` 這種鍵。原本只剝一層，這類鍵一律讀不回內容。
+
+    這件事本來看不出來：另外 506 個已經死掉的鍵靠「退回母標題」碰巧讀得回東西，
+    把失敗率稀釋到測試的 90% 門檻之下。清掉死鍵沒有弄壞這個測試，是不再幫它遮掩。
     """
-    if not section or not _INDEX_SUFFIX.search(section):
+    if not section:
         return section
-    if _section_text(source, section):
-        return section
-    stripped = _INDEX_SUFFIX.sub("", section)
-    return stripped if _section_text(source, stripped) else section
+    candidate = section
+    # 最多剝兩層（~N 與 @N），多留一次餘裕以防之後又加了第三種後綴。
+    for _ in range(3):
+        if _section_text(source, candidate):
+            return candidate
+        if not _INDEX_SUFFIX.search(candidate):
+            break
+        candidate = _INDEX_SUFFIX.sub("", candidate)
+    return candidate if _section_text(source, candidate) else section
 
 
 def _section_text(topic_file: str, section: str) -> str:

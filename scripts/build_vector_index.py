@@ -329,9 +329,14 @@ def main() -> int:
     existing_hashes: dict = existing.get("text_hashes", {})
 
     to_embed = []
+    # 這一次「看過」的每一個鍵，不管有沒有排進佇列。清理要靠它，不能靠
+    # queued_keys：增量模式只是跳過『排進佇列』，來源一樣每個都走過。
+    # 把兩者混為一談，就會把沒變動的段落當成消失了而刪掉。
+    enumerated_keys: set[str] = set()
 
     # wiki 段落：把消化過的那一層也納入語意搜尋
     for wiki_key, wiki_text, wiki_hash in knowledge_section_docs():
+        enumerated_keys.add(wiki_key)
         if not (args.incremental and wiki_key in existing_vectors
                 and existing_hashes.get(wiki_key) == wiki_hash):
             to_embed.append((wiki_key, wiki_text, wiki_hash))
@@ -344,6 +349,7 @@ def main() -> int:
             print(f"  ⚠️  No text for: {key}")
             continue
         text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
+        enumerated_keys.add(key)
         if not (args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash):
             to_embed.append((key, card_text, text_hash))
 
@@ -353,6 +359,7 @@ def main() -> int:
             title = (item.get("title") or "").strip()
             for pi, point in enumerate(_extract_key_point_list(md_path), 1):
                 pkey = f"{key}#kp{pi}"
+                enumerated_keys.add(pkey)
                 ptext = (f"{title}. {point}" if title else point)[:500]
                 phash = hashlib.md5(ptext.encode("utf-8")).hexdigest()[:12]
                 if args.incremental and pkey in existing_vectors and existing_hashes.get(pkey) == phash:
@@ -365,6 +372,13 @@ def main() -> int:
     # 集合建一次就好。原本寫在生成式的條件裡，於是每一個既有鍵都重建一次
     # 一萬多個元素的集合——完整重跑時是一萬多次。
     queued_keys = {entry[0] for entry in to_embed}
+    # 死鍵：這次走過的文件底下，索引裡有、但內容已經不存在的鍵。
+    # 跟列舉放在一起算，因為它就是列舉的產物；放到下面去算，會落在
+    # 「沒東西要嵌入就提早結束」的後面，而那正是平常的狀態。
+    examined_docs = {key.split("#", 1)[0] for key in enumerated_keys}
+    stale_keys = [key for key in existing_vectors
+                  if key.split("#", 1)[0] in examined_docs
+                  and key not in enumerated_keys]
     skipped = sum(1 for k in existing_vectors if k not in queued_keys)
     print(f"🔢 To embed: {len(to_embed)}  |  Skipped (incremental): {skipped}")
 
@@ -389,7 +403,9 @@ def main() -> int:
     _semantic_target = Path(os.getenv("XKB_SEMANTIC_INDEX", str(SEMANTIC_FILE)))
     _cards_target = Path(os.getenv("XKB_CARDS_INDEX", str(CARDS_FILE)))
     _partitions_ok = _partition_ok(_semantic_target) and _partition_ok(_cards_target)
-    if not to_embed and _partitions_ok:
+    if stale_keys:
+        print(f"🧹 {len(stale_keys)} 個索引鍵已經沒有對應內容，這一輪清掉")
+    if not to_embed and _partitions_ok and not stale_keys:
         print("✅ Nothing to embed.")
         return 0
     if not to_embed:
@@ -436,26 +452,30 @@ def main() -> int:
     # 但「這次沒產生」不等於「不存在了」：增量執行本來就只看有變動的東西。
     # 安全的規則是：只清掉「這次有檢查過來源、而這次沒有產生」的鍵。沒被
     # 看過的來源，它的鍵一個都不動。
-    # 2026-09-01：這裡原本會清掉「來源被檢查過、但這次沒產生」的鍵。那個判斷
-    # 是錯的，而且是破壞性的：增量執行只要文件的任何一塊變了，整份文件就算
-    # 「被檢查過」，於是它其他沒變的塊全部被刪。一張內文改過的卡片會這樣振盪：
-    # 第 N 次刪掉 #kp*、第 N+1 次補回 #kp* 並刪掉卡片級鍵、第 N+2 次再反過來。
-    # 索引永遠不會同時擁有兩者，每一次都要重新付費嵌入，而 _find_card_rows
-    # 依賴卡片級鍵存在。
+    # 清理沒有對應內容的索引鍵。這一段我寫錯過三次，每次都是同一個混淆的
+    # 不同面向：
     #
-    # 我當時「驗證」的方式是看它刪了 31 個鍵就認為有效——我測的是它**有動作**，
-    # 不是它**動得對**。
+    #   一  用 queued_keys 推出「檢查過的來源」。增量模式下，文件只要有一塊
+    #       變了就算檢查過，於是它其他沒變的塊全被刪——改過的卡片會在論點鍵
+    #       與卡片鍵之間永遠振盪，每晚重新付費嵌入。
+    #   二  改成只在完整重建時清理。但每一條排程都帶 --incremental，於是清理
+    #       從此不會執行。我把破壞性 bug 修成了一個關掉的功能。
+    #   三  規則終於對了，卻放在「沒東西要嵌入就提早結束」的後面——而那正是
+    #       平常的狀態。連跑三次，一次都沒清到。
     #
-    # 正確的清理要建立在「這次有完整重新列舉過的來源」上，而增量模式本來就
-    # 不會完整列舉。所以清理只在完整重建時做。
-    if not args.incremental:
-        produced = {key for key, _ in vectors_list} | queued_keys
-        stale = [key for key in new_vectors if key not in produced]
-        for key in stale:
-            new_vectors.pop(key, None)
-            new_hashes.pop(key, None)
-        if stale:
-            print(f"清掉 {len(stale)} 個已經沒有對應段落的索引鍵（完整重建）")
+    # 真正的分辨是：**列舉 ≠ 排進佇列**。兩種模式都會走過每一個來源，
+    # --incremental 只是跳過「把沒變的排進佇列」。所以要問「這次走到了哪些
+    # 鍵」，而那個問題兩種模式的答案一樣好——這條規則因此不需要看模式，
+    # 那正是它對的跡象。stale_keys 在上面列舉處算好，這裡只執行。
+    #
+    # 限定在「這次走過的文件」之內，順帶關掉另一個風險：卡片鍵只來自
+    # --index-file，拿一份不完整的索引跑完整重建，沒走過的文件一根寒毛都不會動。
+    #
+    # 已知殘留：整頁被刪除時它一個段落都不會被列舉，於是它的鍵留著。
+    # 這是安全的方向——寧可留著也不要誤刪。
+    for key in stale_keys:
+        new_vectors.pop(key, None)
+        new_hashes.pop(key, None)
 
     # Save
     output = {

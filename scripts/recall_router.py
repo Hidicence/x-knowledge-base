@@ -332,8 +332,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         if assoc_results:
             result_dicts += assoc_results
             if assoc_text:
-                text_parts.append(_format_assoc_chat(assoc_results) if assoc_results
-                                  else assoc_text)
+                text_parts.append(_format_assoc_chat(assoc_results))
 
         # Action recall (supplement for execution-planning state)
         action_results = action_recall(query, top_k=3)
@@ -409,7 +408,10 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
 
         # 各層分數尺度不同，換算成可比的 unified_score 之後才排序
         all_results = xkb_score.rank(wiki_result_dicts + assoc_results + contrarian_results)
-        _dedup_mark_shown(all_results)
+        # 標記要等到確定送出去之後。原本在這裡就全部標記，於是分數落在
+        # 0.666–0.749 的 wiki 命中會走 expandable 分支、卡片一個字都沒
+        # 出現，卻已經被記成「顯示過」而在四小時內被壓掉。
+        # 被計算過不等於被讀到。
         has_wiki = bool(wiki_text)
         # has_assoc must check dedup-filtered results, not raw assoc_text
         # (avoids showing "有 N 個相關片段" when everything was dedup'd)
@@ -454,10 +456,15 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                 # 在過濾之前就排好的字串，所以 _drop_irrelevant_cards 與去重
                 # 只改了數字和遙測，注入給模型的文字一個字都沒少。
                 text_parts.append(_format_side_hint(_format_assoc_chat(assoc_results)))
-            elif not has_wiki:
+            else:
+                # 有 wiki 命中時原本什麼都不放，卡片就這樣算完、過濾完、
+                # 去重完，然後消失。摘要式的提示至少讓它可被取用。
                 text_parts.append(_format_expandable(query, len(assoc_results)))
         if contrarian_text:
             text_parts.append(contrarian_text)
+        # 真的組出文字了才記成「顯示過」。
+        if text_parts:
+            _dedup_mark_shown(all_results)
         formatted_text = "\n\n".join(text_parts)
 
         duration_ms = int((time.monotonic() - t0) * 1000)

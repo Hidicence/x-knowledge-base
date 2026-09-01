@@ -113,27 +113,36 @@ def main() -> int:
         # 頁面記的是網址，向量索引的鍵是檔案路徑，中間要換一次。
         absorbed_paths = [url_to_path[u] for u in existing_by_topic.get(topic, set())
                           if u in url_to_path]
-        # lookup_card_vectors 現在每張卡回一串論點向量，不是單一向量。
-        absorbed = [vec for rows in cr.lookup_card_vectors(absorbed_paths).values()
-                    for vec in rows]
+        # 每張卡回的是一串論點向量。這裡保持「一張卡一組」，比對時兩邊都取
+        # 最像的那一條——攤平成一大堆論點向量會改變粒度，而 MAX_REDUNDANCY
+        # 是照卡片級向量調的（同主題兩張卡本來就有 0.7~0.8），拿短短的論點
+        # 互比會輕易衝破 0.92，然後以「重複」永久寫進跳過清單。
+        # 卡片級鍵存在時 rows 只有一條，行為與改動前完全相同。
+        absorbed = [rows for rows in cr.lookup_card_vectors(absorbed_paths).values() if rows]
 
         scored: list[tuple[float, sync.Card]] = []
         off_topic = redundant = 0
         for card in cards:
             card_rows = cr.lookup_card_vectors([card.path or card.url])
-            card_vectors = {k: rows[0] for k, rows in card_rows.items() if rows}
-            vec = next(iter(card_vectors.values()), None)
-            if vec is None:
+            # 取第一條會是靜默的錯誤：卡片級鍵不在時（重建索引或改名之後
+            # 很常見），rows 是這張卡的論點向量，第一條只是字典順序的第一
+            # 個。用它去比 0.55 的硬門檻，第三點正好命中的卡片會被判離題，
+            # 而且以 skip 永久寫進人工決策清單。
+            rows = next((r for r in card_rows.values() if r), None)
+            if rows is None:
                 # 沒有向量就判斷不了。要明確擋掉——
                 # 不放進任何清單的話，--no-llm 會把它當成未表態而直接放行。
                 skip.setdefault(topic, []).append(card.url)
                 continue
-            relevance = max(cr._cosine(vec, s) for s in sections)
+            relevance = max(cr._cosine(v, s) for v in rows for s in sections)
             if relevance < MIN_RELEVANCE:
                 off_topic += 1
                 skip.setdefault(topic, []).append(card.url)
                 continue
-            if absorbed and max(cr._cosine(vec, a) for a in absorbed) > MAX_REDUNDANCY:
+            if absorbed and max(cr._cosine(v, a)
+                                for v in rows
+                                for other in absorbed
+                                for a in other) > MAX_REDUNDANCY:
                 redundant += 1
                 skip.setdefault(topic, []).append(card.url)
                 continue

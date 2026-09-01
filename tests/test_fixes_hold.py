@@ -20,8 +20,8 @@
 """
 from __future__ import annotations
 
-import argparse
 import inspect
+import os
 import subprocess
 import sys
 import tempfile
@@ -43,17 +43,27 @@ class ReadOnlyFlagsWriteNothing(unittest.TestCase):
     def test_review_run_leaves_the_decisions_file_untouched(self) -> None:
         import absorb_gate_semantic as gate
 
-        path = Path(inspect.getsourcefile(gate))
+        script = Path(inspect.getsourcefile(gate))
         with tempfile.TemporaryDirectory() as tmp:
+            # 要把腳本真正會寫的那個檔導到這裡來。原本這個測試在 tmp 底下放
+            # 一個哨兵、卻沒告訴子行程，於是那個斷言永遠不可能失敗——真正撐著
+            # 它的只有 stdout 檢查。而 guard 壞掉時，它會寫進**正式**的
+            # review-decisions.json（Pan 累積的 285 筆判斷）。
+            # 一個失敗時會破壞正式資料的測試，比沒有測試更糟。
             decisions = Path(tmp) / "review-decisions.json"
-            decisions.write_text('{"sentinel": true}', encoding="utf-8")
+            decisions.write_text(
+                '{"_comment": "sentinel", "topics": {}, "decisions": {}}',
+                encoding="utf-8")
             before = decisions.read_text(encoding="utf-8")
+
+            env = dict(os.environ, XKB_REVIEW_DECISIONS=str(decisions))
             proc = subprocess.run(
-                [sys.executable, str(path), "--review", "--topic", "__no_such_topic__"],
+                [sys.executable, str(script), "--review", "--topic", "__no_such_topic__"],
                 capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=300, cwd=str(ROOT),
+                errors="replace", timeout=300, cwd=str(ROOT), env=env,
             )
-            # 決策檔沒被建立、也沒被改寫；而且輸出不能說它寫了。
+            # 乾淨結束才算數：提早 return 1 的話，下面的斷言會是空的。
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertEqual(decisions.read_text(encoding="utf-8"), before)
             self.assertNotIn("已寫入", proc.stdout)
 
@@ -78,34 +88,48 @@ class CallersMatchTheReturnType(unittest.TestCase):
                     continue
                 if "def lookup_card_vectors" in line:
                     continue
-                window = "\n".join(src.split("\n")[lineno - 1:lineno + 9])
+                window = "\n".join(src.split("\n")[lineno - 1:lineno + 16])
                 self.assertTrue(
-                    any(tok in window for tok in ("for vec in", "rows[0]", "max(", "for rows")),
+                    any(tok in window for tok in ("for vec in", "for v in rows", "max(", "for rows")),
                     f"{name}:{lineno} 沒有把每張卡的多條向量拆開：\n{window}",
                 )
 
 
-class IncrementalNeverDeletes(unittest.TestCase):
-    """增量執行不可以刪索引鍵——它根本沒有完整列舉過來源。"""
+class PruningKeysOnEnumerationAndRunsAtAll(unittest.TestCase):
+    """清理寫錯過三次，每次都是同一個混淆的不同面向。這裡釘的是那三件事。"""
 
-    def test_pruning_is_gated_on_a_full_rebuild(self) -> None:
-        src = (ROOT / "scripts" / "build_vector_index.py").read_text(encoding="utf-8")
-        self.assertIn("if not args.incremental:", src)
-        # 舊的判斷（來源被檢查過就刪）不可以回來。
-        self.assertNotIn('examined = {key.rsplit("#", 1)[0] for key in queued_keys}', src)
+    SRC = (ROOT / "scripts" / "build_vector_index.py").read_text(encoding="utf-8")
 
-    def test_prune_block_sits_inside_the_full_rebuild_guard(self) -> None:
-        lines = (ROOT / "scripts" / "build_vector_index.py").read_text(
-            encoding="utf-8").split("\n")
-        guard = next(i for i, ln in enumerate(lines)
-                     if ln.strip() == "if not args.incremental:")
-        guard_indent = len(lines[guard]) - len(lines[guard].lstrip())
-        popped = [i for i, ln in enumerate(lines) if "new_vectors.pop(" in ln]
-        self.assertTrue(popped, "找不到清理的程式碼")
-        for i in popped:
-            self.assertGreater(i, guard, "清理跑在完整重建的判斷之前")
-            self.assertGreater(len(lines[i]) - len(lines[i].lstrip()), guard_indent,
-                               "清理沒有縮排在完整重建的判斷裡面")
+    def test_it_keys_on_what_was_enumerated_not_what_was_queued(self) -> None:
+        # 一：用 queued_keys 推來源，會把沒變動的段落當成消失了而刪掉。
+        self.assertIn("enumerated_keys", self.SRC)
+        self.assertNotIn('examined = {key.rsplit("#", 1)[0] for key in queued_keys}', self.SRC)
+        start = self.SRC.index("    examined_docs = ")
+        block = self.SRC[start:self.SRC.index("and key not in enumerated_keys]", start)]
+        self.assertIn("enumerated_keys", block)
+        self.assertNotIn("queued_keys", block)
+
+    def test_it_is_not_gated_on_a_mode_nothing_uses(self) -> None:
+        # 二：只在完整重建時清理，等於永遠不清——每一條排程都帶 --incremental。
+        start = self.SRC.index("    examined_docs = ")
+        prune = self.SRC[start:self.SRC.index("and key not in enumerated_keys]", start)]
+        self.assertNotIn("args.incremental", prune)
+
+    def test_it_is_decided_before_the_early_return(self) -> None:
+        # 三：規則對了卻放在「沒東西要嵌入就提早結束」後面，平常永遠跑不到。
+        decided = self.SRC.index("    stale_keys = [")
+        early_return = self.SRC.index('print("✅ Nothing to embed.")')
+        self.assertLess(decided, early_return,
+                        "死鍵是在提早結束之後才算的，平常那條路根本走不到")
+        guard = self.SRC[self.SRC.index("    if not to_embed and _partitions_ok"):]
+        self.assertIn("not stale_keys", guard[:guard.index("\n")],
+                      "有死鍵時仍會提早結束")
+
+    def test_scheduled_callers_do_pass_incremental(self) -> None:
+        # 上面第二點的前提。前提變了的話，這個測試要先響。
+        found = [p for p in (ROOT / "scripts").glob("*.sh")
+                 if "build_vector_index.py" in p.read_text(encoding="utf-8")]
+        self.assertTrue(found, "找不到任何呼叫 build_vector_index 的排程腳本")
 
 
 if __name__ == "__main__":

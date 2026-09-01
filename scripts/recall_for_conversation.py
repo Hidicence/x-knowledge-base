@@ -401,6 +401,13 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         score = item.get("score", 0.0)
         slug = item.get("slug", "")
 
+        # 出處懲罰算一次就好。原本同一個 dict literal 建了兩次，
+        # 一次進分數、一次進說明——同一個量兩個來源，正是這個專案的老毛病。
+        _adjustments = _provenance_only({
+            "summary": summary,
+            "relative_path": f"cards/{slug}.md",
+            "title": title,
+        })
         results.append({
             "title": title,
             "summary": summary,
@@ -411,11 +418,7 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
             # 懲罰要進分數。原本只放進 ranking_adjustments 給人看，score
             # 還是原始 RRF——於是回音室防護在這台機器實際會走的路徑上，
             # 算得出來、顯示得出來、就是不會影響排序。
-            "score": round(score + _provenance_only({
-                "summary": summary,
-                "relative_path": f"cards/{slug}.md",
-                "title": title,
-            })["total_adjustment"], 4),
+            "score": round(score + _adjustments["total_adjustment"], 4),
             "topic_boost": 0.0,
             "matched_categories": [],
             "matched_tags": [],
@@ -423,14 +426,14 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
             # 於是回音室防護在主要路徑上等於不存在。
             # 要看組好的欄位（摘要、路徑），不是 gbrain 回傳的原始 item：
             # self-derived 的線索在 relative_path 與 summary 上。
-            "ranking_adjustments": _provenance_only({
-                "summary": summary,
-                "relative_path": f"cards/{slug}.md",
-                "title": title,
-            }),
+            "ranking_adjustments": _adjustments,
             "relevance_reason": f"gbrain 語意+關鍵字混合 RRF ({score:.4f})",
         })
-    return results
+    # 另外兩條 semantic_recall 都是 sort 之後才 [:limit]，只有這條直接回
+    # gbrain 的原始順序——而這條正是這台機器實際會走的。同一個函式契約、
+    # 三個實作、兩個排序，於是任何加減分在這裡都不會改變輸出。
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results[:limit]
 
 
 def wiki_recall(query: str, limit: int = 2) -> List[Dict[str, Any]]:

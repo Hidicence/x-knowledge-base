@@ -208,6 +208,12 @@ def on_stop(event: dict, cfg: dict) -> None:
         pending = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return  # nothing was opened; nothing to close
+    if "turn_id" not in pending:
+        # 只剩計數、沒有待辦的那一輪。Stop 會在沒有對應 UserPromptSubmit 的
+        # 情況下觸發（續接的 session、重播的 Stop），原本檔案已被刪掉所以
+        # 安靜返回；留下計數之後就會在這裡 KeyError，被 _note_failure 當成
+        # 真的故障送進告警——而這個專案就是靠那個管道判斷有沒有壞掉。
+        return
     answer = last_assistant_message(str(event.get("transcript_path") or ""))
     call(f"/v1/turns/{pending['turn_id']}/complete", {
         "session_id": pending["session_id"],

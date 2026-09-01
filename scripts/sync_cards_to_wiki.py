@@ -46,7 +46,11 @@ TOPICS_DIR = WIKI_DIR / "topics"
 INDEX_PATH = WIKI_DIR / "index.md"
 LOG_PATH = WIKI_DIR / "log.md"
 TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"
-REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
+# 可以單獨導開。測試需要隔離的只有這個檔，導開整個 WIKI_DIR 會連
+# topic-map.json 一起弄丟，於是腳本根本跑不起來——而讓測試跑在正式
+# 決策檔上，代表它失敗的那一次會破壞 Pan 累積的判斷。
+REVIEW_DECISIONS_PATH = Path(os.getenv("XKB_REVIEW_DECISIONS",
+                                       str(WIKI_DIR / "review-decisions.json")))
 SEARCH_INDEX_PATH = WORKSPACE / "memory" / "bookmarks" / "search_index.json"
 
 _llm_cache: dict[tuple[str, str], tuple[bool, str, str]] = {}
