@@ -113,12 +113,15 @@ def main() -> int:
         # 頁面記的是網址，向量索引的鍵是檔案路徑，中間要換一次。
         absorbed_paths = [url_to_path[u] for u in existing_by_topic.get(topic, set())
                           if u in url_to_path]
-        absorbed = list(cr.lookup_card_vectors(absorbed_paths).values())
+        # lookup_card_vectors 現在每張卡回一串論點向量，不是單一向量。
+        absorbed = [vec for rows in cr.lookup_card_vectors(absorbed_paths).values()
+                    for vec in rows]
 
         scored: list[tuple[float, sync.Card]] = []
         off_topic = redundant = 0
         for card in cards:
-            card_vectors = cr.lookup_card_vectors([card.path or card.url])
+            card_rows = cr.lookup_card_vectors([card.path or card.url])
+            card_vectors = {k: rows[0] for k, rows in card_rows.items() if rows}
             vec = next(iter(card_vectors.values()), None)
             if vec is None:
                 # 沒有向量就判斷不了。要明確擋掉——
@@ -158,7 +161,7 @@ def main() -> int:
 
     # --write-decisions 原本宣告了卻沒有人讀，寫入只看 --review，
     # 於是「跑一下看看」就覆寫了決策檔。宣告了的旗標要真的管事。
-    if args.review and args.write_decisions:
+    if args.review or not args.write_decisions:
         return 0
 
     path = sync.REVIEW_DECISIONS_PATH

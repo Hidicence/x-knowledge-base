@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import xkb_failures
 import xkb_paths
 from runtime_config import runtime_env
 
@@ -373,16 +374,25 @@ def _sync_queue() -> bool:
 def _sync_enriched_index() -> bool:
     """Make cards immediately searchable after a worker batch completes."""
     script = Path(__file__).with_name("sync_enriched_index.py")
-    proc = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=str(WORKSPACE),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=900,
-        env=xkb_paths.subprocess_env(),
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(WORKSPACE),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=900,
+            env=xkb_paths.subprocess_env(),
+        )
+    except subprocess.TimeoutExpired:
+        # 逾時會直接把例外丟出去，而呼叫端把這個函式當成回 bool 的。
+        # 那正好是這支腳本最不該有的結局：卡片寫進磁碟、沒進索引、
+        # 而且整批以例外收場，看起來像「卡片沒產出」。
+        msg = "sync_enriched_index 超過 900 秒未完成——卡片已寫入但尚未進索引"
+        print(msg, file=sys.stderr, flush=True)
+        xkb_failures.note("sync enriched index", RuntimeError(msg))
+        return False
     output = (proc.stdout or "").strip()
     if output:
         print("\n" + output, flush=True)

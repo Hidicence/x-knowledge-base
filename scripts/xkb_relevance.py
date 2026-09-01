@@ -120,6 +120,14 @@ def filter_irrelevant(
             # 判斷不出來 → 放行，但要記住它沒有被驗證過。過濾器不能刪掉
             # 它判斷不了的東西，但也不該讓它排在真的比對過的前面。
             item["_unverified"] = True
+            if rewrite_score:
+                # 降權要放進 score，不能只靠排序。下游 xkb_score.rank() 會
+                # 依 score 重新排一次，於是這裡排好的順序在下一個呼叫就沒了
+                # ——上次的修法只在這個函式回傳的那一瞬間成立。
+                # 放在門檻正下方：不刪掉判斷不了的東西，但也不讓它壓過任何
+                # 真的比對過而通過的結果。
+                item["rank_score"] = item.get("score")
+                item["score"] = round(max(0.0, limit - 0.01), 4)
             kept.append(item)
             continue
         if similarity < limit:
@@ -129,7 +137,7 @@ def filter_irrelevant(
             item["score"] = round(similarity, 4)
         kept.append(item)
     if rewrite_score:
-        # 沒被驗證過的排在後面。原本大家一起比 score，而那時候「算出來的」
+        # 排序跟著分數走（分數已在上面調整過）。原本大家一起比 score，而那時候「算出來的」
         # 是餘弦（0.6–0.75），「算不出來的」還留著原本的 RRF（約 0.88）或
         # 關鍵字分數——於是一筆索引裡查不到的書籤，會壓過真的以 0.74 命中的
         # 那張卡。今天第六個同型錯誤：一個排序，兩種尺度。

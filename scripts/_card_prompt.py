@@ -178,7 +178,9 @@ def source_label(source_type: str) -> str:
 
 # ── LLM call ─────────────────────────────────────────────────────────────────
 
-def llm_call(prompt: str, api_key: str = "", max_tokens: int = 2000,
+# 2000 是這個參數還會被丟掉的年代留下的預設值。現在它會一路傳到 API，
+# 於是產卡的上限從 4096 悄悄變成 2000——沒有人改過產卡的需求。
+def llm_call(prompt: str, api_key: str = "", max_tokens: int = 4096,
              system: str | None = SYSTEM_PROMPT) -> str:
     """api_key kept for backwards compatibility but is no longer used.
     Model is configured via config/llm.json.

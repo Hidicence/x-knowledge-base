@@ -383,7 +383,12 @@ def main() -> int:
     def _partition_ok(path: Path) -> bool:
         return path.exists() and path.with_suffix(".bin").exists()
 
-    _partitions_ok = _partition_ok(SEMANTIC_FILE) and _partition_ok(CARDS_FILE)
+    # 要問寫入端「你會寫到哪」，不是問常數。下面寫檔時是看
+    # XKB_SEMANTIC_INDEX / XKB_CARDS_INDEX 的，測試與備援路徑都會設它們；
+    # 檢查常數等於在別的地方確認「檔案還在」，然後對真正在用的那份一無所知。
+    _semantic_target = Path(os.getenv("XKB_SEMANTIC_INDEX", str(SEMANTIC_FILE)))
+    _cards_target = Path(os.getenv("XKB_CARDS_INDEX", str(CARDS_FILE)))
+    _partitions_ok = _partition_ok(_semantic_target) and _partition_ok(_cards_target)
     if not to_embed and _partitions_ok:
         print("✅ Nothing to embed.")
         return 0
@@ -431,17 +436,26 @@ def main() -> int:
     # 但「這次沒產生」不等於「不存在了」：增量執行本來就只看有變動的東西。
     # 安全的規則是：只清掉「這次有檢查過來源、而這次沒有產生」的鍵。沒被
     # 看過的來源，它的鍵一個都不動。
-    examined = {key.rsplit("#", 1)[0] for key in queued_keys}
-    produced = queued_keys | {key for key, _ in vectors_list}
-    stale = [
-        key for key in new_vectors
-        if key.rsplit("#", 1)[0] in examined and key not in produced
-    ]
-    for key in stale:
-        new_vectors.pop(key, None)
-        new_hashes.pop(key, None)
-    if stale:
-        print(f"清掉 {len(stale)} 個已經沒有對應段落的索引鍵")
+    # 2026-09-01：這裡原本會清掉「來源被檢查過、但這次沒產生」的鍵。那個判斷
+    # 是錯的，而且是破壞性的：增量執行只要文件的任何一塊變了，整份文件就算
+    # 「被檢查過」，於是它其他沒變的塊全部被刪。一張內文改過的卡片會這樣振盪：
+    # 第 N 次刪掉 #kp*、第 N+1 次補回 #kp* 並刪掉卡片級鍵、第 N+2 次再反過來。
+    # 索引永遠不會同時擁有兩者，每一次都要重新付費嵌入，而 _find_card_rows
+    # 依賴卡片級鍵存在。
+    #
+    # 我當時「驗證」的方式是看它刪了 31 個鍵就認為有效——我測的是它**有動作**，
+    # 不是它**動得對**。
+    #
+    # 正確的清理要建立在「這次有完整重新列舉過的來源」上，而增量模式本來就
+    # 不會完整列舉。所以清理只在完整重建時做。
+    if not args.incremental:
+        produced = {key for key, _ in vectors_list} | queued_keys
+        stale = [key for key in new_vectors if key not in produced]
+        for key in stale:
+            new_vectors.pop(key, None)
+            new_hashes.pop(key, None)
+        if stale:
+            print(f"清掉 {len(stale)} 個已經沒有對應段落的索引鍵（完整重建）")
 
     # Save
     output = {

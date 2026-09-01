@@ -44,7 +44,11 @@ ASSOCIATIVE_TIMEOUT_S = 20
 # side_hint 的門檻。兩個尺度，兩個值——用同一個數字比對餘弦相似度與關鍵字
 # 分數，是這個專案反覆犯的那一類錯。
 SIDE_HINT_KEYWORD = 2.0
-SIDE_HINT_SEMANTIC = 0.5
+# 2026-09-01 實測 wiki 語意分數：檢索本身有 0.65 的下限，實際命中落在
+# 0.666–0.843。所以 0.5 跟原本的 2.0 一樣是個常數分支，只是常數翻了面——
+# 我上次「修好」的是哪一邊永遠成立，不是這個判斷有沒有在判斷。
+# 0.75 把「直接命中」（0.84）跟「沾到邊」（0.67–0.72）分開。
+SIDE_HINT_SEMANTIC = 0.75
 
 # 關鍵字分數的實際範圍：下限 6（min_score），實測上界約 20。換算成 0–1 時
 # 用固定的上界而不是這一批的最大值——用批內最大值的話，一批爛結果裡最好的
@@ -328,7 +332,8 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         if assoc_results:
             result_dicts += assoc_results
             if assoc_text:
-                text_parts.append(assoc_text)
+                text_parts.append(_format_assoc_chat(assoc_results) if assoc_results
+                                  else assoc_text)
 
         # Action recall (supplement for execution-planning state)
         action_results = action_recall(query, top_k=3)
@@ -445,7 +450,10 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # Bookmark supplement — only if there are actual (non-dedup'd) results
         if has_assoc and assoc_results:
             if delivery_mode == "side_hint":
-                text_parts.append(_format_side_hint(assoc_text))
+                # 用過濾後的結果重新排版。assoc_text 是 run_associative_recall
+                # 在過濾之前就排好的字串，所以 _drop_irrelevant_cards 與去重
+                # 只改了數字和遙測，注入給模型的文字一個字都沒少。
+                text_parts.append(_format_side_hint(_format_assoc_chat(assoc_results)))
             elif not has_wiki:
                 text_parts.append(_format_expandable(query, len(assoc_results)))
         if contrarian_text:

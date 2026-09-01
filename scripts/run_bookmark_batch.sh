@@ -80,6 +80,15 @@ fi
 
 done_count=$(sed -n 's/.*done=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
 failed_count=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
+
+# 上面說「只有連 done 都讀不出來才算整批壞掉」，但那個判斷從來沒寫出來：
+# worker 整支崩掉（沒印出任何 done=）時，這支腳本照樣以 0 結束，排程看到的
+# 是一次成功的執行。真正的整批失敗要讓它以非零收場。
+if [[ "$status" -ne 0 && -z "$done_count" ]]; then
+  log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] worker 整批失敗（exit $status，沒有任何 done= 輸出）"
+  exit "$status"
+fi
+
 done_count=${done_count:-0}
 failed_count=${failed_count:-0}
 

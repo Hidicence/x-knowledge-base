@@ -408,7 +408,14 @@ def gbrain_semantic_recall(query: str, limit: int = 5) -> List[Dict[str, Any]]:
             "tags": [],
             "relative_path": f"cards/{slug}.md",
             "source_url": source_url,
-            "score": round(score, 4),
+            # 懲罰要進分數。原本只放進 ranking_adjustments 給人看，score
+            # 還是原始 RRF——於是回音室防護在這台機器實際會走的路徑上，
+            # 算得出來、顯示得出來、就是不會影響排序。
+            "score": round(score + _provenance_only({
+                "summary": summary,
+                "relative_path": f"cards/{slug}.md",
+                "title": title,
+            })["total_adjustment"], 4),
             "topic_boost": 0.0,
             "matched_categories": [],
             "matched_tags": [],

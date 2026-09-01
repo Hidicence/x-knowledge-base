@@ -214,7 +214,15 @@ def on_stop(event: dict, cfg: dict) -> None:
         "query": pending["query"],
         "answer": answer,
     }, cfg)
-    path.unlink(missing_ok=True)
+    # 不能直接刪。ordinal 存在同一個檔案裡，刪掉就等於每一輪結束後
+    # 計數歸零，於是下一輪又從 1 開始、又算出同一個 turn_id——
+    # 那正是 next_ordinal 要解決的問題，而它被自己的收尾抵銷掉了。
+    # 留下計數，清掉這一輪的待辦。
+    try:
+        path.write_text(json.dumps({"ordinal": int(pending.get("ordinal") or 0)}),
+                        encoding="utf-8")
+    except OSError:
+        path.unlink(missing_ok=True)
 
 
 def read_event() -> dict:
