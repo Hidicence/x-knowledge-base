@@ -39,7 +39,24 @@ import xkb_provenance
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-_RUNTIME_ENV = runtime_env()
+def _safe_runtime_env() -> dict[str, str]:
+    """讀執行期設定；讀不到就當作空的。
+
+    這一行在 import 時就會執行，而 load_env_file 對不存在的路徑會拋
+    FileNotFoundError。呼叫端只接 ImportError，所以一個過期的 XKB_ENV_FILE
+    會讓「模組載不進來」變成從 search() 裡拋出的 FileNotFoundError，
+    而不是安靜地退回關鍵字召回。設定不見是要說的，但不是用讓模組無法載入
+    的方式說。
+    """
+    try:
+        return runtime_env()
+    except Exception as err:  # noqa: BLE001
+        print(f"[xkb] xbrain 讀不到執行期設定，改用行程環境：{type(err).__name__}: {err}",
+              file=sys.stderr, flush=True)
+        return {}
+
+
+_RUNTIME_ENV = _safe_runtime_env()
 
 
 def _resolve_gbrain_dir(settings: dict[str, str] | None = None) -> Path | None:
@@ -190,21 +207,37 @@ def _parse_line_format(raw: str) -> list[dict[str, Any]]:
     """解析 gbrain v0.42+ 的行格式輸出：`[0.9102] slug -- chunk text`。
     非結果行（gateway 警告等）自動略過。"""
     import re
+
+    # gbrain 在最後一筆結果之後還會印東西（警告、計時、棄用提示）。原本的
+    # 續行判斷是「不是結果、而且已經看過至少一筆」，所以那些行全部被接到
+    # 最後一張卡的內文裡，然後當成知識顯示給使用者看。
+    RESULT = re.compile(r"^\[(\d+\.\d+)\]\s+(\S+)\s+--\s?(.*)$")
+    NOISE = re.compile(
+        r"^\s*(?:\[|warn|warning|error|deprecat|note:|info:|took\b|elapsed\b|\d+\s*ms\b)",
+        re.I,
+    )
+    MAX_CONTINUATION_CHARS = 4000
+
     items: list[dict[str, Any]] = []
     for line in raw.splitlines():
-        m = re.match(r"^\[(\d+\.\d+)\]\s+(\S+)\s+--\s?(.*)$", line.strip())
-        if m:
+        stripped = line.strip()
+        match = RESULT.match(stripped)
+        if match:
             items.append({
-                "slug": m.group(2),
+                "slug": match.group(2),
                 "title": "",
                 "type": "",
-                "chunk_text": m.group(3),
-                "score": float(m.group(1)),
+                "chunk_text": match.group(3),
+                "score": float(match.group(1)),
                 "stale": False,
             })
-        elif items and line.strip() and not line.startswith("["):
-            # 多行 chunk 內文的續行,併回最後一筆
-            items[-1]["chunk_text"] += "\n" + line
+            continue
+        if not items or not stripped or NOISE.match(stripped):
+            continue
+        # 續行。原本用未 strip 的行判斷開頭，所以縮排過的結果會被當成內文。
+        last = items[-1]
+        if len(last["chunk_text"]) < MAX_CONTINUATION_CHARS:
+            last["chunk_text"] += "\n" + stripped
     return items
 
 

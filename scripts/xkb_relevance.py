@@ -117,7 +117,10 @@ def filter_irrelevant(
     for item in items:
         similarity = scores.get(keys[id(item)])
         if similarity is None:
-            kept.append(item)          # 判斷不出來 → 放行
+            # 判斷不出來 → 放行，但要記住它沒有被驗證過。過濾器不能刪掉
+            # 它判斷不了的東西，但也不該讓它排在真的比對過的前面。
+            item["_unverified"] = True
+            kept.append(item)
             continue
         if similarity < limit:
             continue
@@ -126,7 +129,14 @@ def filter_irrelevant(
             item["score"] = round(similarity, 4)
         kept.append(item)
     if rewrite_score:
-        kept.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        # 沒被驗證過的排在後面。原本大家一起比 score，而那時候「算出來的」
+        # 是餘弦（0.6–0.75），「算不出來的」還留著原本的 RRF（約 0.88）或
+        # 關鍵字分數——於是一筆索引裡查不到的書籤，會壓過真的以 0.74 命中的
+        # 那張卡。今天第六個同型錯誤：一個排序，兩種尺度。
+        kept.sort(key=lambda item: (not item.get("_unverified", False),
+                                    item.get("score", 0.0)), reverse=True)
+    for item in kept:
+        item.pop("_unverified", None)
     return kept, len(items) - len(kept), scores
 
 
