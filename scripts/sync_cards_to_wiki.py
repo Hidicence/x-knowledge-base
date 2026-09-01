@@ -150,7 +150,11 @@ def llm_absorb_judgment(
         # 改成不放行，並把失敗計數往上報，讓這件事在跑完時看得見。
         global _llm_failures
         _llm_failures += 1
-        result = (False, "none", f"[llm_error: {e}] gate unavailable, not absorbed")
+        # 第二個欄位是分類，下游拿它顯示、也拿它寫進決策檔。原本用 "none"，
+        # 跟「判定過了，價值不高」長得一模一樣：印出來是 low-value、計入
+        # skipped_llm、而且以 decision: "skip" 永久寫進決策檔，之後的執行會
+        # 把它當成人做過的判斷。故障時不放行是對的，把故障記成判決不是。
+        result = (False, "gate_unavailable", f"[llm_error: {e}] gate unavailable, not absorbed")
 
     _llm_cache[cache_key] = result
     return result

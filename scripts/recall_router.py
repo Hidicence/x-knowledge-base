@@ -161,6 +161,11 @@ def _results_to_dicts(results: list) -> list[dict]:
 # ── Associative recall via recall_for_conversation.py ─────────────────────────
 
 
+# 過濾要跟檢索用同一個字串。原本檢索用 query（suggested_query），過濾卻用
+# 原始 message：英文輸入時 suggested_query 是關鍵字包，於是拿一整句閒聊去
+# 評判關鍵字包撈回來的結果，好卡片會被推到 0.55 門檻以下。而且這保證了
+# query-vector 快取一定失效——那個快取存在的理由就是「一次召回不要把同一
+# 句話送去轉兩次向量」。
 def _drop_irrelevant_cards(query: str, results: list[dict]) -> list[dict]:
     """用真實相似度濾掉不相關的卡片。判斷邏輯在 xkb_relevance，不要在這裡另寫一份。"""
     cards = [r for r in results if r.get("source_type") in ("card", "bookmark")]
@@ -318,7 +323,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # 就是卡片（wiki 只有十幾個 topic，卡片上千張）。原本這條路徑只查 wiki 與記憶檔，
         # 等於問「之前怎麼做的」反而查不到主要的知識來源。
         # （結果在上面就跟 continuity 一起平行取回了。）
-        assoc_results = _drop_irrelevant_cards(message, assoc_results)
+        assoc_results = _drop_irrelevant_cards(query, assoc_results)
         assoc_results, _ = _dedup_filter_new(assoc_results)
         if assoc_results:
             result_dicts += assoc_results
@@ -382,7 +387,7 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             assoc_text, assoc_results = "", []
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
-            assoc_results = _drop_irrelevant_cards(message, assoc_results)
+            assoc_results = _drop_irrelevant_cards(query, assoc_results)
             assoc_results, _ = _dedup_filter_new(assoc_results)
 
         # Contrarian recall (supplement — max 1 result, only on high-confidence soft)

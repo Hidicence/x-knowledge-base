@@ -196,6 +196,27 @@ class AuthPolicy:
 ANONYMOUS_AUTH = AuthPolicy({})
 
 
+def _keyword_unit_score(blob: str, terms: list[str]) -> float:
+    """把出現次數換算到 0–1，好跟餘弦相似度放在一起排序。
+
+    原本直接用 sum(blob.count(term))，動輒十幾二十；而對話軌跡刻意被放在
+    0–0.65 這個可與餘弦比較的尺度上。knowledge_recall 把兩者排在一起截斷，
+    所以只要語意後端不在——正是共享對話記憶最有用的時候——每一筆軌跡都會
+    排在每一個關鍵字命中之下，然後被切掉。
+
+    上界固定，不用這一批的最大值：用批內最大值的話，一批爛結果裡最好的那個
+    會被算成滿分。
+    """
+    if not terms:
+        return 0.0
+    hits = sum(blob.count(term) for term in terms)
+    matched = sum(1 for term in terms if term in blob)
+    # 命中詞數的比例是主要訊號，出現次數只當作小幅加成。
+    coverage = matched / len(terms)
+    density = min(1.0, hits / (len(terms) * 3))
+    return round(min(1.0, 0.8 * coverage + 0.2 * density), 4)
+
+
 def filter_stats(*, card: int = 0, wiki: int = 0, semantic: int = 0, conversation: int = 0) -> dict[str, Any]:
     """Report ACL drops per knowledge layer, not just as one opaque number.
 
@@ -568,7 +589,7 @@ class KnowledgeCatalog:
                     filtered_cards += 1
                     continue
                 blob = json.dumps(item, ensure_ascii=False).lower()
-                score = sum(blob.count(term) for term in terms)
+                score = _keyword_unit_score(blob, terms)
                 if score:
                     hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
             for path in sorted(self.wiki_topics_dir.glob("*.md")):
@@ -578,7 +599,7 @@ class KnowledgeCatalog:
                     continue
                 content = safe_read(path, 100_000)
                 blob = f"{path.stem} {content}".lower()
-                score = sum(blob.count(term) for term in terms)
+                score = _keyword_unit_score(blob, terms)
                 if score:
                     hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
             hits.sort(key=lambda pair: pair[0], reverse=True)

@@ -300,7 +300,7 @@ def _card_index_paths() -> tuple[Path, Path]:
     return meta, meta.with_suffix(".bin")
 
 
-def _find_card_row(key: str) -> int | None:
+def _find_card_rows(key: str) -> list[int]:
     """同一張卡在不同來源有不同前綴，比對時要把它們對起來。
 
     索引鍵是 `01-openclaw-workflows/X.md` 或 `memory/cards/X.md`，
@@ -310,7 +310,7 @@ def _find_card_row(key: str) -> int | None:
     """
     assert _CARD_KEYS is not None
     if key in _CARD_KEYS:
-        return _CARD_KEYS[key]
+        return [_CARD_KEYS[key]]
 
     stem = key
     for prefix in ("cards/", "memory/cards/", "memory/"):
@@ -319,20 +319,33 @@ def _find_card_row(key: str) -> int | None:
             break
     for candidate in (stem, f"cards/{stem}", f"memory/cards/{stem}"):
         if candidate in _CARD_KEYS:
-            return _CARD_KEYS[candidate]
+            return [_CARD_KEYS[candidate]]
 
-    # 論點級向量的鍵是 relpath#kpN，卡片級找不到時取第一條論點
+    # 論點級向量的鍵是 relpath#kpN。卡片級找不到時要看這張卡的**所有**論點，
+    # 不是字典順序的第一個——分數要面對 0.55 這道硬門檻，所以「第三個論點
+    # 正好命中」的卡片，會因為第一個論點離題而被丟掉。semantic_recall 本來
+    # 就是取最大值，這條路徑漏了。
+    #
+    # 2026-09-01 實測：目前 1,628 張有論點向量的卡片，全部都有卡片級鍵，
+    # 所以這條路徑現在走不到，實際影響是零。留著修好的版本是因為
+    # 「卡片級鍵不存在」是完全可能出現的狀態（索引重建、卡片改名），
+    # 而那時候取第一個論點會是靜默的錯誤。
     for candidate in (key, stem):
-        row = next((i for k, i in _CARD_KEYS.items() if k.startswith(f"{candidate}#")), None)
-        if row is not None:
-            return row
+        rows = [i for k, i in _CARD_KEYS.items() if k.startswith(f"{candidate}#")]
+        if rows:
+            return rows
 
     # 最後退路：只比對檔名。分類目錄改過名時仍能對上。
     name = stem.rsplit("/", 1)[-1]
-    return next((i for k, i in _CARD_KEYS.items() if k.rsplit("/", 1)[-1] == name), None)
+    return [i for k, i in _CARD_KEYS.items() if k.rsplit("/", 1)[-1] == name][:1]
 
 
-def lookup_card_vectors(keys: list[str]) -> dict[str, list[float]]:
+# 一張卡最多讀幾條論點向量。定長記錄的 seek 很便宜，但沒有上限的話，
+# 一個命名異常的鍵可能讓一次召回讀進上百筆。
+MAX_CARD_ARGUMENT_ROWS = 8
+
+
+def lookup_card_vectors(keys: list[str]) -> dict[str, list[list[float]]]:
     """只取指定卡片的向量，用 seek 讀單筆。
 
     卡片有 6,000 多個向量、100MB，全部載入要好幾秒——但我們只需要驗證
@@ -355,20 +368,19 @@ def lookup_card_vectors(keys: list[str]) -> dict[str, list[float]]:
 
     import array
     row_bytes = _CARD_DIMS * 4
-    out: dict[str, list[float]] = {}
+    out: dict[str, list[list[float]]] = {}
     try:
         with bin_path.open("rb") as fh:
             for key in keys:
-                row = _find_card_row(key)
-                if row is None:
-                    continue
-                fh.seek(row * row_bytes)
-                chunk = fh.read(row_bytes)
-                if len(chunk) != row_bytes:
-                    continue
-                vec = array.array("f")
-                vec.frombytes(chunk)
-                out[key] = vec.tolist()
+                # 一張卡可能有好幾條論點向量。全部讀回來，讓上面決定用哪一個。
+                for row in _find_card_rows(key)[:MAX_CARD_ARGUMENT_ROWS]:
+                    fh.seek(row * row_bytes)
+                    chunk = fh.read(row_bytes)
+                    if len(chunk) != row_bytes:
+                        continue
+                    vec = array.array("f")
+                    vec.frombytes(chunk)
+                    out.setdefault(key, []).append(vec.tolist())
     except OSError:
         return {}
     return out
@@ -384,7 +396,10 @@ def card_similarities(query: str, keys: list[str]) -> dict[str, float] | None:
     query_vector = _embed_query(query)
     if query_vector is None:
         return None
-    return {k: _cosine(query_vector, v) for k, v in vectors.items()}
+    # 一張卡取它最像的那條論點。用第一條的話，第三點正好命中的卡片會被
+    # 第一點的分數判死。
+    return {k: max(_cosine(query_vector, v) for v in rows)
+            for k, rows in vectors.items() if rows}
 
 
 # 同一句話在一次召回裡會被 embed 兩次：混合檢索先打一次，相關度過濾再打一次。
