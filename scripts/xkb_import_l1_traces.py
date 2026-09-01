@@ -83,28 +83,48 @@ def post(path: str, payload: dict, url: str, token: str) -> dict:
 
 
 def conversation(trace: dict) -> tuple[str, str]:
-    """從軌跡裡抽出 (最後一個使用者訊息, 最後一個助理回覆)。"""
+    """從軌跡裡抽出最後一組**真的成對**的問答。
+
+    原本是各自留下「最後一則 user」與「最後一則 assistant」，兩者不必相鄰。
+    軌跡結尾如果是使用者的話——中斷的一輪，或這些檔案本來就是累積快照——
+    結果會是第 n 個問題配第 n-1 個回答：一段從來沒發生過的對話，被當成 L1
+    證據匯入，之後還會被語意召回出來當成事實。
+    """
     messages = trace.get("content")
     if not isinstance(messages, list):
         return "", ""
-    said: dict[str, str] = {}
-    for message in messages:
+
+    def text_of(message: object) -> str:
         if not isinstance(message, dict):
-            continue
-        role = str(message.get("role") or "").strip()
-        if role not in ROLES:
-            continue
+            return ""
         content = message.get("content")
         if isinstance(content, str):
-            text = content.strip()
-        elif isinstance(content, list):
-            text = "\n".join(str(part.get("text", "")) for part in content
-                             if isinstance(part, dict) and part.get("type") == "text").strip()
-        else:
-            text = ""
-        if text:
-            said[role] = text[:MAX_CHARS]
-    return said.get("user", ""), said.get("assistant", "")
+            return content.strip()[:MAX_CHARS]
+        if isinstance(content, list):
+            joined = "\n".join(str(part.get("text", "")) for part in content
+                               if isinstance(part, dict) and part.get("type") == "text")
+            return joined.strip()[:MAX_CHARS]
+        return ""
+
+    def role_of(message: object) -> str:
+        return str(message.get("role") or "").strip() if isinstance(message, dict) else ""
+
+    # 從最後一則助理回覆往回找最近的一則使用者訊息。
+    answer_at = next(
+        (i for i in range(len(messages) - 1, -1, -1)
+         if role_of(messages[i]) == "assistant" and text_of(messages[i])),
+        None,
+    )
+    if answer_at is None:
+        return "", ""
+    question_at = next(
+        (i for i in range(answer_at - 1, -1, -1)
+         if role_of(messages[i]) == "user" and text_of(messages[i])),
+        None,
+    )
+    if question_at is None:
+        return "", ""
+    return text_of(messages[question_at]), text_of(messages[answer_at])
 
 
 def load_state() -> set[str]:
@@ -154,9 +174,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             observed = datetime.fromisoformat(str(trace.get("observed_at", "")).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if observed < cutoff:
+            if observed < cutoff:
+                continue
+        except (ValueError, TypeError):
+            # 比較也要在 try 裡。沒有時區的時間戳解析得出來，卻不能跟帶時區的
+            # cutoff 相比，會拋 TypeError——原本它在 try 外面，於是一筆格式
+            # 不合的軌跡就讓整批匯入以 traceback 結束，一筆都沒進去。
+            # 讀同一批檔案的 distill_memory_to_wiki 一直都有接這個。
             continue
         query, answer = conversation(trace)
         if not query or not answer:

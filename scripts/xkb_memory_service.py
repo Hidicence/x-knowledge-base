@@ -229,8 +229,11 @@ class KnowledgeCatalog:
         self.wiki_dir = xkb_paths.WIKI_DIR
         self.wiki_topics_dir = xkb_paths.WIKI_TOPICS_DIR
         self.status_files = [xkb_paths.XKB_DATA_DIR / "status-after-x-sync-20260726.json"]
-        self._last_search_stats: dict[str, Any] = filter_stats()
-        self._last_irrelevant = 0
+        # 每個請求自己一份。原本是實例屬性，而 ThreadingHTTPServer 的每一條
+        # 執行緒共用同一個 catalog：兩個同時進來的 recall 會互相覆蓋，沒有
+        # 語意後端時 wiki 的 ACL 計數還會在同一個 dict 上一直累加，於是
+        # records_filtered_by_acl 從此每一次回應都出現。
+        self._local = threading.local()
         # Set by Store so usage can be persisted; the catalog itself stays
         # read-only over the knowledge plane.
         self.usage_sink: Any = None
@@ -273,6 +276,30 @@ class KnowledgeCatalog:
                 value = [part.strip().strip('"').strip("'") for part in value[1:-1].split(",") if part.strip()]
             result[key] = value
         return result
+
+    @property
+    def _stats(self) -> dict[str, Any]:
+        """這一條執行緒、這一個請求的過濾統計。"""
+        if not hasattr(self._local, "stats"):
+            self._local.stats = filter_stats()
+        return self._local.stats
+
+    @_stats.setter
+    def _stats(self, value: dict[str, Any]) -> None:
+        self._local.stats = value
+
+    @property
+    def _irrelevant(self) -> int:
+        return getattr(self._local, "irrelevant", 0)
+
+    @_irrelevant.setter
+    def _irrelevant(self, value: int) -> None:
+        self._local.irrelevant = value
+
+    def _reset_request_stats(self) -> None:
+        """每次召回開始時清空。沒有這一步，讀不到的路徑會沿用上一個請求的數字。"""
+        self._local.stats = filter_stats()
+        self._local.irrelevant = 0
 
     @staticmethod
     def _allowed(metadata: dict[str, Any], namespace: str) -> bool:
@@ -408,8 +435,8 @@ class KnowledgeCatalog:
             })
         # The semantic backend does not report which knowledge layer a hit came
         # from, so ACL drops here can only be attributed to the channel.
-        self._last_search_stats = filter_stats(semantic=filtered)
-        records, self._last_irrelevant = self._drop_irrelevant(query, records)
+        self._stats = filter_stats(semantic=filtered)
+        records, self._irrelevant = self._drop_irrelevant(query, records)
         return records
 
     def _wiki_search(self, query: str, limit: int, namespace: str = "private") -> list[dict[str, Any]]:
@@ -439,8 +466,9 @@ class KnowledgeCatalog:
             if self._allowed(metadata, namespace):
                 allowed.append(hit)
             else:
-                self._last_search_stats["by_layer"]["wiki"] = self._last_search_stats["by_layer"].get("wiki", 0) + 1
-                self._last_search_stats["total"] = self._last_search_stats.get("total", 0) + 1
+                stats = self._stats
+                stats["by_layer"]["wiki"] = stats["by_layer"].get("wiki", 0) + 1
+                stats["total"] = stats.get("total", 0) + 1
         hits = allowed
         return [{
             "schema": KNOWLEDGE_SCHEMA,
@@ -529,7 +557,7 @@ class KnowledgeCatalog:
         if semantic_records:
             records = semantic_records
             retrieval_mode = "xbrain_hybrid"
-            filtered_counts = dict(self._last_search_stats)
+            filtered_counts = dict(self._stats)
         else:
             terms = [term.lower() for term in re.findall(r"[\w\u4e00-\u9fff]+", query) if len(term) > 1]
             hits: list[tuple[int, dict[str, Any]]] = []
@@ -556,8 +584,8 @@ class KnowledgeCatalog:
             hits.sort(key=lambda pair: pair[0], reverse=True)
             records = [item for _, item in hits[: max(1, min(limit, 50))]]
             retrieval_mode = "keyword_fallback"
-            self._last_search_stats = filter_stats(card=filtered_cards, wiki=filtered_wiki)
-            filtered_counts = dict(self._last_search_stats)
+            self._stats = filter_stats(card=filtered_cards, wiki=filtered_wiki)
+            filtered_counts = dict(self._stats)
         context = "\n\n".join(f"[{item['record_type']}] {item.get('title', item['id'])}\n{item.get('summary', '')}" for item in records)
         return {
             "schema": SCHEMA, "query": query, "namespace": namespace,
@@ -565,7 +593,7 @@ class KnowledgeCatalog:
             "records": records, "count": len(records), "context": context,
             "retrieval_mode": retrieval_mode, "semantic_backend": semantic_backend,
             "filtered_counts": filtered_counts,
-            "dropped_as_irrelevant": self._last_irrelevant,
+            "dropped_as_irrelevant": self._irrelevant,
             "warnings": [],
         }
 
@@ -1128,6 +1156,14 @@ class Store:
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
+        # 每次召回從乾淨的統計開始。少了這一步，某些路徑（例如語意後端不在時
+        # 提早回傳的那條）會沿用同一條執行緒上一個請求的數字，回應裡的
+        # 「為什麼結果這麼少」就會是別人的答案。
+        #
+        # catalog 是可替換的（測試會換成自己的），所以不要求它一定有這個方法。
+        reset = getattr(self.catalog, "_reset_request_stats", None)
+        if callable(reset):
+            reset()
         skipped = self._skip_reason(query)
         if skipped:
             return {
