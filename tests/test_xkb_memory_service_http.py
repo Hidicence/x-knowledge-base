@@ -53,7 +53,11 @@ class XKBMemoryServiceHTTPTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.server.shutdown()
         self.server.server_close()
-        self.thread.join(timeout=2)
+        # join 不設上限。原本 timeout=2，時間到就往下刪暫存目錄——如果那條
+        # 執行緒還在處理請求，它用的 sqlite 檔會在腳下被移走，同一個類別的
+        # 下一個測試就對著一個還在關閉的伺服器跑。這就是它在 discover 底下
+        # 偶爾出錯、單獨跑卻永遠通過的原因。shutdown() 已經呼叫過，join 會回來。
+        self.thread.join()
         self.tmp.cleanup()
 
     def post(self, path: str, payload: dict) -> tuple[int, dict]:
@@ -136,7 +140,11 @@ class XKBMemoryServiceAuthTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.server.shutdown()
         self.server.server_close()
-        self.thread.join(timeout=2)
+        # join 不設上限。原本 timeout=2，時間到就往下刪暫存目錄——如果那條
+        # 執行緒還在處理請求，它用的 sqlite 檔會在腳下被移走，同一個類別的
+        # 下一個測試就對著一個還在關閉的伺服器跑。這就是它在 discover 底下
+        # 偶爾出錯、單獨跑卻永遠通過的原因。shutdown() 已經呼叫過，join 會回來。
+        self.thread.join()
         self.tmp.cleanup()
 
     def post(self, path: str, payload: dict, token: str | None = None) -> tuple[int, dict]:

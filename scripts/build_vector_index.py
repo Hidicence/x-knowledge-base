@@ -362,7 +362,10 @@ def main() -> int:
     # Alias for downstream use
     texts = [t for _, t, _ in to_embed]
 
-    skipped = sum(1 for k in existing_vectors if k not in {e[0] for e in to_embed})
+    # 集合建一次就好。原本寫在生成式的條件裡，於是每一個既有鍵都重建一次
+    # 一萬多個元素的集合——完整重跑時是一萬多次。
+    queued_keys = {entry[0] for entry in to_embed}
+    skipped = sum(1 for k in existing_vectors if k not in queued_keys)
     print(f"🔢 To embed: {len(to_embed)}  |  Skipped (incremental): {skipped}")
 
     if args.dry_run:
@@ -420,6 +423,25 @@ def main() -> int:
     for (key, vec), h in zip(vectors_list, hashes):
         new_vectors[key] = vec
         new_hashes[key] = h
+
+    # 索引原本只增不減。標題改名、記憶檔刪掉、卡片的關鍵論點從五條變三條——
+    # 舊向量就永遠留著，照樣參與排序，然後顯示空白。實測 2,262 個 wiki 鍵
+    # 裡有 80 個指向已經不存在的段落。
+    #
+    # 但「這次沒產生」不等於「不存在了」：增量執行本來就只看有變動的東西。
+    # 安全的規則是：只清掉「這次有檢查過來源、而這次沒有產生」的鍵。沒被
+    # 看過的來源，它的鍵一個都不動。
+    examined = {key.rsplit("#", 1)[0] for key in queued_keys}
+    produced = queued_keys | {key for key, _ in vectors_list}
+    stale = [
+        key for key in new_vectors
+        if key.rsplit("#", 1)[0] in examined and key not in produced
+    ]
+    for key in stale:
+        new_vectors.pop(key, None)
+        new_hashes.pop(key, None)
+    if stale:
+        print(f"清掉 {len(stale)} 個已經沒有對應段落的索引鍵")
 
     # Save
     output = {
