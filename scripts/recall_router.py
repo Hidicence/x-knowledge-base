@@ -462,9 +462,13 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                 text_parts.append(_format_expandable(query, len(assoc_results)))
         if contrarian_text:
             text_parts.append(contrarian_text)
-        # 真的組出文字了才記成「顯示過」。
-        if text_parts:
-            _dedup_mark_shown(all_results)
+        # 只有真的把內容送出去的才算顯示過。_format_expandable 只印一個數量
+        # （「你知識庫裡有 2 個相關片段」），卡片的標題與摘要一個字都沒出現；
+        # 把它們記成顯示過，下一輪就會被去重濾掉，於是那個數量變成 0，
+        # 內容永遠送不出去。原本 `if text_parts:` 在這裡永遠成立，等於沒改。
+        _dedup_mark_shown(wiki_result_dicts + contrarian_results)
+        if delivery_mode == "side_hint":
+            _dedup_mark_shown(assoc_results)
         formatted_text = "\n\n".join(text_parts)
 
         duration_ms = int((time.monotonic() - t0) * 1000)

@@ -130,6 +130,12 @@ class PruningKeysOnEnumerationAndRunsAtAll(unittest.TestCase):
         found = [p for p in (ROOT / "scripts").glob("*.sh")
                  if "build_vector_index.py" in p.read_text(encoding="utf-8")]
         self.assertTrue(found, "找不到任何呼叫 build_vector_index 的排程腳本")
+        # 原本只確認「有腳本提到它」——把 --incremental 全部拿掉，這個測試
+        # 照樣會過，等於沒有檢查前提。
+        for script in found:
+            text = script.read_text(encoding="utf-8")
+            self.assertIn("--incremental", text,
+                          f"{script.name} 不再帶 --incremental，清理的前提變了")
 
 
 if __name__ == "__main__":

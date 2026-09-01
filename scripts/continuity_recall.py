@@ -300,7 +300,7 @@ def _card_index_paths() -> tuple[Path, Path]:
     return meta, meta.with_suffix(".bin")
 
 
-def _find_card_rows(key: str) -> list[int]:
+def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
     """同一張卡在不同來源有不同前綴，比對時要把它們對起來。
 
     索引鍵是 `01-openclaw-workflows/X.md` 或 `memory/cards/X.md`，
@@ -321,6 +321,10 @@ def _find_card_rows(key: str) -> list[int]:
         if candidate in _CARD_KEYS:
             return [_CARD_KEYS[candidate]]
 
+    if card_level_only:
+        # 呼叫端明講只要卡片級。退回論點級會偷偷換掉粒度，而有些門檻
+        # （像吸收閘門的 MAX_REDUNDANCY）是照卡片級向量校準的。
+        return []
     # 論點級向量的鍵是 relpath#kpN。卡片級找不到時要看這張卡的**所有**論點，
     # 不是字典順序的第一個——分數要面對 0.55 這道硬門檻，所以「第三個論點
     # 正好命中」的卡片，會因為第一個論點離題而被丟掉。semantic_recall 本來
@@ -345,7 +349,8 @@ def _find_card_rows(key: str) -> list[int]:
 MAX_CARD_ARGUMENT_ROWS = 8
 
 
-def lookup_card_vectors(keys: list[str]) -> dict[str, list[list[float]]]:
+def lookup_card_vectors(keys: list[str], *, card_level_only: bool = False
+                        ) -> dict[str, list[list[float]]]:
     """只取指定卡片的向量，用 seek 讀單筆。
 
     卡片有 6,000 多個向量、100MB，全部載入要好幾秒——但我們只需要驗證
@@ -373,7 +378,8 @@ def lookup_card_vectors(keys: list[str]) -> dict[str, list[list[float]]]:
         with bin_path.open("rb") as fh:
             for key in keys:
                 # 一張卡可能有好幾條論點向量。全部讀回來，讓上面決定用哪一個。
-                for row in _find_card_rows(key)[:MAX_CARD_ARGUMENT_ROWS]:
+                rows = _find_card_rows(key, card_level_only=card_level_only)
+                for row in rows[:MAX_CARD_ARGUMENT_ROWS]:
                     fh.seek(row * row_bytes)
                     chunk = fh.read(row_bytes)
                     if len(chunk) != row_bytes:
@@ -466,13 +472,17 @@ def _base_heading(source: str, section: str) -> str:
     """
     if not section:
         return section
+    # 沒有後綴就沒得剝——直接回。這一條要放在最前面：召回的熱路徑上絕大多數
+    # 的鍵都沒有後綴，而 _section_text 每次都要重讀整份頁面（有的到 680K）。
+    if not _INDEX_SUFFIX.search(section):
+        return section
     candidate = section
     # 最多剝兩層（~N 與 @N），多留一次餘裕以防之後又加了第三種後綴。
     for _ in range(3):
         if _section_text(source, candidate):
             return candidate
         if not _INDEX_SUFFIX.search(candidate):
-            break
+            return section
         candidate = _INDEX_SUFFIX.sub("", candidate)
     return candidate if _section_text(source, candidate) else section
 

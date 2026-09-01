@@ -36,7 +36,10 @@ MEMORY_DIR = WORKSPACE / "memory"
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 CARDS_DIR = xkb_paths.CARDS_DIR
 SEARCH_INDEX_PATH = BOOKMARKS_DIR / "search_index.json"
-REVIEW_DECISIONS_PATH = WIKI_DIR / "review-decisions.json"
+# 跟 sync_cards_to_wiki 用同一個來源。兩邊各寫一次的話，導開檔案的那一方
+# 會跟這支報告器看到不同的決策——同一個量兩個來源。
+REVIEW_DECISIONS_PATH = Path(os.getenv("XKB_REVIEW_DECISIONS",
+                                       str(WIKI_DIR / "review-decisions.json")))
 LOG_PATH = WIKI_DIR / "log.md"
 INDEX_PATH = WIKI_DIR / "index.md"
 TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"

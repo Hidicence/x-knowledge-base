@@ -113,12 +113,15 @@ def main() -> int:
         # 頁面記的是網址，向量索引的鍵是檔案路徑，中間要換一次。
         absorbed_paths = [url_to_path[u] for u in existing_by_topic.get(topic, set())
                           if u in url_to_path]
-        # 每張卡回的是一串論點向量。這裡保持「一張卡一組」，比對時兩邊都取
-        # 最像的那一條——攤平成一大堆論點向量會改變粒度，而 MAX_REDUNDANCY
-        # 是照卡片級向量調的（同主題兩張卡本來就有 0.7~0.8），拿短短的論點
-        # 互比會輕易衝破 0.92，然後以「重複」永久寫進跳過清單。
-        # 卡片級鍵存在時 rows 只有一條，行為與改動前完全相同。
-        absorbed = [rows for rows in cr.lookup_card_vectors(absorbed_paths).values() if rows]
+        # 重複度只拿卡片級向量比。MAX_REDUNDANCY = 0.92 是照卡片級校準的
+        # （同主題的兩張卡本來就有 0.7~0.8），而論點是短句、彼此天生就近；
+        # 兩邊都放寬成論點對論點，只要共用一個論點就會衝破 0.92，然後以
+        # 「重複」永久寫進跳過清單。
+        # 註：我上一版用巢狀迴圈「保持一張卡一組」，那在 max 底下等於沒做——
+        # 分組不可能在取最大值之後還存在。
+        absorbed = [vec for rows in
+                    cr.lookup_card_vectors(absorbed_paths, card_level_only=True).values()
+                    for vec in rows]
 
         scored: list[tuple[float, sync.Card]] = []
         off_topic = redundant = 0
@@ -139,10 +142,12 @@ def main() -> int:
                 off_topic += 1
                 skip.setdefault(topic, []).append(card.url)
                 continue
-            if absorbed and max(cr._cosine(v, a)
-                                for v in rows
-                                for other in absorbed
-                                for a in other) > MAX_REDUNDANCY:
+            # 這張卡也要有卡片級向量才判得了重複；沒有的話寧可不判，
+            # 也不要用不同粒度去比一個沒為它校準過的門檻。
+            own = next(iter(cr.lookup_card_vectors(
+                [card.path or card.url], card_level_only=True).values()), None)
+            if absorbed and own and max(
+                    cr._cosine(own[0], a) for a in absorbed) > MAX_REDUNDANCY:
                 redundant += 1
                 skip.setdefault(topic, []).append(card.url)
                 continue

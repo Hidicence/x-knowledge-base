@@ -119,13 +119,20 @@ def filter_irrelevant(
         if similarity is None:
             # 判斷不出來 → 放行，但要記住它沒有被驗證過。過濾器不能刪掉
             # 它判斷不了的東西，但也不該讓它排在真的比對過的前面。
-            # 不要在這裡編一個分數。網址與 semantic: id 依設計就沒有向量，
-            # 把它們釘在「門檻減 0.01」等於交給 API 用戶一個長得像餘弦、
-            # 其實是捏造的數字——而這個檔案別處才剛說過分數必須是真的觀察。
-            # 降權放到 xkb_score.rank()：那裡本來就是負責讓各層可比的地方，
-            # 排序的事在排序的地方做，score 保持是一個觀察。
             item["_unverified"] = True
-            item["score_basis"] = "unverified"
+            if rewrite_score:
+                # 降權必須在這裡做——這裡是唯一知道「有沒有驗證過」的地方。
+                # 我一度把它搬到 xkb_score.rank()，但記憶服務根本不呼叫
+                # rank()，它自己照 score 重排；於是驗不了的網址帶著原始
+                # RRF（約 0.88）壓過所有真的以餘弦命中的卡片（0.55–0.85）。
+                # 一個排序兩種尺度，這個專案這週的第八次。
+                #
+                # 上一輪審查說「不要捏造測量值」是對的，但結論不是把降權
+                # 搬走，而是不要把這個數字當成測量值賣出去：score_basis
+                # 就是那個標籤，讀的人分得出它是排序用的位置、不是觀察。
+                item["rank_score"] = item.get("score")
+                item["score"] = round(max(0.0, limit - 0.01), 4)
+                item["score_basis"] = "unverified"
             kept.append(item)
             continue
         if similarity < limit:

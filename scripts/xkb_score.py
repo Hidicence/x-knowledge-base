@@ -95,11 +95,6 @@ def relevance(raw_score: float, source_type: str) -> float:
     return raw_score / (raw_score + anchor)
 
 
-# 驗不出相似度的項目在排序上打的折。壓到通過門檻的結果之下，但不是零
-# ——它們沒有被判定為不相關，只是無從判定。
-UNVERIFIED_FACTOR = 0.5
-
-
 def unified(raw_score: float, source_type: str) -> float:
     """對齊後再乘來源權威度，這才是跨層可比的分數。"""
     return round(relevance(raw_score, source_type) * weight_for(source_type), 4)
@@ -114,14 +109,10 @@ def rank(results: list[dict]) -> list[dict]:
         source_type = str(item.get("source_type", ""))
         raw = float(item.get("score") or 0.0)
         item["relevance"] = round(relevance(raw, source_type), 4)
-        score = unified(raw, source_type)
-        if item.get("score_basis") == "unverified":
-            # 沒辦法跟問題比對過的項目（網址、合成 id）不刪掉，但也不該
-            # 壓過真的比對過的結果。降權放在這裡，因為這裡才是負責跨層
-            # 可比的地方；放在過濾器裡只能維持到下一次呼叫 rank()，
-            # 而且會逼它捏造一個分數。
-            score = round(score * UNVERIFIED_FACTOR, 4)
-        item["unified_score"] = score
+        # 驗不出相似度的項目在 xkb_relevance.filter_irrelevant 就已經降到
+        # 門檻之下了（那裡才知道有沒有驗證過）。這裡不要再降一次：
+        # 同一件事兩個定義，正是這個專案反覆犯的那類錯。
+        item["unified_score"] = unified(raw, source_type)
     return sorted(results, key=lambda r: r.get("unified_score", 0.0), reverse=True)
 
 

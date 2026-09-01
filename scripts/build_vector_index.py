@@ -349,12 +349,20 @@ def main() -> int:
             print(f"  ⚠️  No text for: {key}")
             continue
         text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
-        enumerated_keys.add(key)
+        md_path = _resolve_md_path(item)
+        if md_path is None:
+            # 找不到 markdown 就列不出論點鍵。這時如果還把卡片鍵算成走過，
+            # 這份文件會進 examined_docs，它既有的 #kpN 就全被當成消失而刪掉；
+            # 下次路徑正常了再全部重新付費嵌入。那正是這段清理本來要消滅的
+            # 振盪，只是換一個觸發條件。
+            if args.incremental and key in existing_vectors:
+                continue
+        else:
+            enumerated_keys.add(key)
         if not (args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash):
             to_embed.append((key, card_text, text_hash))
 
         # 論點級 embedding（TODOS 2026-07-13）：每條「關鍵論點」單獨成向量
-        md_path = _resolve_md_path(item)
         if md_path:
             title = (item.get("title") or "").strip()
             for pi, point in enumerate(_extract_key_point_list(md_path), 1):
@@ -409,15 +417,23 @@ def main() -> int:
         print("✅ Nothing to embed.")
         return 0
     if not to_embed:
-        print("沒有新內容要嵌入，但分區索引檔不完整——從既有向量重新寫出。")
+        # 為什麼還要往下走，要說對。只有死鍵要清的時候說「分區索引檔不完整」
+        # 是假的，而假的理由會讓下一個人去修一個不存在的問題。
+        print("沒有新內容要嵌入，但分區索引檔不完整——從既有向量重新寫出。"
+              if not _partitions_ok else
+              "沒有新內容要嵌入，只清掉死鍵之後重新寫出。")
 
-    # Init provider
-    try:
-        provider = get_provider(env_file=args.env_file)
-        print(f"🤖 Provider: {provider.__class__.__name__} / model: {getattr(provider, 'model', '?')}")
-    except (EnvironmentError, ValueError) as e:
-        print(f"❌ {e}", file=sys.stderr)
-        return 1
+    # 沒有東西要嵌入就不要去要嵌入服務。純粹「清死鍵」的那一輪也會走到
+    # 這裡，於是憑證不在時整支以 1 收場、而且一個死鍵都沒清掉——
+    # 前一天它還只是安靜地印 Nothing to embed。
+    provider = None
+    if to_embed:
+        try:
+            provider = get_provider(env_file=args.env_file)
+            print(f"🤖 Provider: {provider.__class__.__name__} / model: {getattr(provider, 'model', '?')}")
+        except (EnvironmentError, ValueError) as e:
+            print(f"❌ {e}", file=sys.stderr)
+            return 1
 
     # Embed in batches
     keys = [k for k, _, _ in to_embed]
