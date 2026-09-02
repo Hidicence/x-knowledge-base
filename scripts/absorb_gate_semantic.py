@@ -119,8 +119,8 @@ def main() -> int:
         # 「重複」永久寫進跳過清單。
         # 註：我上一版用巢狀迴圈「保持一張卡一組」，那在 max 底下等於沒做——
         # 分組不可能在取最大值之後還存在。
-        absorbed = [vec for rows in
-                    cr.lookup_card_vectors(absorbed_paths, card_level_only=True).values()
+        absorbed = [vec for rows in cr.lookup_card_vectors(
+                        absorbed_paths, card_level_only=True, exact=True).values()
                     for vec in rows]
 
         scored: list[tuple[float, sync.Card]] = []
@@ -151,7 +151,7 @@ def main() -> int:
             # 重複度才需要卡片級向量：0.92 是照卡片級校準的，沒有的話寧可
             # 不判，也不要用不同粒度去比一個沒為它校準過的門檻。
             own = next(iter(cr.lookup_card_vectors(
-                [key_], card_level_only=True).values()), None)
+                [key_], card_level_only=True, exact=True).values()), None)
             if absorbed and own and max(
                     cr._cosine(own[0], a) for a in absorbed) > MAX_REDUNDANCY:
                 redundant += 1

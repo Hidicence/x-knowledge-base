@@ -300,7 +300,8 @@ def _card_index_paths() -> tuple[Path, Path]:
     return meta, meta.with_suffix(".bin")
 
 
-def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
+def _find_card_rows(key: str, *, card_level_only: bool = False,
+                    exact: bool = False) -> list[int]:
     """同一張卡在不同來源有不同前綴，比對時要把它們對起來。
 
     索引鍵是 `01-openclaw-workflows/X.md` 或 `memory/cards/X.md`，
@@ -342,6 +343,13 @@ def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
                 return rows
 
     # 最後退路：只比對檔名。分類目錄改過名時仍能對上。
+    if exact:
+        # 最後這層是拿檔名猜的：目錄不同、檔名相同就會命中**別張卡**。
+        # 對召回來說那是可接受的近似，對「這張卡自己的向量」不是。
+        # 取捨不對稱，所以答案自己就決定了：判不出重複，最多讓一張重複的
+        # 卡片過去，下一輪還抓得到；拿別張卡的向量去判，會把一張好卡片
+        # 永久寫進跳過清單。
+        return []
     name = stem.rsplit("/", 1)[-1]
     return [i for k, i in _CARD_KEYS.items() if k.rsplit("/", 1)[-1] == name][:1]
 
@@ -351,8 +359,8 @@ def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
 MAX_CARD_ARGUMENT_ROWS = 8
 
 
-def lookup_card_vectors(keys: list[str], *, card_level_only: bool = False
-                        ) -> dict[str, list[list[float]]]:
+def lookup_card_vectors(keys: list[str], *, card_level_only: bool = False,
+                        exact: bool = False) -> dict[str, list[list[float]]]:
     """只取指定卡片的向量，用 seek 讀單筆。
 
     卡片有 6,000 多個向量、100MB，全部載入要好幾秒——但我們只需要驗證
@@ -380,7 +388,8 @@ def lookup_card_vectors(keys: list[str], *, card_level_only: bool = False
         with bin_path.open("rb") as fh:
             for key in keys:
                 # 一張卡可能有好幾條論點向量。全部讀回來，讓上面決定用哪一個。
-                rows = _find_card_rows(key, card_level_only=card_level_only)
+                rows = _find_card_rows(key, card_level_only=card_level_only,
+                                       exact=exact)
                 for row in rows[:MAX_CARD_ARGUMENT_ROWS]:
                     fh.seek(row * row_bytes)
                     chunk = fh.read(row_bytes)

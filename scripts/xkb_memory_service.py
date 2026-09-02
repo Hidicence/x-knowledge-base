@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - semantic backend is optional
 
 import xkb_failures
 import xkb_relevance
+import xkb_score
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -452,6 +453,9 @@ class KnowledgeCatalog:
                 "visibility": hit.get("sensitivity", hit.get("visibility", "private")),
                 "namespace": hit.get("namespace", "private"),
                 "score": hit.get("score", 0.0),
+                # gbrain 的混合 RRF。source_type 這裡是資料種類（會回給
+                # 用戶），跟分數的尺度是兩件事。
+                "score_scale": "card",
                 "retrieval": "xbrain_hybrid",
             })
         # The semantic backend does not report which knowledge layer a hit came
@@ -503,6 +507,9 @@ class KnowledgeCatalog:
             "visibility": "private",
             "namespace": "private",
             "score": hit.score,
+            # 這裡是餘弦，不是關鍵字分數——wiki 的錨點是照關鍵字尺度量的，
+            # 套上去會把每一筆 wiki 命中都算錯。
+            "score_scale": "wiki_semantic",
             "retrieval": "wiki_semantic",
         } for hit in hits]
 
@@ -591,7 +598,7 @@ class KnowledgeCatalog:
                 blob = json.dumps(item, ensure_ascii=False).lower()
                 score = _keyword_unit_score(blob, terms)
                 if score:
-                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
+                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "score_scale": "card", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
             for path in sorted(self.wiki_topics_dir.glob("*.md")):
                 metadata = self._frontmatter(path)
                 if not self._allowed(metadata, namespace):
@@ -601,7 +608,7 @@ class KnowledgeCatalog:
                 blob = f"{path.stem} {content}".lower()
                 score = _keyword_unit_score(blob, terms)
                 if score:
-                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
+                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_semantic", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
             hits.sort(key=lambda pair: pair[0], reverse=True)
             records = [item for _, item in hits[: max(1, min(limit, 50))]]
             retrieval_mode = "keyword_fallback"
@@ -1205,10 +1212,20 @@ class Store:
         knowledge = self.catalog.search(query, limit, namespace)
         conversation = self.recall(query, limit, namespace)
         records = knowledge["records"] + [
-            {**item, "record_type": "conversation_trace", "source_type": "conversation"}
+            {**item, "record_type": "conversation_trace", "source_type": "conversation",
+             "score_scale": "conversation"}
             for item in conversation["memories"]
         ]
-        records.sort(key=lambda item: item.get("score", 0), reverse=True)
+        # 三層各有自己的尺度：卡片是 RRF 或餘弦、wiki 是真餘弦、對話是關鍵字
+        # 比例（上限 0.65）。照原始 score 排等於拿公分比英吋——xkb_score 就是
+        # 為這件事寫的，它的說明開頭就在講這個，連 conversation 的錨點與權重
+        # 都定義好了，只是這個合併點從來沒呼叫它。
+        #
+        # 我在 xkb_relevance 補了五輪都補不完，就是因為補錯了層：不管把驗不出
+        # 相似度的項目壓到哪一段，都會撞上另一層的尺度。壓高一點壓過 wiki 的
+        # 真餘弦，壓低一點掉到對話軌跡之下——後者會讓索引壞掉長得像
+        # 「知識庫裡沒東西」，而這個模組的說明明講那是不能發生的事。
+        records = xkb_score.rank(records)
         # Conversation recall filters by namespace in SQL, so nothing is
         # dropped after the fact and its layer count is structurally zero.
         filtered_counts = dict(knowledge.get("filtered_counts", filter_stats()))

@@ -30,6 +30,10 @@ from __future__ import annotations
 import os
 
 # 各層實測中位數（2026-07-28，8 個代表性查詢）。改了計分方式就要重新量。
+#
+# 這裡的鍵是**尺度**，不是資料種類。呼叫端用 score_scale 指定，沒指定才
+# 退回 source_type——因為同一種資料可能走不同的計分方式（wiki 有關鍵字
+# 版也有語意版，數字差一個量級）。
 DEFAULT_ANCHORS = {
     "wiki": 0.93,
     "memory": 0.93,              # 與 wiki 同一支程式、同一種計分
@@ -39,6 +43,9 @@ DEFAULT_ANCHORS = {
     "memory_semantic": 0.72,
     "card": 0.88,
     "bookmark": 0.88,
+    # 卡片被實測成餘弦之後（xkb_relevance 的 rewrite_score）就不再是 RRF，
+    # 0.88 那個錨點是照 RRF 量的。餘弦有自己的區間，跟 wiki 語意同一段。
+    "card_semantic": 0.72,
     "contrarian": 0.52,
     "action": 0.31,
     # 對話軌跡是關鍵字比對，原始分數是「命中幾個詞」——跟餘弦相似度不同尺度。
@@ -54,6 +61,8 @@ DEFAULT_WEIGHTS = {
     "memory_semantic": 1.0,
     "card": 0.85,
     "bookmark": 0.85,
+    # 尺度換了，來源權威度沒換：還是原始素材。
+    "card_semantic": 0.85,
     "contrarian": 0.7,
     "action": 0.6,
     # 關鍵字命中是比語意相似弱的證據：詞出現過不代表在講同一件事。
@@ -106,7 +115,12 @@ def rank(results: list[dict]) -> list[dict]:
     原始 score 保留不動：各層的門檻是照自己的尺度調的，改它會牽動一堆判斷。
     """
     for item in results:
-        source_type = str(item.get("source_type", ""))
+        # score_scale 是「這個數字是哪一套尺度算出來的」，由算出它的地方
+        # 標上；source_type 是「這筆東西是什麼」，會回給 API 用戶。兩者
+        # 常常不同：wiki 的語意召回 source_type 是 wiki、尺度卻是餘弦，
+        # 而 wiki 的錨點是照關鍵字尺度（0.40–3.65）量的。用錯錨點就等於
+        # 沒有對齊。沒標的沿用舊行為。
+        source_type = str(item.get("score_scale") or item.get("source_type", ""))
         raw = float(item.get("score") or 0.0)
         item["relevance"] = round(relevance(raw, source_type), 4)
         # 驗不出相似度的項目在 xkb_relevance.filter_irrelevant 就已經降到

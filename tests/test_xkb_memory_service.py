@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import tempfile
 import unittest
+import unittest.mock
 from unittest import mock
 from pathlib import Path
 
@@ -186,25 +187,84 @@ class XKBMemoryServiceTests(unittest.TestCase):
 
         module.xbrain_query = fixture_query
         try:
-            result = self.store.catalog.search("semantic fixture", 3)
+            # 前提要寫出來。原本這個測試能過，只是因為 fixture 的 slug 剛好
+            # 不在這台機器的 cards_index 裡——換一台機器、或哪天真的建了同名
+            # 的卡片，斷言就會翻面。測試不該從磁碟繼承它的前提。
+            import xkb_relevance
+            with unittest.mock.patch.object(xkb_relevance, "similarities",
+                                            return_value=None):
+                result = self.store.catalog.search("semantic fixture", 3)
         finally:
             module.xbrain_query = original
         self.assertEqual(result["retrieval_mode"], "xbrain_hybrid")
         self.assertEqual(result["records"][0]["retrieval"], "xbrain_hybrid")
         record = result["records"][0]
-        # 這裡原本斷言 score 就是後端給的 0.91。那在「查得到、比對得了」的時候
-        # 是對的，在比對不了的時候是錯的：search() 會把這一批接上 _wiki_search()
-        # 的結果——那半邊帶著真的餘弦——然後整份照 score 排，於是一個沒被驗證過
-        # 的 0.91 會壓過真的 0.75。
-        #
-        # 改測試來配合新行為，正是讓 bug 被追認的方式，所以這裡斷言得更多而不是
-        # 更少：後端的數字仍然完整帶著（在 rank_score，schema 就是這樣寫的）、
-        # 這筆被標明沒驗證過、而且 score 落在檢索門檻之下。
-        # 原本那條斷言在「降權整個不見」時也會過；這三條不會。
-        self.assertEqual(record.get("rank_score"), 0.91)
+        # 一個鍵都對不到向量索引時，這裡不做任何比較，也就不該假裝比過：
+        # 後端的分數原樣帶著，只加上「沒驗證過」的標籤。
+        # 跨層可比是合併點（knowledge_recall → xkb_score.rank）的事，
+        # 不是這裡編一個位置出來——我在這個檔案上來回改了三輪才把它放對地方。
+        self.assertEqual(record["score"], 0.91)
         self.assertEqual(record.get("score_basis"), "unverified")
-        self.assertLess(record["score"], 0.55)
+        self.assertEqual(record.get("score_scale"), "card")
         self.assertNotIn("_unverified", record)
+
+    def test_layers_are_ordered_by_a_comparable_score_not_raw_numbers(self) -> None:
+        """合併之後要照跨層可比的分數排，不是照各層自己的原始數字。
+
+        三層的尺度互不相同：卡片是 gbrain 的 RRF、wiki 是餘弦、對話是關鍵字
+        比例（上限 0.65）。合併點原本直接照 score 排，等於拿公分比英吋。
+
+        這是外部審查連續六輪繞著打轉的那個缺陷——每一輪我都在 xkb_relevance
+        裡替驗不出相似度的項目找「壓到哪裡才對」，而不管壓到哪裡都會撞上另一層
+        的尺度：壓高壓過 wiki 的真餘弦，壓低掉到對話軌跡之下，而後者會讓索引
+        壞掉長得像「知識庫裡沒東西」。真正該修的是合併點。
+
+        測試要走真正的路徑。我第一版直接呼叫 xkb_score.rank()，於是把合併點
+        改回原始排序它照樣是綠的——測到的是那個函式，不是那條路。
+        """
+        knowledge = {
+            "records": [
+                {"title": "卡片", "score": 0.62, "score_scale": "card",
+                 "record_type": "knowledge_chunk"},
+                {"title": "wiki 結論", "score": 0.68, "score_scale": "wiki_semantic",
+                 "record_type": "wiki_topic"},
+            ],
+            "retrieval_mode": "xbrain_hybrid", "filtered_counts": {},
+            "semantic_retrieval_attempted": True, "semantic_backend": {"status": "used"},
+            "dropped_as_irrelevant": 0,
+        }
+        conversation = {"memories": [
+            {"query": "對話軌跡", "answer": "", "score": 0.65},
+        ]}
+        # 原始數字上對話軌跡贏過卡片、卡片輸給 wiki 的差距也只有 0.06。
+        with mock.patch.object(type(self.store.catalog), "search",
+                               return_value=knowledge), \
+             mock.patch.object(type(self.store), "recall", return_value=conversation):
+            packet = self.store.knowledge_recall("任意問題", 5, "private")
+
+        order = [r.get("title") or r.get("query") for r in packet["records"]]
+        self.assertEqual(order[0], "wiki 結論",
+                         "消化過的結論該排在原始素材之前")
+        self.assertLess(order.index("卡片"), order.index("對話軌跡"),
+                        "關鍵字命中的對話軌跡不該壓過語意命中的卡片")
+
+    def test_each_producer_declares_the_scale_of_its_own_score(self) -> None:
+        """算出分數的地方要標明那是哪一套尺度算的。
+
+        source_type 是「這是什麼東西」（會回給 API 用戶），score_scale 是
+        「這個數字怎麼來的」。兩者常常不同：wiki 的語意召回 source_type 是
+        wiki、尺度卻是餘弦，而 wiki 的錨點是照關鍵字尺度（0.40–3.65）量的。
+        少標一個，整層就會用錯錨點對齊，而且不會有任何錯誤訊息。
+        """
+        source = (Path(module.__file__).parent / "xkb_memory_service.py").read_text(
+            encoding="utf-8")
+        # 每一個帶 score 的記錄樣板都要有 score_scale
+        for marker in ('"retrieval": "xbrain_hybrid"', '"retrieval": "wiki_semantic"',
+                       '"record_type": "conversation_trace"'):
+            idx = source.index(marker)
+            window = source[max(0, idx - 600):idx + 200]
+            self.assertIn("score_scale", window,
+                          f"{marker} 附近的記錄沒有標尺度")
 
     def test_recall_packet_explains_acl_namespace_filtering_and_backend(self) -> None:
         original = module.xbrain_query

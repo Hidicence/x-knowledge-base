@@ -80,8 +80,14 @@ def _mark_unverified(item: dict[str, Any], limit: float) -> None:
     「不要捏造測量值」也是對的，但結論不是把降權搬走，而是不要把這個數字
     當成測量值賣出去：score_basis 就是那個標籤，rank_score 留著原本的分數。
     """
-    raw = float(item.get("score") or 0.0)
-    item["rank_score"] = item.get("score")
+    raw_value = item.get("score")
+    if raw_value is None:
+        # 本來就沒有分數的項目，不要寫一個 rank_score: null 出去——
+        # README 說那是「後端拿來排序的數字」，是數值欄位。
+        item["score_basis"] = "unverified"
+        return
+    raw = float(raw_value)
+    item["rank_score"] = raw_value
     # 等比壓進門檻之下的那一段，而不是全部釘在同一個數字上。
     # 釘成常數會把後端自己的語意排序整個丟掉——那在驗不出來的時候，
     # 是唯一還剩下的排序資訊。（上一版就是這樣做的，被既有測試抓到：
@@ -140,24 +146,22 @@ def filter_irrelevant(
     scores = similarities(query, keys.values())
     if not scores:
         # 一個鍵都解不出來（索引壞了、或這批全是網址／semantic: id）。
-        # 不刪任何東西，但要降權。
+        # 只標記，不動分數。
         #
-        # 我上一版在這裡「標記但不改分數」，理由是「整批都在同一個尺度上，
-        # 沒有東西需要對齊」。那個理由是錯的：xkb_memory_service.search()
-        # 會把這一批接上 _wiki_search() 的結果，而 wiki 那半邊照它自己的
-        # 說明「本來就帶著真的餘弦」，然後整份照 score 排。所以
-        # cards_index.bin 壞掉、wiki 索引還好的時候，卡片帶著 0.88 的 RRF
-        # 把 0.60–0.75 的真命中擠出前幾名——正是我聲稱不可能發生的事。
-        limit_ = min_similarity() if threshold is None else threshold
+        # 這裡我來回改了三次，每次都是在替一個不屬於這裡的問題找位置。
+        # 跨層可比是 xkb_score 的工作，而合併點（Store.recall_packet）原本
+        # 沒有呼叫它、直接照原始 score 排三種尺度。只要那件事沒修，這裡把
+        # 分數壓到哪一段都會撞到別層：壓高壓過 wiki 的真餘弦，壓低掉到
+        # 對話軌跡（上限 0.65）之下——後者會讓索引壞掉長得像「知識庫裡
+        # 沒東西」，而那正是這個專案最不能有的失敗模式。
+        #
+        # 合併點修好之後，這裡只做它誠實做得到的事：整批都驗不出來時，
+        # 沒有任何比較發生過，就不要假裝比過。標記讓下游知道這件事。
         for item in items:
-            item["_unverified"] = True
-            if rewrite_score:
-                _mark_unverified(item, limit_)
-        for item in items:
-            # 內部標記不能外流。這條提早返回的路徑跳過了函式尾端的清理，
-            # 於是卡片索引讀不到時，_unverified 會一路進到記憶服務回給
-            # 遠端用戶的 JSON 裡——那個欄位不在 KNOWLEDGE_SCHEMA 上。
-            item.pop("_unverified", None)
+            item["score_basis"] = "unverified"
+        xkb_failures.note(
+            "relevance filter",
+            RuntimeError("一個鍵都對不到向量索引——這一批沒有任何項目被驗證過"))
         return items, 0, {}
 
     kept: list[dict[str, Any]] = []
@@ -176,6 +180,9 @@ def filter_irrelevant(
         if rewrite_score:
             item["rank_score"] = item.get("score")
             item["score"] = round(similarity, 4)
+            # 分數換尺度了就要說。原本改寫成餘弦之後記錄還標著 card，
+            # 而那個錨點是照 RRF 量的——同一個標籤底下兩種尺度。
+            item["score_scale"] = "card_semantic"
         kept.append(item)
     if rewrite_score:
         # 排序跟著分數走（分數已在上面調整過）。原本大家一起比 score，而那時候「算出來的」
