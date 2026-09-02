@@ -144,7 +144,11 @@ def filter_irrelevant(
         # 合併點修好之後，這裡只做它誠實做得到的事：整批都驗不出來時，
         # 沒有任何比較發生過，就不要假裝比過。標記讓下游知道這件事。
         for item in items:
-            _mark_unverified(item)
+            # rewrite_score=False 的呼叫端要的是「只過濾、不要碰分數」。
+            # _mark_unverified 會寫 score_scale、也會把 None 補成 0.0，
+            # 都算碰。今天沒有這種呼叫端——契約就是在那種時候悄悄失效的。
+            if rewrite_score:
+                _mark_unverified(item)
         # 只有「本來該查得到卻查不到」才算故障。整批都是網址或 semantic: id
         # 時 vector_key 依設計就回空字串，那是正常情況——而 note() 一個行程
         # 只報一次，讓正常情況把那一次用掉，之後真的索引壞掉就沒人說話了。

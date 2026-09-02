@@ -293,6 +293,29 @@ class XKBMemoryServiceTests(unittest.TestCase):
             self.assertIn(scale, known,
                           f"{scale} 不在 xkb_score 的尺度表裡，會靜靜掉到 fallback")
 
+    def test_every_record_template_declares_its_specific_scale(self) -> None:
+        """每一個產生分數的樣板都要標對尺度——包括這個測試檔案 mock 掉的那些。
+
+        動態的那個測試只走得到 fixture 那一筆：setUpModule 把 _wiki_search 整個
+        換成回空陣列、store 也是空的，所以 wiki 與對話那兩個樣板沒有任何測試
+        看著。我刪掉的靜態測試本來守著它們，替換的版本反而涵蓋更少。
+
+        而靜態檢查要看**值**。我更早的版本只找 score_scale 這個欄位名，
+        於是四個標籤裡有兩個是錯的時候它照樣是綠的。
+        """
+        source = (Path(module.__file__).parent / "xkb_memory_service.py").read_text(
+            encoding="utf-8")
+        expected = {
+            '"retrieval": "xbrain_hybrid"': "card",
+            '"retrieval": "wiki_semantic"': "wiki_semantic",
+            '"record_type": "conversation_trace"': "conversation",
+        }
+        for marker, scale in expected.items():
+            idx = source.index(marker)
+            window = source[max(0, idx - 700):idx + 300]
+            self.assertIn(f'"score_scale": "{scale}"', window,
+                          f"{marker} 的樣板沒有標成 {scale}")
+
     def test_the_keyword_fallback_declares_a_keyword_scale(self) -> None:
         """關鍵字退路的分數是 0~1 的覆蓋率，不是 RRF 也不是餘弦。
 

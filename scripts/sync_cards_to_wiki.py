@@ -261,6 +261,26 @@ def normalize_date(item: dict) -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _relative_path(item: dict) -> str:
+    """向量索引用的鍵。有 relative_path 就用它，沒有就從絕對路徑推。
+
+    只有一部分 ingester 會寫 relative_path。缺的時候原本會退到絕對路徑，
+    而那對不上任何索引鍵，於是查找落到檔名後備——拿跨目錄同名的**另一張卡**
+    的向量來判這張卡，判離題之後永久寫進 skip。推得出來就不要用猜的。
+    """
+    rel = (item.get("relative_path") or "").strip()
+    if rel:
+        return rel
+    path = (item.get("path") or "").strip()
+    if not path:
+        return ""
+    try:
+        return str(Path(path).resolve().relative_to(
+            xkb_paths.BOOKMARKS_DIR.resolve())).replace("\\\\", "/")
+    except (ValueError, OSError):
+        return ""
+
+
 def make_card(item: dict) -> Card | None:
     if item.get("excluded"):
         return None
@@ -274,7 +294,7 @@ def make_card(item: dict) -> Card | None:
         tags=[str(t) for t in (item.get("tags") or [])],
         date=normalize_date(item),
         path=item.get("path", ""),
-        relative_path=item.get("relative_path", ""),
+        relative_path=_relative_path(item),
         summary=item.get("summary", ""),
     )
 

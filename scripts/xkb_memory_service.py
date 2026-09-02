@@ -50,6 +50,12 @@ TRACE_SCHEMA = "xkb-l1-trace.v1"
 KNOWLEDGE_SCHEMA = "xkb-knowledge-record.v1"
 
 
+def query_terms(query: str) -> list[str]:
+    """把查詢切成比對用的詞。中文沒有空白，所以不能用 split()。"""
+    return [t.lower() for t in re.findall(r"[\w\u4e00-\u9fff]+", query or "")
+            if len(t) > 1]
+
+
 def _normalise(value: str) -> str:
     """Collapse a statement to what it says, for grouping repeated observations.
 
@@ -57,6 +63,23 @@ def _normalise(value: str) -> str:
     whitespace and case are removed before hashing.
     """
     return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _unverified_warning(records: list[dict[str, Any]]) -> str | None:
+    """整批都沒被驗證過時說出來。
+
+    這代表卡片索引讀不到，而不是「知識庫裡沒有東西」。沉默是這個專案最貴的
+    失敗模式：排序上再怎麼安排，一個看起來正常、內容卻少了一整層的回覆，
+    使用者沒有辦法分辨。
+    """
+    knowledge_records = [r for r in records
+                         if r.get("record_type") != "conversation_trace"]
+    if not knowledge_records:
+        return None
+    if all(r.get("score_basis") == "unverified" for r in knowledge_records):
+        return ("知識層這一批沒有任何一筆能跟問題比對——卡片向量索引可能讀不到。"
+                "結果仍然回傳，但排序不可信。")
+    return None
 
 
 def _recall_warnings(knowledge: dict[str, Any], filtered_counts: dict[str, Any]) -> list[str]:
@@ -587,7 +610,7 @@ class KnowledgeCatalog:
             retrieval_mode = "xbrain_hybrid"
             filtered_counts = dict(self._stats)
         else:
-            terms = [term.lower() for term in re.findall(r"[\w\u4e00-\u9fff]+", query) if len(term) > 1]
+            terms = query_terms(query)
             hits: list[tuple[int, dict[str, Any]]] = []
             filtered_cards = filtered_wiki = 0
             for item in self._index():
@@ -1097,7 +1120,11 @@ class Store:
         limit = bounded_int(limit, name="limit", default=5, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
-        terms = [term.lower() for term in query.split() if len(term) > 1]
+        # 原本這裡是 query.split()，而上面的關鍵字退路用的是 CJK 正則。
+        # 同一個「查詢詞」兩種切法：中文查詢在這裡只會切出一個詞，於是
+        # 每一筆命中它的軌跡都剛好拿到折扣上限 0.65——那個「區間」其實
+        # 只有一個值，難怪怎麼調錨點都不對。
+        terms = query_terms(query)
         with self.lock, self.connect() as db:
             rows = db.execute(
                 "SELECT turns.* FROM turns JOIN sessions ON sessions.session_id=turns.session_id "
@@ -1251,7 +1278,8 @@ class Store:
             "retrieval_mode": knowledge.get("retrieval_mode", "keyword_fallback"),
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
-            "warnings": _recall_warnings(knowledge, filtered_counts),
+            "warnings": [w for w in (_recall_warnings(knowledge, filtered_counts)
+                                     + [_unverified_warning(records)]) if w],
         }
 
 

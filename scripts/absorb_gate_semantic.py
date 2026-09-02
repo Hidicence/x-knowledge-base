@@ -124,6 +124,7 @@ def main() -> int:
                     for vec in rows]
 
         scored: list[tuple[float, sync.Card]] = []
+        unjudged: list[str] = []
         off_topic = redundant = 0
         for card in cards:
             # 相關度走原本的查法，別把兩件事合成一次查詢。_find_card_rows 的
@@ -155,6 +156,12 @@ def main() -> int:
             # 不判，也不要用不同粒度去比一個沒為它校準過的門檻。
             own = next(iter(cr.lookup_card_vectors(
                 [key_], card_level_only=True, exact=True).values()), None)
+            if absorbed and not own:
+                # 查不到卡片級向量就判不了重複。這件事必須說出來：
+                # 不說的話，表格照樣印「重複 0」，跟閘門整個停擺長得一模一樣。
+                # 我上一輪在 continuity_recall 的註解裡寫「見呼叫端」，
+                # 然後忘了讓呼叫端真的講話。
+                unjudged.append(card.url)
             if absorbed and own and max(
                     cr._cosine(own[0], a) for a in absorbed) > MAX_REDUNDANCY:
                 redundant += 1
@@ -174,6 +181,10 @@ def main() -> int:
             print(f"  {topic}：超過上限 {args.cap}，{overflow} 張留待下次（未列入 skip）")
         allow[topic] = [c.url for _, c in chosen]
 
+        if unjudged:
+            # 這一行不能省。判不出重複跟「沒有重複」在表格上長得一模一樣，
+            # 而這個專案最貴的失敗模式就是「壞掉的東西看起來很正常」。
+            print(f"  {topic}：{len(unjudged)} 張查不到卡片級向量，重複度沒有判（可能要重建索引）")
         summary.append((topic, len(cards), off_topic, redundant, len(chosen)))
 
     print(f"{'主題':34}{'候選':>6}{'離題':>6}{'重複':>6}{'收錄':>6}")

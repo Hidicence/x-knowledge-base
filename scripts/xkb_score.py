@@ -52,11 +52,15 @@ DEFAULT_ANCHORS = {
     "card_keyword": 0.5,
     "wiki_keyword": 0.5,
     # 沒辦法跟問題比對過的項目（網址、semantic: id、索引讀不到）。
-    # 帶的是後端自己的 RRF，沒有被驗證過。錨點刻意偏高，讓它排在每一個
-    # 驗證過的層之下——這件事以前是靠在 xkb_relevance 裡改寫分數做到的，
-    # 那等於捏造一個測量值，而且壓到哪一段都會撞上別層的尺度。
-    # 尺度的事在尺度表裡解決。
-    "unverified": 1.6,
+    # 帶的是後端自己的 RRF，沒有被驗證過。這件事以前是靠在 xkb_relevance
+    # 裡改寫分數做到的，那等於捏造一個測量值；尺度的事在尺度表裡解決。
+    #
+    # 目標是「剛好落在驗證過的卡片之下」，不是「掉到所有東西之下」。
+    # 我第一版用 1.6/0.5，典型 RRF 只剩 0.1774，反而低於對話軌跡的
+    # 0.4033——於是卡片索引壞掉時，整個封包都是對話軌跡、卡片被截光，
+    # 正是「索引壞掉長得像知識庫裡沒東西」。調錨點時要算交叉點，
+    # 不能只看自己那一層的數字有沒有變小。
+    "unverified": 0.59,
     "contrarian": 0.52,
     "action": 0.31,
     # 對話軌跡：呼叫端（Store.recall）已經乘過 KEYWORD_EVIDENCE_DISCOUNT
@@ -81,7 +85,7 @@ DEFAULT_WEIGHTS = {
     "card_keyword": 0.85,
     "wiki_keyword": 1.0,
     # 驗不出來不代表不相關，所以不是零；但它不該壓過任何驗證過的東西。
-    "unverified": 0.5,
+    "unverified": 0.6,
     "contrarian": 0.7,
     "action": 0.6,
     # 「關鍵字證據較弱」這個判斷已經由 KEYWORD_EVIDENCE_DISCOUNT 表達過了，
