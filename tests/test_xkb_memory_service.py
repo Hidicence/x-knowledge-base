@@ -191,7 +191,20 @@ class XKBMemoryServiceTests(unittest.TestCase):
             module.xbrain_query = original
         self.assertEqual(result["retrieval_mode"], "xbrain_hybrid")
         self.assertEqual(result["records"][0]["retrieval"], "xbrain_hybrid")
-        self.assertEqual(result["records"][0]["score"], 0.91)
+        record = result["records"][0]
+        # 這裡原本斷言 score 就是後端給的 0.91。那在「查得到、比對得了」的時候
+        # 是對的，在比對不了的時候是錯的：search() 會把這一批接上 _wiki_search()
+        # 的結果——那半邊帶著真的餘弦——然後整份照 score 排，於是一個沒被驗證過
+        # 的 0.91 會壓過真的 0.75。
+        #
+        # 改測試來配合新行為，正是讓 bug 被追認的方式，所以這裡斷言得更多而不是
+        # 更少：後端的數字仍然完整帶著（在 rank_score，schema 就是這樣寫的）、
+        # 這筆被標明沒驗證過、而且 score 落在檢索門檻之下。
+        # 原本那條斷言在「降權整個不見」時也會過；這三條不會。
+        self.assertEqual(record.get("rank_score"), 0.91)
+        self.assertEqual(record.get("score_basis"), "unverified")
+        self.assertLess(record["score"], 0.55)
+        self.assertNotIn("_unverified", record)
 
     def test_recall_packet_explains_acl_namespace_filtering_and_backend(self) -> None:
         original = module.xbrain_query

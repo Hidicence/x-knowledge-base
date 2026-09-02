@@ -64,8 +64,13 @@ def vector_key(record_id: str) -> str:
     return record_id if record_id.endswith(".md") else f"{record_id}.md"
 
 
+# 降權時的固定上限。用這一批的最大值當上限，會讓一批爛結果裡最好的那個
+# 被算成滿分——這個專案犯過的老錯。
+UNVERIFIED_CEILING = 1.0
+
+
 def _mark_unverified(item: dict[str, Any], limit: float) -> None:
-    """把驗不出相似度的項目降到門檻之下，並標明這不是一個測量值。
+    """把驗不出相似度的項目降到門檻之下，並保住它們彼此的順序。
 
     降權必須在 filter_irrelevant 裡做——這裡是唯一知道「有沒有驗證過」的
     地方。我一度把它搬到 xkb_score.rank()，但記憶服務根本不呼叫 rank()，
@@ -75,8 +80,15 @@ def _mark_unverified(item: dict[str, Any], limit: float) -> None:
     「不要捏造測量值」也是對的，但結論不是把降權搬走，而是不要把這個數字
     當成測量值賣出去：score_basis 就是那個標籤，rank_score 留著原本的分數。
     """
+    raw = float(item.get("score") or 0.0)
     item["rank_score"] = item.get("score")
-    item["score"] = round(max(0.0, limit - 0.01), 4)
+    # 等比壓進門檻之下的那一段，而不是全部釘在同一個數字上。
+    # 釘成常數會把後端自己的語意排序整個丟掉——那在驗不出來的時候，
+    # 是唯一還剩下的排序資訊。（上一版就是這樣做的，被既有測試抓到：
+    # 後端的 0.91 變成 0.54。）
+    ceiling = max(0.0, limit - 0.01)
+    scaled = min(UNVERIFIED_CEILING, max(0.0, raw)) / UNVERIFIED_CEILING
+    item["score"] = round(scaled * ceiling, 4)
     item["score_basis"] = "unverified"
 
 
@@ -128,19 +140,24 @@ def filter_irrelevant(
     scores = similarities(query, keys.values())
     if not scores:
         # 一個鍵都解不出來（索引壞了、或這批全是網址／semantic: id）。
-        # 標記，但**不要改分數**。這裡的不對稱是有理由的：
+        # 不刪任何東西，但要降權。
         #
-        # 混用尺度的問題只發生在「有些驗證過、有些沒有」的時候——驗過的
-        # 被改寫成餘弦，沒驗的還帶著原始 RRF，於是 0.88 壓過 0.60。那個
-        # 情況由下面的逐筆路徑處理。
-        # 但整批都驗不出來時根本沒有改寫發生，這一批本來就在同一個尺度上，
-        # 沒有東西需要對齊。把每一筆都壓成同一個常數，只會把後端自己的
-        # 語意排序丟掉——那是這種情況下唯一還有的排序資訊。
-        # （我上一版就是這樣做的，一個既有測試把它抓了出來：0.91 變成 0.54。）
-        if rewrite_score:
-            for item in items:
-                item["_unverified"] = True
-                item["score_basis"] = "unverified"
+        # 我上一版在這裡「標記但不改分數」，理由是「整批都在同一個尺度上，
+        # 沒有東西需要對齊」。那個理由是錯的：xkb_memory_service.search()
+        # 會把這一批接上 _wiki_search() 的結果，而 wiki 那半邊照它自己的
+        # 說明「本來就帶著真的餘弦」，然後整份照 score 排。所以
+        # cards_index.bin 壞掉、wiki 索引還好的時候，卡片帶著 0.88 的 RRF
+        # 把 0.60–0.75 的真命中擠出前幾名——正是我聲稱不可能發生的事。
+        limit_ = min_similarity() if threshold is None else threshold
+        for item in items:
+            item["_unverified"] = True
+            if rewrite_score:
+                _mark_unverified(item, limit_)
+        for item in items:
+            # 內部標記不能外流。這條提早返回的路徑跳過了函式尾端的清理，
+            # 於是卡片索引讀不到時，_unverified 會一路進到記憶服務回給
+            # 遠端用戶的 JSON 裡——那個欄位不在 KNOWLEDGE_SCHEMA 上。
+            item.pop("_unverified", None)
         return items, 0, {}
 
     kept: list[dict[str, Any]] = []
