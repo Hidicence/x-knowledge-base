@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - semantic backend is optional
 
 import xkb_failures
 import xkb_relevance
+import xkb_text
 import xkb_score
 
 # The list of what is not worth searching for lives with the parser, so the
@@ -51,9 +52,20 @@ KNOWLEDGE_SCHEMA = "xkb-knowledge-record.v1"
 
 
 def query_terms(query: str) -> list[str]:
-    """把查詢切成比對用的詞。中文沒有空白，所以不能用 split()。"""
-    return [t.lower() for t in re.findall(r"[\w\u4e00-\u9fff]+", query or "")
-            if len(t) > 1]
+    """把查詢切成比對用的詞。用專案共用的那一個斷詞器。
+
+    這裡我繞了一圈：原本 Store.recall 用 query.split()、關鍵字退路用一個
+    CJK 正則，於是同一個「查詢詞」有兩種切法。我的第一版修法是自己再寫
+    一個——**用第三個定義去修兩個定義的問題**——而且它根本沒作用：
+    Python 3 的 \\w 本來就認得 CJK，所以 [\\w\\u4e00-\\u9fff]+ 對中文
+    等於沒加東西，沒有標點的中文查詢照樣只切出一個詞。
+
+    xkb_text.tokenize 是這個專案四個召回模組共用的那一個，中文切 n-gram：
+    同一句話它給 13 個詞。這件事直接決定對話軌跡的分數是不是一個區間——
+    只切出一個詞時，每一筆命中都剛好等於折扣上限 0.65，那不是區間，
+    是一個常數，難怪怎麼調錨點都對不齊。
+    """
+    return xkb_text.tokenize(query or "")
 
 
 def _normalise(value: str) -> str:
@@ -76,7 +88,10 @@ def _unverified_warning(records: list[dict[str, Any]]) -> str | None:
                          if r.get("record_type") != "conversation_trace"]
     if not knowledge_records:
         return None
-    if all(r.get("score_basis") == "unverified" for r in knowledge_records):
+    # 只有「本來查得到卻查不到」才是故障。整批都是書籤時 id 是網址，
+    # 依設計就沒有向量鍵，那是正常情況——用「全部 unverified」當判準會在
+    # 完全健康的系統上報索引壞掉。這個判斷由 xkb_relevance 做完帶過來。
+    if any(r.get("index_unreadable") for r in knowledge_records):
         return ("知識層這一批沒有任何一筆能跟問題比對——卡片向量索引可能讀不到。"
                 "結果仍然回傳，但排序不可信。")
     return None
@@ -1259,6 +1274,14 @@ class Store:
         # Copy by_layer too: a shallow dict() would alias the catalog's cached
         # stats and let this response mutate the next one.
         filtered_counts["by_layer"] = {"conversation": 0, **filtered_counts.get("by_layer", {})}
+        # 警告要在清掉內部欄位之前算。index_unreadable 是內部事實：
+        # 它必須活過 catalog.search 才能變成警告，但不在
+        # KNOWLEDGE_SCHEMA 上，不該送到用戶端——兩輪前 _unverified
+        # 就是這樣漏出去的。
+        warnings = [w for w in (_recall_warnings(knowledge, filtered_counts)
+                                + [_unverified_warning(records)]) if w]
+        for item in records:
+            item.pop("index_unreadable", None)
         context = "\n\n".join(
             f"[{item.get('record_type', 'knowledge')}] {item.get('title') or item.get('query') or item.get('id')}\n{item.get('summary') or item.get('answer') or ''}"
             for item in records[: max(1, min(limit, 50))]
@@ -1278,8 +1301,7 @@ class Store:
             "retrieval_mode": knowledge.get("retrieval_mode", "keyword_fallback"),
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
-            "warnings": [w for w in (_recall_warnings(knowledge, filtered_counts)
-                                     + [_unverified_warning(records)]) if w],
+            "warnings": warnings,
         }
 
 

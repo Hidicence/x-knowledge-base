@@ -153,6 +153,11 @@ def filter_irrelevant(
         # 時 vector_key 依設計就回空字串，那是正常情況——而 note() 一個行程
         # 只報一次，讓正常情況把那一次用掉，之後真的索引壞掉就沒人說話了。
         if any(keys.values()):
+            # 有可查的鍵卻一個都對不到 = 索引真的有問題。把這個判斷寫在
+            # 記錄上帶出去，下游才不必從結果反推——反推會把「整批都是書籤，
+            # 本來就沒有向量鍵」誤判成索引壞掉，在完全健康的系統上報警。
+            for item in items:
+                item["index_unreadable"] = True
             xkb_failures.note(
                 "relevance filter",
                 RuntimeError("有可查的鍵卻對不到向量索引——索引可能壞了"))

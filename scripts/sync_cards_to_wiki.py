@@ -261,24 +261,16 @@ def normalize_date(item: dict) -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _relative_path(item: dict) -> str:
-    """向量索引用的鍵。有 relative_path 就用它，沒有就從絕對路徑推。
+def _index_key(item: dict) -> str:
+    """這張卡在向量索引裡的鍵。
 
-    只有一部分 ingester 會寫 relative_path。缺的時候原本會退到絕對路徑，
-    而那對不上任何索引鍵，於是查找落到檔名後備——拿跨目錄同名的**另一張卡**
-    的向量來判這張卡，判離題之後永久寫進 skip。推得出來就不要用猜的。
+    規則不是我定的，是 build_vector_index 定的：`relative_path or path`。
+    讀取端照抄同一條，不要自己推——我上一版看到有些 ingester 不寫
+    relative_path，就從絕對路徑推一個相對路徑出來，結果推出來的東西
+    **不是任何一個鍵**：對那些項目，索引本來就是拿絕對路徑當鍵的，
+    而 card.path 原本剛好命中。自己推等於把唯一會命中的那個鍵換掉。
     """
-    rel = (item.get("relative_path") or "").strip()
-    if rel:
-        return rel
-    path = (item.get("path") or "").strip()
-    if not path:
-        return ""
-    try:
-        return str(Path(path).resolve().relative_to(
-            xkb_paths.BOOKMARKS_DIR.resolve())).replace("\\\\", "/")
-    except (ValueError, OSError):
-        return ""
+    return (item.get("relative_path") or item.get("path") or "").strip()
 
 
 def make_card(item: dict) -> Card | None:
@@ -294,7 +286,7 @@ def make_card(item: dict) -> Card | None:
         tags=[str(t) for t in (item.get("tags") or [])],
         date=normalize_date(item),
         path=item.get("path", ""),
-        relative_path=_relative_path(item),
+        relative_path=_index_key(item),
         summary=item.get("summary", ""),
     )
 
