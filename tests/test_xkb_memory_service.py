@@ -614,3 +614,5 @@ class QueryEmbeddingCacheTests(unittest.TestCase):
         cr._QUERY_VECTORS.clear()
 
 
+if __name__ == "__main__":
+    unittest.main()
