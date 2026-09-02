@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import xkb_text
 from _card_prompt import gbrain_put as _gbrain_put
 from _card_prompt import condense_long_content
 from category_classifier import classify_content, apply_category
@@ -215,17 +216,9 @@ def pmc_url_from_filename(filename: str) -> str:
 
 def find_related_context(content: str, existing_items: list[dict], top_k: int = 3) -> str:
     """Keyword search against existing index to find related cards for section 6."""
-    stopwords = {"的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
-                 "this", "that", "with", "from", "have", "will", "for", "and", "the", "a"}
-    raw_tokens = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", content[:1000].lower())
-    query_tokens: set[str] = set()
-    for t in raw_tokens:
-        if re.match(r"[\u4e00-\u9fff]", t):
-            for i in range(len(t) - 1):
-                query_tokens.add(t[i:i+2])
-        else:
-            query_tokens.add(t)
-    query_tokens -= stopwords
+    # 斷詞只有一個定義：xkb_text。這裡原本各自帶一份只切 2-gram、
+    # 而且把整串中文吃成一個 token 的正則。
+    query_tokens = set(xkb_text.tokenize(content[:1000], xkb_text.STOPWORDS))
     if not query_tokens:
         return "（無相關既有卡片）"
 

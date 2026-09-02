@@ -16,6 +16,7 @@ from typing import Any
 
 # ── Unified LLM helper (config/llm.json → single model setting) ──────────────
 sys.path.insert(0, str(Path(__file__).parent))
+import xkb_text
 from _llm import call as _llm_call
 
 # ── XBrain integration (path resolved by xbrain_recall, never hardcoded) ────
@@ -309,19 +310,9 @@ def find_related_context(content: str, existing_items: list[dict], top_k: int = 
             pass
 
     # Keyword fallback
-    stopwords = {
-        "的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
-        "this", "that", "with", "from", "have", "will", "for", "and", "the", "a",
-    }
-    raw = re.findall(r"[A-Za-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", content[:1000].lower())
-    tokens: set[str] = set()
-    for t in raw:
-        if re.match(r"[\u4e00-\u9fff]", t):
-            for i in range(len(t) - 1):
-                tokens.add(t[i:i+2])
-        else:
-            tokens.add(t)
-    tokens -= stopwords
+    # 斷詞只有一個定義：xkb_text。這裡原本各自帶一份只切 2-gram、
+    # 而且把整串中文吃成一個 token 的正則。
+    tokens = set(xkb_text.tokenize(content[:1000], xkb_text.STOPWORDS))
     if not tokens:
         return "（無相關既有卡片）"
 

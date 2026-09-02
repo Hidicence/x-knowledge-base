@@ -38,17 +38,49 @@ import xkb_failures
 # 舊的環境變數名稱一併接受，免得既有部署突然改變行為。
 DEFAULT_MIN_SIMILARITY = 0.55
 
+# 餘弦門檻不只一個，因為問的不是同一件事：檢索階段先擋掉什麼，跟送到使用者
+# 面前之前最後擋掉什麼，量出來的分水嶺本來就不同。它們可以不同，但只能在
+# 這裡不同——散在各檔案時，XKB_CARD_MIN_SIMILARITY 這個環境變數同時被
+# 兩處讀走、預設值卻是 0.55 和 0.58，設下去才發現兩邊往不同方向動。
+#
+# 每一項的值都是量出來的，換知識庫或換 embedding 模型要重新量。
+DEFAULT_THRESHOLDS = {
+    # 最後一道：低於它就不值得送出。0.60 以上是真的有內容，0.55 以下是沒有
+    # （碳盤查 0.546 vs XKB 架構 0.604）。
+    "card_result": DEFAULT_MIN_SIMILARITY,
+    # 檢索階段的卡片召回。相關的落在 0.60~0.74，不相關的 0.47~0.57，取中間。
+    "card_recall": 0.58,
+    # wiki 語意檢索本身的下限。
+    "wiki_recall": 0.65,
+}
 
-def min_similarity() -> float:
-    for name in ("XKB_MIN_SIMILARITY", "XKB_SERVICE_MIN_RELEVANCE",
-                 "XKB_CARD_MIN_SIMILARITY", "XKB_ABSORB_MIN_RELEVANCE"):
-        raw = os.getenv(name)
+# 每一項可覆寫的環境變數，依序取第一個有設的。
+THRESHOLD_ENV = {
+    "card_result": ("XKB_MIN_SIMILARITY", "XKB_SERVICE_MIN_RELEVANCE",
+                    "XKB_CARD_MIN_SIMILARITY", "XKB_ABSORB_MIN_RELEVANCE"),
+    "card_recall": ("XKB_CARD_MIN_SIMILARITY",),
+    "wiki_recall": ("XKB_WIKI_MIN_SIMILARITY",),
+}
+
+
+def threshold(name: str) -> float:
+    """取一個具名的餘弦門檻。名字不在表裡就是打錯字，直接炸掉。"""
+    if name not in DEFAULT_THRESHOLDS:
+        raise KeyError(
+            f"未知的門檻 {name!r}；可用的是 {sorted(DEFAULT_THRESHOLDS)}"
+        )
+    for env_name in THRESHOLD_ENV.get(name, ()):
+        raw = os.getenv(env_name)
         if raw:
             try:
                 return float(raw)
             except ValueError:
                 continue
-    return DEFAULT_MIN_SIMILARITY
+    return DEFAULT_THRESHOLDS[name]
+
+
+def min_similarity() -> float:
+    return threshold("card_result")
 
 
 def vector_key(record_id: str) -> str:

@@ -25,6 +25,13 @@ _CJK_RE = re.compile(r"^[一-鿿]+$")
 # 中文 n-gram 的長度。2 字抓得到「影片」「分鏡」，3 字抓得到「工作流」。
 CJK_NGRAMS = (2, 3)
 
+# 攝入端「找相關卡片」用的停用字。原本這一份在 local_ingest、_card_prompt、
+# run_bookmark_worker 各存了一份一模一樣的字面量。
+STOPWORDS = frozenset({
+    "的", "了", "是", "在", "有", "和", "與", "就", "也", "都", "這", "那",
+    "this", "that", "with", "from", "have", "will", "for", "and", "the", "a",
+})
+
 
 def tokenize(text: str, stopwords: Iterable[str] = (), min_len: int = 2) -> list[str]:
     """切成可比對的 token。英文照原樣，中文切 n-gram。

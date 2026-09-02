@@ -35,10 +35,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import xkb_paths
+import xkb_relevance
 import continuity_recall as cr
 import sync_cards_to_wiki as sync
 
-MIN_RELEVANCE = float(os.getenv("XKB_ABSORB_MIN_RELEVANCE", "0.55"))
+MIN_RELEVANCE = xkb_relevance.min_similarity()
 # 卡片之間的相似度。0.92 以上才算「同一件事被講兩次」——
 # 同主題的兩張卡本來就會有 0.7~0.8，那不是重複。
 MAX_REDUNDANCY = float(os.getenv("XKB_ABSORB_MAX_REDUNDANCY", "0.92"))

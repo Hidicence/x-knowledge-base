@@ -188,8 +188,7 @@ def score_item(item: Dict[str, Any], query_tokens: List[str], query_text: str) -
 
 def _keyword_score(query: str, item: dict) -> float:
     """Fraction of query tokens found in title + tags + summary."""
-    import re as _re
-    tokens = set(_re.findall(r'[\w\u4e00-\u9fff]+', query.lower()))
+    tokens = tokenize(query)
     if not tokens:
         return 0.0
     text = " ".join([
@@ -197,7 +196,7 @@ def _keyword_score(query: str, item: dict) -> float:
         " ".join(item.get("tags") or []).lower(),
         (item.get("summary") or "").lower(),
     ])
-    return sum(1 for t in tokens if t in text) / len(tokens)
+    return xkb_text.overlap_score(tokens, text)
 
 
 def _cosine_similarity(a: list, b: list) -> float:

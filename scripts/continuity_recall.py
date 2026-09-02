@@ -25,6 +25,7 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_provenance
+import xkb_relevance
 import xkb_text
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -205,7 +206,7 @@ def _parse_wiki_frontmatter(content: str) -> dict[str, str]:
 # 語意分數說得出「沒有夠像的」——實測那句在 wiki 裡最高只有 0.574，
 # 因為知識庫裡本來就沒有碳盤查的內容。字串比對永遠說不出這句話。
 
-WIKI_MIN_SIMILARITY = float(os.getenv("XKB_WIKI_MIN_SIMILARITY", "0.65"))
+WIKI_MIN_SIMILARITY = xkb_relevance.threshold("wiki_recall")
 
 _VECTORS: dict[str, list[float]] | None = None
 _PROVIDER = None
@@ -291,7 +292,7 @@ _CARD_DIMS = 0
 #     量子力學的波函數塌縮      0.49 0.50 0.57
 #     幫我訂明天的餐廳          0.47 0.48 0.53
 # 相關的落在 0.60~0.74，不相關的落在 0.47~0.57，門檻取中間。
-CARD_MIN_SIMILARITY = float(os.getenv("XKB_CARD_MIN_SIMILARITY", "0.58"))
+CARD_MIN_SIMILARITY = xkb_relevance.threshold("card_recall")
 
 
 def _card_index_paths() -> tuple[Path, Path]:
