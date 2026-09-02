@@ -173,11 +173,10 @@ def xbrain_query(
         return []
 
     if result.returncode != 0:
-        xkb_failures.note(
-            "semantic recall (xbrain)",
-            RuntimeError(f"exit {result.returncode}"),
-            detail=(result.stderr or "").strip()[:200],
-        )
+        # 只留離開碼，不要把 stderr 貼進來：後端的錯誤訊息會回音請求內容，
+        # 而請求裡有憑證。tests/test_xbrain_recall_runtime.py 的
+        # test_failed_backend_does_not_echo_credential 就是釘這件事的。
+        xkb_failures.note("semantic recall (xbrain)", RuntimeError(f"exit {result.returncode}"))
         return []
 
     raw = result.stdout.strip()
