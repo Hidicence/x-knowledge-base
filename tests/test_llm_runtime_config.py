@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import clean_env
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +28,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
                 "LLM_API_KEY=file-key\nLLM_MODEL=file-model\n",
                 encoding="utf-8",
             )
-            with mock.patch.dict(os.environ, {"XKB_ENV_FILE": str(env_file)}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), "XKB_ENV_FILE": str(env_file)}, clear=True):
                 llm = importlib.import_module("_llm")
                 with mock.patch.object(llm, "_direct_api_call", return_value="ok") as direct:
                     self.assertEqual(llm.call("system", "user"), "ok")
@@ -35,13 +38,13 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
                 direct.assert_called_once_with("system", "user", timeout=120, max_tokens=4096)
 
     def test_missing_direct_credential_fails_actionably_without_private_fallback(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
             llm = importlib.import_module("_llm")
             with self.assertRaisesRegex(RuntimeError, "LLM_API_URL / LLM_API_KEY"):
                 llm._direct_api_call("system", "user")
 
     def test_missing_explicit_env_file_fails_before_llm_call(self) -> None:
-        with mock.patch.dict(os.environ, {"XKB_ENV_FILE": "/missing/runtime.env"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "XKB_ENV_FILE": "/missing/runtime.env"}, clear=True):
             llm = importlib.import_module("_llm")
             with self.assertRaisesRegex(FileNotFoundError, "XKB env file"):
                 llm.call("system", "user")
@@ -50,7 +53,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "runtime.env"
             env_file.write_text("LLM_API_KEY=card-file-key\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {"XKB_ENV_FILE": str(env_file)}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), "XKB_ENV_FILE": str(env_file)}, clear=True):
                 github = importlib.import_module("fetch_github_repos")
                 self.assertEqual(github.load_env_key(), "card-file-key")
 
@@ -58,7 +61,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "runtime.env"
             env_file.write_text("LLM_API_KEY=file-key\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {
+            with mock.patch.dict(os.environ, {**clean_env(), 
                 "XKB_ENV_FILE": str(env_file), "LLM_API_KEY": "process-key"
             }, clear=True):
                 github = importlib.import_module("fetch_github_repos")
@@ -114,7 +117,7 @@ class LLMRuntimeConfigurationTests(unittest.TestCase):
                 captured["body"] = json.loads(request.data.decode("utf-8"))
                 return Response()
 
-            with mock.patch.dict(os.environ, {"XKB_ENV_FILE": str(env_file)}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), "XKB_ENV_FILE": str(env_file)}, clear=True):
                 llm = importlib.import_module("_llm")
                 with mock.patch.object(llm.urllib.request, "urlopen", fake_urlopen):
                     result = llm._direct_api_call("system", "user")

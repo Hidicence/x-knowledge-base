@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -35,6 +37,12 @@ def tearDownModule() -> None:
 
 class XKBMemoryServiceHTTPTests(unittest.TestCase):
     def setUp(self) -> None:
+        # 這是 HTTP 契約測試，不是語意後端測試。機器上沒有 gbrain / bun 時，
+        # 每個請求會卡滿子行程的 timeout 才靜靜回空陣列——原本那是 30 秒，
+        # 於是整個檔案看起來像「HTTP 服務壞了」。
+        self._timeout_patch = mock.patch.dict(os.environ, {"XKB_EMBEDDING_TIMEOUT": "1", "XKB_XBRAIN_TIMEOUT": "1"})
+        self._timeout_patch.start()
+        self.addCleanup(self._timeout_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.store = module.Store(Path(self.tmp.name) / "memory.sqlite")
         self.server = module.ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)
@@ -123,6 +131,12 @@ class XKBMemoryServiceAuthTests(unittest.TestCase):
     TOKEN = "test-token-0123456789abcdef"
 
     def setUp(self) -> None:
+        # 這是 HTTP 契約測試，不是語意後端測試。機器上沒有 gbrain / bun 時，
+        # 每個請求會卡滿子行程的 timeout 才靜靜回空陣列——原本那是 30 秒，
+        # 於是整個檔案看起來像「HTTP 服務壞了」。
+        self._timeout_patch = mock.patch.dict(os.environ, {"XKB_EMBEDDING_TIMEOUT": "1", "XKB_XBRAIN_TIMEOUT": "1"})
+        self._timeout_patch.start()
+        self.addCleanup(self._timeout_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.store = module.Store(Path(self.tmp.name) / "memory.sqlite")
         self.server = module.ThreadingHTTPServer(("127.0.0.1", 0), module.Handler)

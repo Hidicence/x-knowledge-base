@@ -170,7 +170,7 @@ class GovernanceTests(unittest.TestCase):
             self.assertTrue(first["batch_id"])
             topic = (topic_dir / "topic-a.md").read_text(encoding="utf-8")
             self.assertEqual(topic.count("xkb-candidate:"), 1)
-            self.assertGreaterEqual(len((xkb_review.GOVERNANCE_DIR / "audit.jsonl").read_text().splitlines()), 1)
+            self.assertGreaterEqual(len((xkb_review.GOVERNANCE_DIR / "audit.jsonl").read_text(encoding="utf-8").splitlines()), 1)
         finally:
             xkb_review.STAGING_DIR = old
             xkb_review.GOVERNANCE_DIR = old_governance
@@ -191,7 +191,7 @@ class GovernanceTests(unittest.TestCase):
             self.assertEqual(deferred["stats"]["promoted"], 0)
             self.assertEqual(deferred["topic_changes"], [])
             rows = [json.loads(line) for line in
-                    (xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl").read_text().splitlines()]
+                    (xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(rows[0]["candidate_id"], candidate_id)
             self.assertEqual(rows[0]["lifecycle"], "retained")
 
@@ -202,11 +202,11 @@ class GovernanceTests(unittest.TestCase):
             self.assertEqual(promoted["topic_changes"][0]["candidate_id"], candidate_id)
             topic = (topic_dir / "topic-a.md").read_text(encoding="utf-8")
             self.assertEqual(topic.count("xkb-candidate:"), 1)
-            registry = (xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl").read_text()
+            registry = (xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl").read_text(encoding="utf-8")
             self.assertEqual(registry.count('"lifecycle": "retained"'), 1)
             self.assertEqual(registry.count('"lifecycle": "promoted"'), 1)
             self.assertEqual(xkb_review.rollback_batch(promoted["batch_id"])["restored"], 3)
-            self.assertEqual((topic_dir / "topic-a.md").read_text(), "# Topic A\n")
+            self.assertEqual((topic_dir / "topic-a.md").read_text(encoding="utf-8"), "# Topic A\n")
         finally:
             xkb_review.STAGING_DIR = old
             xkb_review.GOVERNANCE_DIR = old_governance
@@ -230,7 +230,7 @@ class GovernanceTests(unittest.TestCase):
             self.assertEqual(xkb_review.rollback_batch(result["batch_id"])["restored"], 3)
             self.assertEqual(topic_path.read_text(encoding="utf-8"), original)
             self.assertEqual((staging / "batch-candidates.md").read_bytes(), source_before)
-            self.assertIn("rollback", (xkb_review.GOVERNANCE_DIR / "audit.jsonl").read_text().splitlines()[-1])
+            self.assertIn("rollback", (xkb_review.GOVERNANCE_DIR / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
         finally:
             xkb_review.STAGING_DIR = old
             xkb_review.GOVERNANCE_DIR = old_governance

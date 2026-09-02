@@ -154,12 +154,17 @@ def xbrain_query(
             encoding="utf-8",
             env=_make_subprocess_env(semantic, settings),
             cwd=str(gbrain_dir),
-            timeout=30,
+            # 召回是互動路徑；連不上後端時，這個秒數就是使用者要等的時間。
+            timeout=int(os.getenv("XKB_XBRAIN_TIMEOUT", "30")),
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as err:
+        # 逾時、找不到 bun、非零離開碼——三種都回空陣列，而空陣列的意思是
+        # 「這個主題我們沒有知識」。它們其實是「問不到」。這正是下面那段
+        # 註解在講的同一件事，只是原本只有最後一種會留下記錄。
+        xkb_failures.note("semantic recall (xbrain) 逾時", err)
         return []
-    except FileNotFoundError:
-        # bun not in PATH
+    except FileNotFoundError as err:
+        xkb_failures.note("semantic recall (xbrain)：PATH 上沒有 bun", err)
         return []
     except Exception as err:
         # 語意搜尋的後端掛掉，跟「這個主題我們沒有知識」是兩件事。
@@ -168,6 +173,11 @@ def xbrain_query(
         return []
 
     if result.returncode != 0:
+        xkb_failures.note(
+            "semantic recall (xbrain)",
+            RuntimeError(f"exit {result.returncode}"),
+            detail=(result.stderr or "").strip()[:200],
+        )
         return []
 
     raw = result.stdout.strip()

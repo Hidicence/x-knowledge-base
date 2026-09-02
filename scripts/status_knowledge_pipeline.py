@@ -48,7 +48,7 @@ TOPIC_MAP_PATH = WIKI_DIR / "topic-map.json"
 def load_search_index() -> list[dict]:
     if not SEARCH_INDEX_PATH.exists():
         return []
-    data = json.loads(SEARCH_INDEX_PATH.read_text())
+    data = json.loads(SEARCH_INDEX_PATH.read_text(encoding="utf-8"))
     return data.get("items", data) if isinstance(data, dict) else data
 
 
@@ -56,7 +56,7 @@ def load_review_decisions() -> dict:
     if not REVIEW_DECISIONS_PATH.exists():
         return {}
     try:
-        return json.loads(REVIEW_DECISIONS_PATH.read_text()).get("decisions", {})
+        return json.loads(REVIEW_DECISIONS_PATH.read_text(encoding="utf-8")).get("decisions", {})
     except Exception as err:
         xkb_failures.note("review decisions", err, detail=str(REVIEW_DECISIONS_PATH))
         return {}
@@ -65,11 +65,11 @@ def load_review_decisions() -> dict:
 def load_topic_map() -> dict:
     if not TOPIC_MAP_PATH.exists():
         return {}
-    return json.loads(TOPIC_MAP_PATH.read_text())
+    return json.loads(TOPIC_MAP_PATH.read_text(encoding="utf-8"))
 
 
 def parse_frontmatter(path: Path) -> dict:
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     fm = {}
     m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
     if m:
@@ -85,7 +85,7 @@ def get_recent_log_entries(days: int = 7) -> list[str]:
         return []
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     entries = []
-    for line in LOG_PATH.read_text().splitlines():
+    for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
         m = re.match(r"## \[(\d{4}-\d{2}-\d{2})", line)
         if m:
             try:
@@ -131,7 +131,7 @@ def status_wiki_topics() -> list[dict]:
         except Exception:
             days_ago = None
         # Count sources mentions in file
-        content = f.read_text()
+        content = f.read_text(encoding="utf-8")
         source_count = len(re.findall(r"^\s*- \[", content, re.MULTILINE))
         topics.append({
             "slug": f.stem,
@@ -165,7 +165,7 @@ def status_staging() -> dict:
     total_candidates = 0
     pending = 0
     for f in files:
-        content = f.read_text()
+        content = f.read_text(encoding="utf-8")
         candidates = len(re.findall(r"^## Candidate \d+", content, re.MULTILINE))
         approved = len(re.findall(r"\[x\] approve", content, re.IGNORECASE))
         total_candidates += candidates

@@ -50,7 +50,7 @@ def load_index_slugs() -> set[str]:
     """Slugs listed in wiki/index.md."""
     if not INDEX_PATH.exists():
         return set()
-    content = INDEX_PATH.read_text()
+    content = INDEX_PATH.read_text(encoding="utf-8")
     # Match markdown links like [title](topics/slug.md)
     return {m.group(1) for m in re.finditer(r"\(topics/([^)]+)\.md\)", content)}
 
@@ -62,7 +62,7 @@ def load_topic_files() -> list[Path]:
 
 
 def parse_frontmatter(path: Path) -> dict:
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     fm = {}
     m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
     if m:
@@ -77,7 +77,7 @@ def load_search_index() -> list[dict]:
     if not SEARCH_INDEX_PATH.exists():
         return []
     try:
-        data = json.loads(SEARCH_INDEX_PATH.read_text())
+        data = json.loads(SEARCH_INDEX_PATH.read_text(encoding="utf-8"))
         if isinstance(data, list):
             return data
         return data.get("items", [])
@@ -89,12 +89,12 @@ def load_search_index() -> list[dict]:
 def load_topic_map() -> dict:
     if not TOPIC_MAP_PATH.exists():
         return {}
-    return json.loads(TOPIC_MAP_PATH.read_text())
+    return json.loads(TOPIC_MAP_PATH.read_text(encoding="utf-8"))
 
 
 def append_log(entry: str) -> None:
-    existing = LOG_PATH.read_text() if LOG_PATH.exists() else "# Wiki Log\n---\n"
-    LOG_PATH.write_text(existing.rstrip() + "\n" + entry + "\n")
+    existing = LOG_PATH.read_text(encoding="utf-8") if LOG_PATH.exists() else "# Wiki Log\n---\n"
+    LOG_PATH.write_text(existing.rstrip() + "\n" + entry + "\n", encoding="utf-8")
 
 
 def check_orphans(topic_files: list[Path], index_slugs: set[str]) -> list[str]:
@@ -157,9 +157,9 @@ def check_gaps(topic_files: list[Path]) -> list[tuple[str, int]]:
 def fix_orphans(orphans: list[str]) -> None:
     """Add orphan pages to index.md."""
     if not INDEX_PATH.exists():
-        INDEX_PATH.write_text("# Wiki Index\n\n## Topics\n\n")
+        INDEX_PATH.write_text("# Wiki Index\n\n## Topics\n\n", encoding="utf-8")
 
-    content = INDEX_PATH.read_text()
+    content = INDEX_PATH.read_text(encoding="utf-8")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     additions = []
     for slug in orphans:
@@ -176,7 +176,7 @@ def fix_orphans(orphans: list[str]) -> None:
             )
         else:
             content += "\n## Topics\n" + "\n".join(additions) + "\n"
-        INDEX_PATH.write_text(content)
+        INDEX_PATH.write_text(content, encoding="utf-8")
         print(f"  [FIX] Registered {len(additions)} orphan(s) in index.md")
 
 

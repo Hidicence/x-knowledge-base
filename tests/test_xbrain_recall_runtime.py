@@ -11,6 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "xbrain_recall.py"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import isolated_env, needs_posix_exec
+
 
 class XbrainRecallRuntimeTests(unittest.TestCase):
     def make_fixture(self, root: Path) -> tuple[Path, Path]:
@@ -44,12 +47,14 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
         extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         gbrain, fake_bin = self.make_fixture(root)
-        env = {
-            "HOME": str(root / "isolated-home"),
-            "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
-            "GBRAIN_DIR": str(gbrain),
-            "PYTHONPATH": "",
-        }
+        isolated_home = root / "isolated-home"
+        isolated_home.mkdir(exist_ok=True)
+        env = isolated_env(
+            home=isolated_home,
+            PATH=str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+            GBRAIN_DIR=str(gbrain),
+            PYTHONPATH="",
+        )
         if env_file is not None:
             env["XKB_ENV_FILE"] = str(env_file)
         if process_key is not None:
@@ -61,6 +66,7 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
             command.extend(["--env-file", str(explicit_env_file)])
         return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
 
+    @needs_posix_exec
     def test_process_environment_takes_precedence_over_xkb_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,6 +76,7 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)[0]["slug"], "process")
 
+    @needs_posix_exec
     def test_explicit_env_file_is_used_instead_of_xkb_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -81,6 +88,7 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)[0]["slug"], "explicit")
 
+    @needs_posix_exec
     def test_explicit_env_file_still_yields_to_process_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

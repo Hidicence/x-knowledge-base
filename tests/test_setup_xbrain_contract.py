@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "setup_xbrain.sh"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import isolated_env, needs_posix_exec
 
 
 class SetupXbrainContractTests(unittest.TestCase):
@@ -19,6 +23,11 @@ class SetupXbrainContractTests(unittest.TestCase):
         process_key: str | None = "process-placeholder",
         args: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        if os.name == "nt":
+            # fixture 用 shebang 腳本假裝成 bun / git。Windows 沒有那個 exec
+            # 語意，跑不起來的是假裝的那一層，不是被測的契約——所以這裡明講
+            # 跳過，不要讓它以「紅燈」的樣子存在，久了就沒人看了。
+            self.skipTest("需要 POSIX 的 shebang 執行語意；這條契約在 VPS / CI 上驗")
         fake_bin = root / "bin"
         fake_bin.mkdir()
         (fake_bin / "bun").write_text(
@@ -44,11 +53,11 @@ class SetupXbrainContractTests(unittest.TestCase):
         (gbrain / "src" / "cli.ts").write_text("// fixture\n", encoding="utf-8")
         isolated_home = root / "home"
         isolated_home.mkdir()
-        env = {
-            "HOME": str(isolated_home),
-            "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
-            "PYTHONPATH": "",
-        }
+        env = isolated_env(
+            home=isolated_home,
+            PATH=str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+            PYTHONPATH="",
+        )
         if env_file is not None:
             env["XKB_ENV_FILE"] = str(env_file)
         if process_key is not None:

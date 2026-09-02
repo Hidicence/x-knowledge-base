@@ -53,8 +53,8 @@ def load_topic_slugs() -> list[str]:
 
 def append_log(entry: str) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    existing = LOG_PATH.read_text() if LOG_PATH.exists() else "# Wiki Log\n---\n"
-    LOG_PATH.write_text(existing.rstrip() + "\n" + entry + "\n")
+    existing = LOG_PATH.read_text(encoding="utf-8") if LOG_PATH.exists() else "# Wiki Log\n---\n"
+    LOG_PATH.write_text(existing.rstrip() + "\n" + entry + "\n", encoding="utf-8")
 
 
 def load_recent_memory(days: int) -> list[tuple[str, str]]:
@@ -65,7 +65,7 @@ def load_recent_memory(days: int) -> list[tuple[str, str]]:
         d = today - timedelta(days=i)
         fname = MEMORY_DIR / f"{d}.md"
         if fname.exists():
-            entries.append((str(d), fname.read_text()))
+            entries.append((str(d), fname.read_text(encoding="utf-8")))
     return entries
 
 
@@ -390,7 +390,7 @@ def write_staging(insights: list[dict], date_str: str, label: str = "") -> Path:
             "",
         ]
 
-    out_path.write_text("\n".join(lines))
+    out_path.write_text("\n".join(lines), encoding="utf-8")
     return out_path
 
 
@@ -406,7 +406,7 @@ def apply_staging_file(
     - auto_approve_high: automatically approve candidates with confidence=high;
       others still require manual [x] approve in the staging file
     """
-    content = staging_path.read_text()
+    content = staging_path.read_text(encoding="utf-8")
     blocks = re.split(r"\n## Candidate \d+\n", content)[1:]
     applied = 0
     skipped = 0
@@ -458,7 +458,7 @@ def apply_staging_file(
             "## Review Instructions",
             f"## Apply Status{header_addition}\n## Review Instructions",
             1,
-        ))
+        ), encoding="utf-8")
 
     return applied, skipped, updated_slugs
 
@@ -483,7 +483,7 @@ def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -
         content = content.rstrip() + f"\n\n{section_header}\n\n- {entry} *(self-derived · memory/{source_date}.md)*\n"
 
     content = re.sub(r"(last_updated:\s*)\S+", f"\\g<1>{today}", content)
-    topic_path.write_text(content)
+    topic_path.write_text(content, encoding="utf-8")
     print(f"  [OK] {slug} / {section}")
 
 

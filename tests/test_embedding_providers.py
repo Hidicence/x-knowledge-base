@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import clean_env
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -23,7 +26,7 @@ class EmbeddingConfigurationTests(unittest.TestCase):
                 "EMBEDDING_PROVIDER=gemini\nEMBEDDING_MODEL=gemini-file-model\nGEMINI_API_KEY=file-key\n",
                 encoding="utf-8",
             )
-            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "process-key"}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), "GEMINI_API_KEY": "process-key"}, clear=True):
                 provider = providers.get_provider(env_file=env_file)
         self.assertEqual(provider.api_key, "process-key")
         self.assertEqual(provider.model, "gemini-file-model")
@@ -34,18 +37,18 @@ class EmbeddingConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "embedding.env"
             env_file.write_text("GEMINI_API_KEY=file-key\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
                 provider = providers.get_provider(env_file=env_file)
                 self.assertNotIn("GEMINI_API_KEY", os.environ)
         self.assertEqual(provider.api_key, "file-key")
 
     def test_missing_explicit_env_file_is_actionable(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
             with self.assertRaisesRegex(FileNotFoundError, "env file"):
                 providers.get_provider(env_file=Path("/does/not/exist.env"))
 
     def test_defaults_to_gemini_and_reads_runtime_credential(self) -> None:
-        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "runtime-only"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "GEMINI_API_KEY": "runtime-only"}, clear=True):
             config = providers.load_config()
             self.assertEqual(config.provider, "gemini")
             self.assertEqual(config.model, "gemini-embedding-2-preview")
@@ -54,17 +57,17 @@ class EmbeddingConfigurationTests(unittest.TestCase):
         self.assertEqual(provider.api_key, "runtime-only")
 
     def test_missing_credential_fails_without_private_path_fallback(self) -> None:
-        with mock.patch.dict(os.environ, {"EMBEDDING_PROVIDER": "gemini"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "EMBEDDING_PROVIDER": "gemini"}, clear=True):
             with self.assertRaisesRegex(EnvironmentError, "GEMINI_API_KEY"):
                 providers.get_provider()
 
     def test_unknown_provider_is_actionable(self) -> None:
-        with mock.patch.dict(os.environ, {"EMBEDDING_PROVIDER": "wat"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "EMBEDDING_PROVIDER": "wat"}, clear=True):
             with self.assertRaisesRegex(ValueError, "Supported: gemini, openai, ollama"):
                 providers.get_provider()
 
     def test_incompatible_model_is_rejected_before_provider_creation(self) -> None:
-        with mock.patch.dict(os.environ, {
+        with mock.patch.dict(os.environ, {**clean_env(), 
             "EMBEDDING_PROVIDER": "gemini",
             "EMBEDDING_MODEL": "text-embedding-3-small",
             "GEMINI_API_KEY": "runtime-only",
@@ -73,7 +76,7 @@ class EmbeddingConfigurationTests(unittest.TestCase):
                 providers.get_provider()
 
     def test_endpoint_must_be_http_url(self) -> None:
-        with mock.patch.dict(os.environ, {
+        with mock.patch.dict(os.environ, {**clean_env(), 
             "EMBEDDING_PROVIDER": "gemini",
             "GEMINI_API_KEY": "runtime-only",
             "EMBEDDING_ENDPOINT": "file:///tmp/secret",
@@ -90,14 +93,14 @@ class EmbeddingConfigurationTests(unittest.TestCase):
                 "workspace_root": "",
             }
         }
-        with mock.patch.dict(os.environ, {}, clear=True), \
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), \
                 mock.patch.object(providers, "_load_xkb_config", return_value=malformed):
             with self.assertRaisesRegex(ValueError, r"embedding\.provider.*string"):
                 providers.load_config()
 
     def test_malformed_workspace_root_type_is_actionable(self) -> None:
         malformed = {"embedding": {"workspace_root": 123}}
-        with mock.patch.dict(os.environ, {}, clear=True), \
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), \
                 mock.patch.object(providers, "_load_xkb_config", return_value=malformed):
             with self.assertRaisesRegex(ValueError, r"embedding\.workspace_root.*string"):
                 providers.load_config()
@@ -111,7 +114,7 @@ class EmbeddingConfigurationTests(unittest.TestCase):
         }.items():
             with self.subTest(setting=setting):
                 malformed = {"embedding": {setting: value}}
-                with mock.patch.dict(os.environ, {}, clear=True), \
+                with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), \
                         mock.patch.object(providers, "_load_xkb_config", return_value=malformed):
                     with self.assertRaisesRegex(ValueError, rf"embedding\.{setting}.*string"):
                         providers.load_config()
@@ -174,13 +177,13 @@ class ProviderRegistryTests(unittest.TestCase):
 
     def test_configured_workspace_root_is_metadata_only_and_does_not_read_private_path(self) -> None:
         malformed = {"embedding": {"workspace_root": "/private/not-a-checkout"}}
-        with mock.patch.dict(os.environ, {}, clear=True), \
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), \
                 mock.patch.object(providers, "_load_xkb_config", return_value=malformed):
             config = providers.load_config()
         self.assertEqual(config.workspace_root, "/private/not-a-checkout")
 
     def test_ollama_provider_is_credential_free_and_mockable(self) -> None:
-        with mock.patch.dict(os.environ, {"EMBEDDING_PROVIDER": "ollama"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "EMBEDDING_PROVIDER": "ollama"}, clear=True):
             provider = providers.get_provider()
         with mock.patch.object(providers, "_post", return_value={"embedding": [0.1, 0.2]}):
             self.assertEqual(provider.embed("fixture"), [0.1, 0.2])

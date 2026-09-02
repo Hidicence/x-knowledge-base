@@ -7,10 +7,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import clean_env
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 TOOLS = ROOT / "tools"
-import sys
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(TOOLS))
 from runtime_config import runtime_env
@@ -36,7 +40,7 @@ class RuntimePropagationTests(unittest.TestCase):
                 "print('child.secret_present=' + str(bool(os.environ.get('XKB_TEST_SECRET'))).lower())\n",
                 encoding="utf-8",
             )
-            with mock.patch.dict(os.environ, {
+            with mock.patch.dict(os.environ, {**clean_env(), 
                 "XKB_ENV_FILE": str(env_file),
                 "XKB_TEST_PROVIDER": "process-provider",
             }, clear=True):
@@ -55,7 +59,7 @@ class RuntimePropagationTests(unittest.TestCase):
             self.assertIn("child.secret_present=true", proc.stdout)
 
     def test_missing_env_file_fails_before_child_execution(self):
-        with mock.patch.dict(os.environ, {"XKB_ENV_FILE": "/missing/runtime.env"}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), "XKB_ENV_FILE": "/missing/runtime.env"}, clear=True):
             with self.assertRaisesRegex(FileNotFoundError, "XKB env file"):
                 runtime_env()
 

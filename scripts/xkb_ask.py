@@ -23,11 +23,17 @@ import re
 import sys
 from pathlib import Path
 
-# Ensure UTF-8 output on Windows (prevents cp950 encoding errors)
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "buffer"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# Windows 主控台預設 cp950，印中文會炸。只換編碼，不要把底下的 buffer
+# 接管走：原本的寫法是 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, ...)，
+# 在任何會接管 stdout 的宿主底下（pytest，或把這支當函式庫 import 的工具），
+# 對方收掉自己的 buffer 之後，這一層就變成
+# ValueError: I/O operation on closed file——而且是在 import 時就發生。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
 
 # ── Unified LLM helper ────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))

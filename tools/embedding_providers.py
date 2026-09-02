@@ -129,7 +129,15 @@ def _validate_model(provider: str, model: str) -> None:
         raise ValueError(f"Model '{model}' is not compatible with provider '{provider}'")
 
 
-def _post(url: str, headers: dict, body: dict, timeout: int = 30) -> dict:
+# 嵌入 API 連不上時，這個秒數就是每一次召回要等的時間。預設 30 是原本的
+# 值；召回是互動路徑，等 30 秒等於當掉，所以留一個可以調的旋鈕，而不是把
+# 數字寫死在呼叫裡。
+DEFAULT_TIMEOUT = int(os.getenv("XKB_EMBEDDING_TIMEOUT", "30"))
+
+
+def _post(url: str, headers: dict, body: dict, timeout: int | None = None) -> dict:
+    if timeout is None:
+        timeout = int(os.getenv("XKB_EMBEDDING_TIMEOUT", str(DEFAULT_TIMEOUT)))
     resp = requests.post(url, headers=headers, json=body, timeout=timeout)
     if not resp.ok:
         # Upstream bodies can echo request text or credentials. Keep failures

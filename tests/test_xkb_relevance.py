@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import clean_env
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -89,9 +92,9 @@ class SingleSourceOfTruthTests(unittest.TestCase):
 
     def test_threshold_honours_the_legacy_variable_names(self) -> None:
         for name in ("XKB_MIN_SIMILARITY", "XKB_SERVICE_MIN_RELEVANCE", "XKB_CARD_MIN_SIMILARITY"):
-            with mock.patch.dict("os.environ", {name: "0.71"}, clear=True):
+            with mock.patch.dict("os.environ", {**clean_env(), name: "0.71"}, clear=True):
                 self.assertAlmostEqual(rel.min_similarity(), 0.71)
-        with mock.patch.dict("os.environ", {}, clear=True):
+        with mock.patch.dict("os.environ", {**clean_env(), }, clear=True):
             self.assertAlmostEqual(rel.min_similarity(), rel.DEFAULT_MIN_SIMILARITY)
 
 

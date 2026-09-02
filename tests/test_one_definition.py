@@ -23,10 +23,15 @@
   尺度    score_scale 是散在各處的字串字面量。打錯一個字不會報錯，
           會靜默掉到 0.5 的 fallback，整層排序錯位。
 
+  編碼    「檔案是什麼編碼」曾經有兩個答案：程式沒說，於是 Linux 上是
+          UTF-8、Windows 上是 cp950。同一份卡片在 VPS 讀得到、在本機
+          炸掉，而本機是 Pan 每次改動的第一站。
+
 一個新的定義出現時，這裡會失敗，而不是等它在某個早上說出錯的數字。
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 import unittest
@@ -161,6 +166,32 @@ class OneDefinitionTest(unittest.TestCase):
                     if name not in known:
                         offenders.append(f"{path.name}:{i + 1} score_scale={name!r}")
         self.assertEqual(offenders, [], "不在 xkb_score.DEFAULT_ANCHORS 裡的尺度 = 靜默錯位")
+
+    def test_file_io_says_which_encoding(self) -> None:
+        """讀寫檔案一律講明 utf-8，不要讓作業系統替我們決定。
+
+        不指定時 Python 用平台預設：VPS 是 UTF-8，Windows 是 cp950。
+        知識庫裡幾乎每個檔案都有中文，於是同一支腳本在 VPS 正常、在本機
+        丟 UnicodeDecodeError——而本機是每次改動的第一站。
+
+        這條連 tests/ 一起掃：抓到的第一個違規就在測試自己身上。
+        """
+        offenders = []
+        for path in sorted(list(SCRIPTS.glob("*.py")) + list((ROOT / "tests").glob("*.py"))):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if not (isinstance(fn, ast.Attribute) and fn.attr in ("read_text", "write_text")):
+                    continue
+                if any(kw.arg == "encoding" or kw.arg is None for kw in node.keywords):
+                    continue
+                offenders.append(f"{path.name}:{node.lineno} .{fn.attr}()")
+        self.assertEqual(offenders, [], "加上 encoding=\"utf-8\"；平台預設編碼不是一個定義")
 
 
 if __name__ == "__main__":

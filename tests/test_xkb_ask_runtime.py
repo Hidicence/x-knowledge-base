@@ -10,6 +10,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _isolation import clean_env
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -27,7 +30,7 @@ class XkbAskRuntimeTests(unittest.TestCase):
             env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
             with mock.patch.dict(
                 os.environ,
-                {"GEMINI_API_KEY": "process-placeholder"},
+                {**clean_env(), "GEMINI_API_KEY": "process-placeholder"},
                 clear=True,
             ):
                 self.assertEqual(self.xkb_ask.load_env_key(env_file), "process-placeholder")
@@ -36,11 +39,11 @@ class XkbAskRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "explicit.env"
             env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
                 self.assertEqual(self.xkb_ask.load_env_key(env_file), "file-placeholder")
 
     def test_missing_explicit_env_file_is_actionable_before_search(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
             with self.assertRaisesRegex(FileNotFoundError, "XKB env file not found"):
                 self.xkb_ask.load_env_key("/missing/xkb-runtime.env")
 
@@ -60,7 +63,7 @@ class XkbAskRuntimeTests(unittest.TestCase):
                 observed["env_file"] = env_file
                 return []
 
-            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
                 self.xkb_ask, "_resolve_gbrain_dir", return_value=gbrain
             ) as resolve_gbrain_dir, mock.patch.object(
                 self.xkb_ask, "search_wiki_topics", return_value=([], 0.0)
@@ -74,13 +77,16 @@ class XkbAskRuntimeTests(unittest.TestCase):
                 self.assertEqual(self.xkb_ask.main(), 0)
 
             self.assertEqual(observed["env_file"], str(env_file))
-            self.assertEqual(
-                resolve_gbrain_dir.call_args.args,
-                ({"GEMINI_API_KEY": "fixture-key"},),
-            )
+            settings, = resolve_gbrain_dir.call_args.args
+            self.assertEqual(settings.get("GEMINI_API_KEY"), "fixture-key")
+            # 除了憑證與作業系統自己要用的那幾個，不該多帶任何東西過去。
+            # 名字要轉大寫再比：Windows 的 os.environ 會把鍵 normalise 成大寫，
+            # SystemRoot 進去、SYSTEMROOT 出來。
+            extra = {key.upper() for key in settings} - {key.upper() for key in clean_env()}
+            self.assertEqual(extra, {"GEMINI_API_KEY"})
 
     def test_cli_fails_fast_without_credential_before_search_or_llm(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
             self.xkb_ask, "search_wiki_topics", side_effect=AssertionError("search must not run")
         ), mock.patch.object(
             self.xkb_ask, "search_cards", side_effect=AssertionError("cards must not run")
@@ -97,7 +103,7 @@ class XkbAskRuntimeTests(unittest.TestCase):
 
     def test_keyword_mode_runs_without_an_embedding_credential(self) -> None:
         """--no-gbrain is the documented keyword path and needs no Gemini key."""
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
             self.xkb_ask, "search_wiki_topics", return_value=([], 0.0)
         ), mock.patch.object(
             self.xkb_ask, "search_cards", return_value=[]
