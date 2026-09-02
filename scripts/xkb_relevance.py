@@ -64,38 +64,24 @@ def vector_key(record_id: str) -> str:
     return record_id if record_id.endswith(".md") else f"{record_id}.md"
 
 
-# 降權時的固定上限。用這一批的最大值當上限，會讓一批爛結果裡最好的那個
-# 被算成滿分——這個專案犯過的老錯。
-UNVERIFIED_CEILING = 1.0
+def _mark_unverified(item: dict[str, Any]) -> None:
+    """標明這一筆沒有被拿去跟問題比對過。不要動它的分數。
 
+    這裡我改了六次，每一次都是在替「驗不出來的東西該排在哪」挑一個數字：
+    釘在門檻減 0.01、等比壓進門檻之下、乾脆不動……每一個都是捏造的測量值，
+    而且壓到哪一段都會撞上別層的尺度——壓高壓過 wiki 的真餘弦，壓低掉到
+    對話軌跡之下，而後者會讓索引壞掉長得像「知識庫裡沒東西」。
 
-def _mark_unverified(item: dict[str, Any], limit: float) -> None:
-    """把驗不出相似度的項目降到門檻之下，並保住它們彼此的順序。
-
-    降權必須在 filter_irrelevant 裡做——這裡是唯一知道「有沒有驗證過」的
-    地方。我一度把它搬到 xkb_score.rank()，但記憶服務根本不呼叫 rank()，
-    它自己照 score 重排；於是驗不了的網址帶著原始 RRF（約 0.88）壓過所有
-    真的以餘弦命中的卡片（0.55–0.85）。一個排序兩種尺度。
-
-    「不要捏造測量值」也是對的，但結論不是把降權搬走，而是不要把這個數字
-    當成測量值賣出去：score_basis 就是那個標籤，rank_score 留著原本的分數。
+    正確的做法是不要在這裡排序。score 保持是後端自己算的那個數字，
+    score_scale 說明它是哪一套尺度；跨層要怎麼比是 xkb_score.rank() 的事，
+    而 unverified 這個尺度的錨點與權重就寫在那張表上，一個地方、一個定義。
     """
-    raw_value = item.get("score")
-    if raw_value is None:
-        # 本來就沒有分數的項目，不要寫一個 rank_score: null 出去——
-        # README 說那是「後端拿來排序的數字」，是數值欄位。
-        item["score_basis"] = "unverified"
-        return
-    raw = float(raw_value)
-    item["rank_score"] = raw_value
-    # 等比壓進門檻之下的那一段，而不是全部釘在同一個數字上。
-    # 釘成常數會把後端自己的語意排序整個丟掉——那在驗不出來的時候，
-    # 是唯一還剩下的排序資訊。（上一版就是這樣做的，被既有測試抓到：
-    # 後端的 0.91 變成 0.54。）
-    ceiling = max(0.0, limit - 0.01)
-    scaled = min(UNVERIFIED_CEILING, max(0.0, raw)) / UNVERIFIED_CEILING
-    item["score"] = round(scaled * ceiling, 4)
     item["score_basis"] = "unverified"
+    item["score_scale"] = "unverified"
+    if item.get("score") is None:
+        # 沒有分數的項目補 0.0，不要留 None：下游排序是 item.get("score", 0.0)，
+        # 鍵存在時拿到的是 None，同一批裡再有一筆數值分數就丟 TypeError。
+        item["score"] = 0.0
 
 
 def similarities(query: str, keys: Iterable[str]) -> dict[str, float] | None:
@@ -158,10 +144,14 @@ def filter_irrelevant(
         # 合併點修好之後，這裡只做它誠實做得到的事：整批都驗不出來時，
         # 沒有任何比較發生過，就不要假裝比過。標記讓下游知道這件事。
         for item in items:
-            item["score_basis"] = "unverified"
-        xkb_failures.note(
-            "relevance filter",
-            RuntimeError("一個鍵都對不到向量索引——這一批沒有任何項目被驗證過"))
+            _mark_unverified(item)
+        # 只有「本來該查得到卻查不到」才算故障。整批都是網址或 semantic: id
+        # 時 vector_key 依設計就回空字串，那是正常情況——而 note() 一個行程
+        # 只報一次，讓正常情況把那一次用掉，之後真的索引壞掉就沒人說話了。
+        if any(keys.values()):
+            xkb_failures.note(
+                "relevance filter",
+                RuntimeError("有可查的鍵卻對不到向量索引——索引可能壞了"))
         return items, 0, {}
 
     kept: list[dict[str, Any]] = []
@@ -172,7 +162,7 @@ def filter_irrelevant(
             # 它判斷不了的東西，但也不該讓它排在真的比對過的前面。
             item["_unverified"] = True
             if rewrite_score:
-                _mark_unverified(item, limit)
+                _mark_unverified(item)
             kept.append(item)
             continue
         if similarity < limit:

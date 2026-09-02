@@ -46,11 +46,26 @@ DEFAULT_ANCHORS = {
     # 卡片被實測成餘弦之後（xkb_relevance 的 rewrite_score）就不再是 RRF，
     # 0.88 那個錨點是照 RRF 量的。餘弦有自己的區間，跟 wiki 語意同一段。
     "card_semantic": 0.72,
+    # 關鍵字退路的分數是 _keyword_unit_score 的覆蓋率（0~1），既不是 RRF
+    # 也不是餘弦。錨點取這個區間的中點——那是這個尺度的定義，不是量出來的
+    # 中位數，所以標明清楚：換了計分方式要重量。
+    "card_keyword": 0.5,
+    "wiki_keyword": 0.5,
+    # 沒辦法跟問題比對過的項目（網址、semantic: id、索引讀不到）。
+    # 帶的是後端自己的 RRF，沒有被驗證過。錨點刻意偏高，讓它排在每一個
+    # 驗證過的層之下——這件事以前是靠在 xkb_relevance 裡改寫分數做到的，
+    # 那等於捏造一個測量值，而且壓到哪一段都會撞上別層的尺度。
+    # 尺度的事在尺度表裡解決。
+    "unverified": 1.6,
     "contrarian": 0.52,
     "action": 0.31,
-    # 對話軌跡是關鍵字比對，原始分數是「命中幾個詞」——跟餘弦相似度不同尺度。
-    # 呼叫端會先除以查詢詞數變成比例（0~1），這個錨點是對那個比例的。
-    "conversation": 0.55,
+    # 對話軌跡：呼叫端（Store.recall）已經乘過 KEYWORD_EVIDENCE_DISCOUNT
+    # (0.65) 把它放到與餘弦可比的區間了，所以這裡用餘弦的錨點。
+    # 原本這個錨點寫的是「對未折扣比例」的 0.55、權重又再壓一次 0.55，
+    # 等於同一個「關鍵字證據較弱」的判斷扣了兩遍：實測滿分命中只得
+    # 0.2979，低於每一個剛過門檻的卡片與 wiki，於是知識層一填滿 limit，
+    # 對話軌跡就被整段截掉——共享對話記憶等於從 /v1/recall 消失。
+    "conversation": 0.72,
 }
 
 # 來源權威度：消化過的結論 > 原始素材 > 補充提醒
@@ -63,11 +78,16 @@ DEFAULT_WEIGHTS = {
     "bookmark": 0.85,
     # 尺度換了，來源權威度沒換：還是原始素材。
     "card_semantic": 0.85,
+    "card_keyword": 0.85,
+    "wiki_keyword": 1.0,
+    # 驗不出來不代表不相關，所以不是零；但它不該壓過任何驗證過的東西。
+    "unverified": 0.5,
     "contrarian": 0.7,
     "action": 0.6,
-    # 關鍵字命中是比語意相似弱的證據：詞出現過不代表在講同一件事。
-    # 壓在卡片之下，對話才不會因為剛好含到查詢詞就洗掉真正相關的知識。
-    "conversation": 0.55,
+    # 「關鍵字證據較弱」這個判斷已經由 KEYWORD_EVIDENCE_DISCOUNT 表達過了，
+    # 這裡不要再扣一次。權重只講來源權威度：對話是現場的紀錄，比消化過的
+    # wiki 低，與原始卡片相當。
+    "conversation": 0.85,
 }
 
 FALLBACK_ANCHOR = 0.5
@@ -123,9 +143,10 @@ def rank(results: list[dict]) -> list[dict]:
         source_type = str(item.get("score_scale") or item.get("source_type", ""))
         raw = float(item.get("score") or 0.0)
         item["relevance"] = round(relevance(raw, source_type), 4)
-        # 驗不出相似度的項目在 xkb_relevance.filter_irrelevant 就已經降到
-        # 門檻之下了（那裡才知道有沒有驗證過）。這裡不要再降一次：
-        # 同一件事兩個定義，正是這個專案反覆犯的那類錯。
+        # 驗不出相似度的項目由 xkb_relevance 標成 score_scale="unverified"，
+        # 排序就由上面那張表決定——不再靠改寫分數，也就不會因為某個門檻的
+        # 環境變數改了而翻面。這句話以前寫的是「已經降到門檻之下」，
+        # 而那在整批驗不出來的路徑上並不成立。
         item["unified_score"] = unified(raw, source_type)
     return sorted(results, key=lambda r: r.get("unified_score", 0.0), reverse=True)
 

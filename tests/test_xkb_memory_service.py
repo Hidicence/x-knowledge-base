@@ -205,7 +205,10 @@ class XKBMemoryServiceTests(unittest.TestCase):
         # 不是這裡編一個位置出來——我在這個檔案上來回改了三輪才把它放對地方。
         self.assertEqual(record["score"], 0.91)
         self.assertEqual(record.get("score_basis"), "unverified")
-        self.assertEqual(record.get("score_scale"), "card")
+        # 沒被驗證過的記錄有自己的尺度。這件事以前是靠在 xkb_relevance 裡
+        # 改寫分數做到的，那等於捏造一個測量值；現在 score 保持是後端自己
+        # 算的數字，排序交給 xkb_score 的尺度表。
+        self.assertEqual(record.get("score_scale"), "unverified")
         self.assertNotIn("_unverified", record)
 
     def test_layers_are_ordered_by_a_comparable_score_not_raw_numbers(self) -> None:
@@ -222,49 +225,96 @@ class XKBMemoryServiceTests(unittest.TestCase):
         測試要走真正的路徑。我第一版直接呼叫 xkb_score.rank()，於是把合併點
         改回原始排序它照樣是綠的——測到的是那個函式，不是那條路。
         """
-        knowledge = {
-            "records": [
-                {"title": "卡片", "score": 0.62, "score_scale": "card",
-                 "record_type": "knowledge_chunk"},
-                {"title": "wiki 結論", "score": 0.68, "score_scale": "wiki_semantic",
-                 "record_type": "wiki_topic"},
-            ],
-            "retrieval_mode": "xbrain_hybrid", "filtered_counts": {},
-            "semantic_retrieval_attempted": True, "semantic_backend": {"status": "used"},
-            "dropped_as_irrelevant": 0,
-        }
-        conversation = {"memories": [
-            {"query": "對話軌跡", "answer": "", "score": 0.65},
-        ]}
-        # 原始數字上對話軌跡贏過卡片、卡片輸給 wiki 的差距也只有 0.06。
-        with mock.patch.object(type(self.store.catalog), "search",
-                               return_value=knowledge), \
-             mock.patch.object(type(self.store), "recall", return_value=conversation):
-            packet = self.store.knowledge_recall("任意問題", 5, "private")
+        def packet_for(card_score: float) -> list[str]:
+            knowledge = {
+                "records": [
+                    {"title": "卡片", "score": card_score, "score_scale": "card_semantic",
+                     "record_type": "knowledge_chunk"},
+                    {"title": "wiki 結論", "score": 0.68, "score_scale": "wiki_semantic",
+                     "record_type": "wiki_topic"},
+                ],
+                "retrieval_mode": "xbrain_hybrid", "filtered_counts": {},
+                "semantic_retrieval_attempted": True,
+                "semantic_backend": {"status": "used"},
+                "dropped_as_irrelevant": 0,
+            }
+            conversation = {"memories": [{"query": "對話軌跡", "answer": "", "score": 0.65}]}
+            with mock.patch.object(type(self.store.catalog), "search",
+                                   return_value=knowledge), \
+                 mock.patch.object(type(self.store), "recall", return_value=conversation):
+                packet = self.store.knowledge_recall("任意問題", 5, "private")
+            return [r.get("title") or r.get("query") for r in packet["records"]]
 
-        order = [r.get("title") or r.get("query") for r in packet["records"]]
-        self.assertEqual(order[0], "wiki 結論",
+        strong = packet_for(0.75)
+        self.assertEqual(strong[0], "wiki 結論",
                          "消化過的結論該排在原始素材之前")
-        self.assertLess(order.index("卡片"), order.index("對話軌跡"),
-                        "關鍵字命中的對話軌跡不該壓過語意命中的卡片")
+        self.assertLess(strong.index("卡片"), strong.index("對話軌跡"),
+                        "語意命中很強的卡片該排在關鍵字命中的對話軌跡之前")
 
-    def test_each_producer_declares_the_scale_of_its_own_score(self) -> None:
-        """算出分數的地方要標明那是哪一套尺度算的。
+        # 而且對話軌跡不能被系統性地擠掉。原本它被扣兩次分（呼叫端已經乘過
+        # 0.65 的折扣，尺度表又用未折扣的錨點再壓一次權重），滿分命中只得
+        # 0.2979，低於每一個剛過門檻的卡片與 wiki——知識層一填滿 limit 就被
+        # 整段截掉，共享對話記憶等於從 /v1/recall 消失。
+        marginal = packet_for(0.56)
+        self.assertLess(marginal.index("對話軌跡"), marginal.index("卡片"),
+                        "滿分命中的對話軌跡該排在勉強過門檻的卡片之前"
+                        "——排不到前面，知識層一填滿 limit 它就被整段截掉")
+
+    def test_each_producer_declares_a_scale_xkb_score_knows(self) -> None:
+        """算出分數的地方要標對尺度，而且是 xkb_score 認得的那些。
 
         source_type 是「這是什麼東西」（會回給 API 用戶），score_scale 是
-        「這個數字怎麼來的」。兩者常常不同：wiki 的語意召回 source_type 是
-        wiki、尺度卻是餘弦，而 wiki 的錨點是照關鍵字尺度（0.40–3.65）量的。
-        少標一個，整層就會用錯錨點對齊，而且不會有任何錯誤訊息。
+        「這個數字怎麼來的」。標錯或沒標，整層就會用錯錨點對齊，而且不會有
+        任何錯誤訊息——不認得的尺度會靜靜掉到 0.5 的 fallback。
+
+        我第一版這個測試是在原始碼文字裡找 `score_scale` 這個子字串，於是
+        它對「值是錯的」完全無感——寫這個測試的當下就有兩個標籤是錯的，
+        它照樣是綠的。改成檢查實際產出的值。
+        """
+        import xkb_score
+
+        known = set(xkb_score.DEFAULT_ANCHORS) & set(xkb_score.DEFAULT_WEIGHTS)
+
+        def fixture_query(query, *, limit, no_expand, semantic):
+            return [{"slug": "s", "title": "t", "chunk_text": "c",
+                     "source_url": "", "type": "knowledge-card", "score": 0.8}]
+
+        original = module.xbrain_query
+        module.xbrain_query = fixture_query
+        try:
+            packet = self.store.knowledge_recall("尺度測試", 5, "private")
+        finally:
+            module.xbrain_query = original
+
+        scales = {r.get("score_scale") for r in packet["records"]}
+        self.assertTrue(scales, "一筆記錄都沒有，測不到尺度")
+        self.assertNotIn(None, scales, "有記錄沒有標尺度")
+        for scale in scales:
+            self.assertIn(scale, known,
+                          f"{scale} 不在 xkb_score 的尺度表裡，會靜靜掉到 fallback")
+
+    def test_the_keyword_fallback_declares_a_keyword_scale(self) -> None:
+        """關鍵字退路的分數是 0~1 的覆蓋率，不是 RRF 也不是餘弦。
+
+        這條路徑上的記錄一度被標成 card / wiki_semantic——用餘弦與 RRF 的錨點
+        去對齊覆蓋率，會把真實的先後順序翻過來，正是收斂想消滅的那件事，
+        只是搬到了退路上。上一版的測試連這兩個樣板都沒看到。
         """
         source = (Path(module.__file__).parent / "xkb_memory_service.py").read_text(
             encoding="utf-8")
-        # 每一個帶 score 的記錄樣板都要有 score_scale
-        for marker in ('"retrieval": "xbrain_hybrid"', '"retrieval": "wiki_semantic"',
-                       '"record_type": "conversation_trace"'):
-            idx = source.index(marker)
-            window = source[max(0, idx - 600):idx + 200]
-            self.assertIn("score_scale", window,
-                          f"{marker} 附近的記錄沒有標尺度")
+        for marker in ('"retrieval": "keyword"',):
+            idx = 0
+            found = 0
+            while True:
+                idx = source.find(marker, idx + 1)
+                if idx < 0:
+                    break
+                found += 1
+                template = source[max(0, idx - 700):idx]
+                self.assertRegex(
+                    template, r'"score_scale": "(card_keyword|wiki_keyword)"',
+                    "關鍵字退路的記錄要標關鍵字尺度")
+            self.assertGreater(found, 0, "找不到關鍵字退路的記錄樣板")
 
     def test_recall_packet_explains_acl_namespace_filtering_and_backend(self) -> None:
         original = module.xbrain_query

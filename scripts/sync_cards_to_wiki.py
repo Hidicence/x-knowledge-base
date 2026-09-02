@@ -68,6 +68,10 @@ class Card:
     tags: list
     date: str
     path: str = ""
+    # 向量索引是用 relative_path 當鍵的（build_vector_index.py），而 path
+    # 是絕對路徑。兩者在這個庫裡從來不相等，所以拿 path 去查只能靠檔名
+    # 後備碰運氣命中——而檔名後備會撞到別張同名的卡。
+    relative_path: str = ""
     summary: str = ""
 
 
@@ -270,6 +274,7 @@ def make_card(item: dict) -> Card | None:
         tags=[str(t) for t in (item.get("tags") or [])],
         date=normalize_date(item),
         path=item.get("path", ""),
+        relative_path=item.get("relative_path", ""),
         summary=item.get("summary", ""),
     )
 

@@ -131,7 +131,10 @@ def main() -> int:
             # 先問卡片級再拿它當 rows 會把這個順序倒過來：跨目錄撞檔名時，
             # 會拿別張卡的向量來量這張卡，判離題之後永久寫進 skip。
             # 少一次字典查詢不值得換這個。
-            key_ = card.path or card.url
+            # relative_path 才是向量索引的鍵。原本用 path（絕對路徑），
+            # 一次都對不上，全靠檔名後備命中——我上一輪把那層關掉，於是
+            # 重複度檢查整個停擺而且沒有任何訊息。
+            key_ = card.relative_path or card.path or card.url
             card_rows = cr.lookup_card_vectors([key_])
             # 取第一條會是靜默的錯誤：卡片級鍵不在時（重建索引或改名之後
             # 很常見），rows 是這張卡的論點向量，第一條只是字典順序的第一
