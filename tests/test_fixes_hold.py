@@ -125,17 +125,22 @@ class PruningKeysOnEnumerationAndRunsAtAll(unittest.TestCase):
         self.assertIn("not stale_keys", guard[:guard.index("\n")],
                       "有死鍵時仍會提早結束")
 
-    def test_scheduled_callers_do_pass_incremental(self) -> None:
-        # 上面第二點的前提。前提變了的話，這個測試要先響。
-        found = [p for p in (ROOT / "scripts").glob("*.sh")
-                 if "build_vector_index.py" in p.read_text(encoding="utf-8")]
-        self.assertTrue(found, "找不到任何呼叫 build_vector_index 的排程腳本")
-        # 原本只確認「有腳本提到它」——把 --incremental 全部拿掉，這個測試
-        # 照樣會過，等於沒有檢查前提。
-        for script in found:
-            text = script.read_text(encoding="utf-8")
-            self.assertIn("--incremental", text,
-                          f"{script.name} 不再帶 --incremental，清理的前提變了")
+    def test_the_rule_does_not_depend_on_the_mode_at_all(self) -> None:
+        """清理規則不看 --incremental，那正是它對的跡象。
+
+        這裡原本有一個測試，宣稱要盯住「每一條排程都帶 --incremental」。它比對的
+        是整份檔案裡有沒有出現這個字串，所以 fetch_and_summarize.sh 靠一句無關的
+        build_search_index.sh 就過了——而那支腳本本身還有一條刻意的完整重建分支，
+        也就是說它宣稱要守的前提本來就不成立。
+
+        但那個前提只對「規則被模式擋住」的那一版有意義。現在規則問的是這一輪
+        列舉到了哪些鍵，兩種模式的答案一樣好，所以沒有前提需要守。
+        守著一個過期前提、而且用一個根本沒在檢查它的斷言，比沒有測試更糟：
+        它對一件自己從沒看過的事情回報信心。
+        """
+        prune = self.SRC[self.SRC.index("    examined_docs = "):]
+        prune = prune[:prune.index("and key not in enumerated_keys]")]
+        self.assertNotIn("incremental", prune)
 
 
 if __name__ == "__main__":

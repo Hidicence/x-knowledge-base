@@ -350,15 +350,13 @@ def main() -> int:
             continue
         text_hash = hashlib.md5(card_text.encode("utf-8")).hexdigest()[:12]
         md_path = _resolve_md_path(item)
-        if md_path is None:
-            # 找不到 markdown 就列不出論點鍵。這時如果還把卡片鍵算成走過，
-            # 這份文件會進 examined_docs，它既有的 #kpN 就全被當成消失而刪掉；
-            # 下次路徑正常了再全部重新付費嵌入。那正是這段清理本來要消滅的
-            # 振盪，只是換一個觸發條件。
-            if args.incremental and key in existing_vectors:
-                continue
-        else:
+        if md_path is not None:
             enumerated_keys.add(key)
+        # md_path 是 None 時只是不把這份文件算成「走過」——它列不出論點鍵，
+        # 算成走過的話既有的 #kpN 會全被當成消失而刪掉，下次路徑正常了再
+        # 全部重新付費嵌入。但**要不要重新嵌入**還是交給下面的 hash 判斷：
+        # 上一版在這裡 continue，於是卡片內文改了、markdown 暫時找不到，
+        # 它就永遠停在舊向量上。
         if not (args.incremental and key in existing_vectors and existing_hashes.get(key) == text_hash):
             to_embed.append((key, card_text, text_hash))
 
@@ -496,8 +494,11 @@ def main() -> int:
     # Save
     output = {
         "meta": {
-            "provider": provider.__class__.__name__.replace("Provider", "").lower(),
-            "model": getattr(provider, "model", ""),
+            "provider": (provider.__class__.__name__.replace("Provider", "").lower()
+                     if provider is not None
+                     else existing.get("meta", {}).get("provider", "")),
+            "model": (getattr(provider, "model", "") if provider is not None
+                  else existing.get("meta", {}).get("model", "")),
             "dims": len(vectors_list[0][1]) if vectors_list else existing.get("meta", {}).get("dims", 0),
             "total": len(new_vectors),
             "point_vectors": sum(1 for k in new_vectors if "#kp" in k),

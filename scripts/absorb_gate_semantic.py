@@ -126,7 +126,14 @@ def main() -> int:
         scored: list[tuple[float, sync.Card]] = []
         off_topic = redundant = 0
         for card in cards:
-            card_rows = cr.lookup_card_vectors([card.path or card.url])
+            # 先問卡片級。有的話 rows 就是它（跟改動前完全一樣的行為）；
+            # 沒有的話才退回論點級，而重複度那一關就不判——0.92 是照卡片級
+            # 校準的。原本這裡查一次、下面判重複又查一次同一個鍵。
+            key_ = card.path or card.url
+            own = next(iter(cr.lookup_card_vectors(
+                [key_], card_level_only=True).values()), None)
+            card_rows = ({key_: own} if own
+                         else cr.lookup_card_vectors([key_]))
             # 取第一條會是靜默的錯誤：卡片級鍵不在時（重建索引或改名之後
             # 很常見），rows 是這張卡的論點向量，第一條只是字典順序的第一
             # 個。用它去比 0.55 的硬門檻，第三點正好命中的卡片會被判離題，
@@ -144,8 +151,6 @@ def main() -> int:
                 continue
             # 這張卡也要有卡片級向量才判得了重複；沒有的話寧可不判，
             # 也不要用不同粒度去比一個沒為它校準過的門檻。
-            own = next(iter(cr.lookup_card_vectors(
-                [card.path or card.url], card_level_only=True).values()), None)
             if absorbed and own and max(
                     cr._cosine(own[0], a) for a in absorbed) > MAX_REDUNDANCY:
                 redundant += 1

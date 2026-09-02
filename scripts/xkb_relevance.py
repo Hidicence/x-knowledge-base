@@ -64,6 +64,22 @@ def vector_key(record_id: str) -> str:
     return record_id if record_id.endswith(".md") else f"{record_id}.md"
 
 
+def _mark_unverified(item: dict[str, Any], limit: float) -> None:
+    """把驗不出相似度的項目降到門檻之下，並標明這不是一個測量值。
+
+    降權必須在 filter_irrelevant 裡做——這裡是唯一知道「有沒有驗證過」的
+    地方。我一度把它搬到 xkb_score.rank()，但記憶服務根本不呼叫 rank()，
+    它自己照 score 重排；於是驗不了的網址帶著原始 RRF（約 0.88）壓過所有
+    真的以餘弦命中的卡片（0.55–0.85）。一個排序兩種尺度。
+
+    「不要捏造測量值」也是對的，但結論不是把降權搬走，而是不要把這個數字
+    當成測量值賣出去：score_basis 就是那個標籤，rank_score 留著原本的分數。
+    """
+    item["rank_score"] = item.get("score")
+    item["score"] = round(max(0.0, limit - 0.01), 4)
+    item["score_basis"] = "unverified"
+
+
 def similarities(query: str, keys: Iterable[str]) -> dict[str, float] | None:
     """回傳每個鍵與問題的真實相似度；None 代表無法判斷。
 
@@ -111,6 +127,20 @@ def filter_irrelevant(
     keys = {id(item): vector_key(key_of(item)) for item in items}
     scores = similarities(query, keys.values())
     if not scores:
+        # 一個鍵都解不出來（索引壞了、或這批全是網址／semantic: id）。
+        # 標記，但**不要改分數**。這裡的不對稱是有理由的：
+        #
+        # 混用尺度的問題只發生在「有些驗證過、有些沒有」的時候——驗過的
+        # 被改寫成餘弦，沒驗的還帶著原始 RRF，於是 0.88 壓過 0.60。那個
+        # 情況由下面的逐筆路徑處理。
+        # 但整批都驗不出來時根本沒有改寫發生，這一批本來就在同一個尺度上，
+        # 沒有東西需要對齊。把每一筆都壓成同一個常數，只會把後端自己的
+        # 語意排序丟掉——那是這種情況下唯一還有的排序資訊。
+        # （我上一版就是這樣做的，一個既有測試把它抓了出來：0.91 變成 0.54。）
+        if rewrite_score:
+            for item in items:
+                item["_unverified"] = True
+                item["score_basis"] = "unverified"
         return items, 0, {}
 
     kept: list[dict[str, Any]] = []
@@ -121,18 +151,7 @@ def filter_irrelevant(
             # 它判斷不了的東西，但也不該讓它排在真的比對過的前面。
             item["_unverified"] = True
             if rewrite_score:
-                # 降權必須在這裡做——這裡是唯一知道「有沒有驗證過」的地方。
-                # 我一度把它搬到 xkb_score.rank()，但記憶服務根本不呼叫
-                # rank()，它自己照 score 重排；於是驗不了的網址帶著原始
-                # RRF（約 0.88）壓過所有真的以餘弦命中的卡片（0.55–0.85）。
-                # 一個排序兩種尺度，這個專案這週的第八次。
-                #
-                # 上一輪審查說「不要捏造測量值」是對的，但結論不是把降權
-                # 搬走，而是不要把這個數字當成測量值賣出去：score_basis
-                # 就是那個標籤，讀的人分得出它是排序用的位置、不是觀察。
-                item["rank_score"] = item.get("score")
-                item["score"] = round(max(0.0, limit - 0.01), 4)
-                item["score_basis"] = "unverified"
+                _mark_unverified(item, limit)
             kept.append(item)
             continue
         if similarity < limit:

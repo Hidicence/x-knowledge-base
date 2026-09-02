@@ -321,10 +321,6 @@ def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
         if candidate in _CARD_KEYS:
             return [_CARD_KEYS[candidate]]
 
-    if card_level_only:
-        # 呼叫端明講只要卡片級。退回論點級會偷偷換掉粒度，而有些門檻
-        # （像吸收閘門的 MAX_REDUNDANCY）是照卡片級向量校準的。
-        return []
     # 論點級向量的鍵是 relpath#kpN。卡片級找不到時要看這張卡的**所有**論點，
     # 不是字典順序的第一個——分數要面對 0.55 這道硬門檻，所以「第三個論點
     # 正好命中」的卡片，會因為第一個論點離題而被丟掉。semantic_recall 本來
@@ -334,10 +330,16 @@ def _find_card_rows(key: str, *, card_level_only: bool = False) -> list[int]:
     # 所以這條路徑現在走不到，實際影響是零。留著修好的版本是因為
     # 「卡片級鍵不存在」是完全可能出現的狀態（索引重建、卡片改名），
     # 而那時候取第一個論點會是靜默的錯誤。
-    for candidate in (key, stem):
-        rows = [i for k, i in _CARD_KEYS.items() if k.startswith(f"{candidate}#")]
-        if rows:
-            return rows
+    if not card_level_only:
+        # 呼叫端明講只要卡片級時跳過這一段。退回論點級會偷偷換掉粒度，
+        # 而有些門檻（吸收閘門的 MAX_REDUNDANCY）是照卡片級校準的。
+        # 只擋這一段：下面用檔名比對的那一層只可能命中卡片級鍵
+        # （論點鍵長 X.md#kp1，檔名永遠不等於 X.md），把它一起擋掉的話，
+        # 目錄改名之後重複度檢查會整個靜靜關掉——而那正是那層存在的理由。
+        for candidate in (key, stem):
+            rows = [i for k, i in _CARD_KEYS.items() if k.startswith(f"{candidate}#")]
+            if rows:
+                return rows
 
     # 最後退路：只比對檔名。分類目錄改過名時仍能對上。
     name = stem.rsplit("/", 1)[-1]
