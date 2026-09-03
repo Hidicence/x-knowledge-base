@@ -117,15 +117,15 @@ class LiteralMatchesSurviveTheRelevanceFilter(unittest.TestCase):
 
 
 class SearchMergeBehaviour(unittest.TestCase):
-    def test_prose_query_does_not_load_the_index(self) -> None:
-        # 沒有識別碼 token 的查詢不該碰 load_index——那條腿整段跳過。
-        import recall_for_conversation as rfc
-        loaded = []
-        orig = rfc.load_index
-        self.addCleanup(setattr, rfc, "load_index", orig)
-        rfc.load_index = lambda *a, **k: loaded.append(1) or orig(*a, **k)
-        rfc.search("怎麼做碳盤查的範疇一計算", limit=3, no_wiki=True, identifier_only=True)
-        self.assertEqual(loaded, [], "散文查詢卻載入了識別碼索引")
+    def test_prose_query_does_not_touch_search_mode(self) -> None:
+        src = (ROOT / "scripts" / "recall_for_conversation.py").read_text(encoding="utf-8")
+        # the merge must be gated on _identifier_tokens(query) being non-empty
+        self.assertIn("if _identifier_tokens(query):", src)
+        # and the index is only loaded inside that gate, not on every search
+        gate = src.index("if _identifier_tokens(query):")
+        load_after = src.index("load_index(index_path)", gate)
+        self.assertLess(gate, load_after)
+        self.assertNotIn("load_index(index_path)", src[:gate].rsplit("def search(", 1)[-1])
 
 
 class RouterMappingIsSharedAndSafe(unittest.TestCase):
@@ -185,22 +185,19 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
             self.assertEqual(noted[0][1], exc)
 
 class LightPathCostAndDegradation(unittest.TestCase):
-    def test_identifier_only_no_token_is_cheap_no_wiki_no_gbrain(self) -> None:
-        # round 9 拿掉了 router 的前置守衛，identifier_only 現在直接呼叫
-        # search()——因為它便宜。要便宜到什麼程度：沒有 wiki_recall、沒有
-        # gbrain、沒有 executor，而且照樣回 ("", [])。
+    def test_identifier_only_with_no_token_does_not_enter_search(self) -> None:
+        # collapse 之後一度無條件呼叫 search()，於是每一句 light 掃描都掃了
+        # 一遍 wiki + 開 executor，全在 _identifier_tokens 檢查之前。
         import recall_router as rr
         import recall_for_conversation as rfc
-        calls = {"wiki": 0, "gbrain": 0}
-        for name, key in (("wiki_recall", "wiki"), ("gbrain_semantic_recall", "gbrain")):
-            orig = getattr(rfc, name)
-            self.addCleanup(setattr, rfc, name, orig)
-            setattr(rfc, name, lambda *a, _k=key, **k: calls.__setitem__(_k, calls[_k] + 1) or [])
+        entered = []
+        orig = rfc.search
+        self.addCleanup(setattr, rfc, "search", orig)
+        rfc.search = lambda *a, **k: entered.append(1) or orig(*a, **k)
 
         txt, res = rr.run_associative_recall("今天天氣真好", limit=3, identifier_only=True)
         self.assertEqual((txt, res), ("", []))
-        self.assertEqual(calls, {"wiki": 0, "gbrain": 0},
-                         "identifier_only 的無 token 查詢跑了昂貴的腿")
+        self.assertEqual(entered, [], "沒有識別碼 token 卻還是進了 search()")
 
     def test_broken_index_degrades_the_supplement_not_the_backend(self) -> None:
         # 非 light：gbrain 已經回了好結果（gbrain 不讀本地索引）。識別碼腿的

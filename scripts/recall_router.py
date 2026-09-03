@@ -241,6 +241,15 @@ def run_associative_recall(query: str, limit: int = 2, *,
     nothing". gbrain's own 1.2 s is paid either way; what this removes is the
     part that was never doing any work.
     """
+    if identifier_only:
+        # 便宜的前置檢查：沒有識別碼 token 就什麼都不做——不開 executor、
+        # 不進 search()、不掃 wiki。light 掃描幾乎每句都會走到這裡。
+        try:
+            from recall_for_conversation import _identifier_tokens
+        except ImportError:
+            _identifier_tokens = None
+        if _identifier_tokens is not None and not _identifier_tokens(query):
+            return "", []
     try:
         from recall_for_conversation import search as _associative_search
     except ImportError as err:
@@ -256,23 +265,17 @@ def run_associative_recall(query: str, limit: int = 2, *,
         # 之後那個區塊還是會等到工作結束——實測宣稱 0.5 秒、實際 3.00 秒。
         # 這個界線存在的理由就是不要被卡住的端點拖住六秒的 hook 預算，
         # 而它原本一秒都沒擋到。
-        if identifier_only:
-            # identifier_only 沒有會阻塞的呼叫（不打 gbrain、不打 embedding），
-            # 不需要 executor 的逾時界線。直接呼叫——search() 對「沒有識別碼
-            # token」的查詢就是幾個 Path() + 一個 regex，很便宜，light 掃描
-            # 每句都能付。
-            found = _associative_search(query, limit=limit, identifier_only=True)
-        else:
-            bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
-            try:
-                found = bounded.submit(
-                    lambda: _associative_search(query, limit=limit)
-                ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
-            finally:
-                # wait=False：放棄它，不要等。執行緒是 daemon，卡住的請求
-                # 也不會讓整個行程留著不走。
-                bounded.shutdown(wait=False)
-        items, mode = found["results"], found["search_mode"]
+        bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
+        try:
+            found = bounded.submit(
+                lambda: _associative_search(query, limit=limit,
+                                            identifier_only=identifier_only)
+            ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
+            items, mode = found["results"], found["search_mode"]
+        finally:
+            # wait=False：放棄它，不要等。執行緒是 daemon，所以卡住的請求
+            # 也不會讓整個行程留著不走。
+            bounded.shutdown(wait=False)
         # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；RRF 是 0–1。
         # 下游的 rank() 用 0.88 當錨點，對 RRF 是對的，對關鍵字分數會讓一張
         # 得 15 分的卡片算出 0.94，壓過所有語意結果（最好也才 0.55）。
