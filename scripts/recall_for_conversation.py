@@ -899,6 +899,7 @@ def search(
     no_semantic: bool = False,
     force_semantic: bool = False,
     force_gbrain: bool = False,
+    identifier_only: bool = False,
 ) -> dict:
     """兩層召回：先查合成過的 wiki 知識，再查卡片細節。
 
@@ -924,7 +925,12 @@ def search(
     use_gbrain = force_gbrain or (not no_semantic and _gbrain_available and bool(_gemini_key))
 
     search_mode = "keyword"
-    if use_gbrain:
+    if identifier_only:
+        # light 掃描專用：跳過所有語意/關鍵字後端，只留識別碼那條腿。
+        # 下面的識別碼合併對「沒有識別碼 token」的查詢本來就是 no-op。
+        results = []
+        search_mode = "identifier_only"
+    elif use_gbrain:
         results = gbrain_semantic_recall(query, limit)
         if results:
             search_mode = "gbrain"
@@ -944,10 +950,10 @@ def search(
     # 識別碼精確腿：任何後端跑完後都併一次。查詢沒有識別碼 token 時
     # _identifier_tokens 回空，連索引都不載入，行為與改動前完全相同。
     if _identifier_tokens(query):
-        try:
-            _idx_items = load_index(index_path).get("items", [])
-        except (FileNotFoundError, ValueError):
-            _idx_items = []
+        # 索引讀不到不在這裡吞。呼叫端（run_associative_recall）用一個 broad
+        # except + xkb_failures.note 把整個 search() 包住，讓它出聲——這裡
+        # 自己 catch 成空清單，就又變回「壞掉長得像查無資料」。
+        _idx_items = load_index(index_path).get("items", [])
         exact = identifier_recall(query, _idx_items, limit)
         if exact:
             def _rk(r: Dict[str, Any]) -> str:

@@ -219,20 +219,20 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
         "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
         "score": score,
         "match_kind": item.get("match_kind"),
-        # score_scale 要帶過來：字面命中跳過 filter_irrelevant 的改寫路徑，
-        # 不帶的話 rank() 退回 card 的 RRF 錨點 (0.88) 而不是餘弦錨點 (0.72)，
-        # 把它算低 ~9%、排在它要超越的餘弦卡片下面。
-        # 字面命中一定要帶尺度，不然 rank() 退回 source_type 的 RRF 錨點
-        # (0.88) 把它算低 ~9%。上游沒帶時給個防禦性預設——不要 assert，
-        # 在 route() 裡 assert 失敗會把整個召回打掉，正是這條腿要避免的。
+        # 字面命中跳過 filter_irrelevant 的改寫路徑，score_scale 要在這裡
+        # 補齊：沒帶的話 rank() 退回 card 的 RRF 錨點 (0.88) 而不是餘弦錨點
+        # (0.72)，把它算低 ~9%。literal 一律用 card_semantic——沒有
+        # bookmark_semantic 這個錨點，而一個 0.72–0.99 的字面命中分數配
+        # RRF 錨點正是它要避免的低估。不用 assert：在 route() 裡 assert
+        # 失敗會把整個召回打掉。
         "score_scale": item.get("score_scale") or (
-            ("card_semantic" if is_card else "bookmark")
-            if item.get("match_kind") == "literal" else None),
+            "card_semantic" if item.get("match_kind") == "literal" else None),
         "url": item.get("source_url") or item.get("url", ""),
     }
 
 
-def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]:
+def run_associative_recall(query: str, limit: int = 2, *,
+                           identifier_only: bool = False) -> tuple[str, list[dict]]:
     """Returns (formatted_text, results_list).
 
     Calls recall_for_conversation.search() directly. It used to spawn the same
@@ -259,7 +259,8 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
         bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
         try:
             found = bounded.submit(
-                lambda: _associative_search(query, limit=limit)
+                lambda: _associative_search(query, limit=limit,
+                                            identifier_only=identifier_only)
             ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
             items, mode = found["results"], found["search_mode"]
         finally:
@@ -416,32 +417,15 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # Associative recall (bookmark/card supplement) — light scan 不跑，太貴
         # （run_associative_recall 會打向量/外部呼叫，~1.2s，而 light 幾乎每句都跑）。
         if light:
-            assoc_text, assoc_results = "", []
-            # 例外：查詢含識別碼時跑 identifier_recall——純字串比對、不打 embedding。
-            # 這是一條刻意的成本線：light trigger 上只比對卡片的 metadata
-            # （title / summary / tags / url / path），不跑語意腿。上一輪證明
-            # 「每次提到版本號都跑完整向量召回」太貴。代價是：識別碼只在卡片
-            # 內文出現、metadata 沒有時，light 掃描抓不到——但那種問法通常會
-            # 寫成完整句子（就不是 light 了），走上面的完整召回。
-            # import 放在 try 外：symbol 改名 / 模組搬走是硬性安裝錯誤，
-            # 應當場炸、讓 CI 抓到，不是被吞成「查無資料」。
-            from recall_for_conversation import (
-                _identifier_tokens as _ident, identifier_recall as _ir,
-                load_index as _li, INDEX_FILE as _IDX)
-            if _ident(query):
-                try:
-                    _items = _li(_IDX).get("items", [])
-                    assoc_results = [_assoc_dict(h) for h in _ir(query, _items, 3)]
-                    assoc_results, _ = _dedup_filter_new(assoc_results)
-                    if assoc_results:
-                        assoc_text = _format_assoc_chat(assoc_results)
-                except Exception as e:  # noqa: BLE001
-                    # 執行期錯誤（索引壞成 list -> AttributeError、dedup state
-                    # 壞掉 -> KeyError…）：出聲，把這條腿清乾淨，讓 wiki /
-                    # contrarian 等其他 soft 召回照回。錯在原本的 pass（靜默），
-                    # 不在抓得廣——_session_dedup import 就是這樣被吞掉四個月。
-                    xkb_failures.note("light identifier recall", e)
-                    assoc_results, assoc_text = [], ""
+            # light 掃描不跑昂貴的語意腿，但識別碼（錯誤碼 / 型號 / repo slug /
+            # tweet ID）是純字串比對、不打 embedding，值得跑。走跟非 light
+            # 完全相同的函式（identifier_only 模式），不要在這裡另抄一份
+            # import / try / except / note / 映射——那份抄本審了四輪都在追它
+            # 跟本尊的差異。
+            assoc_text, assoc_results = run_associative_recall(
+                query, limit=3, identifier_only=True)
+            assoc_results, _ = _dedup_filter_new(assoc_results)
+            assoc_text = _format_assoc_chat(assoc_results) if assoc_results else ""
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
             assoc_results = _drop_irrelevant_cards(query, assoc_results)

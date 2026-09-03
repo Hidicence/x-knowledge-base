@@ -132,14 +132,23 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
     SRC = (ROOT / "scripts" / "recall_router.py").read_text(encoding="utf-8")
 
     def test_the_assoc_dict_mapping_has_one_definition(self) -> None:
-        # 以前這個映射有三份手抄，其中兩份 source_type 判斷還不一樣。
+        # 這個映射一度有三份手抄，其中兩份 source_type 判斷都不一樣。
         self.assertIn("def _assoc_dict(", self.SRC)
-        # run_associative_recall 與 light 路徑都要呼叫它，不能各自重寫 dict literal
         assoc = self.SRC[self.SRC.index("def run_associative_recall"):]
         assoc = assoc[:assoc.index("\n\ndef ")]
         self.assertIn("_assoc_dict(", assoc)
-        self.assertNotIn('"source_type": "card" if', assoc,
-                         "run_associative_recall 還在自己組 dict，沒走共用函式")
+        self.assertNotIn('"source_type": "card" if', assoc)
+
+    def test_light_path_reuses_run_associative_recall_not_a_copy(self) -> None:
+        # light 路徑一度內嵌 import + map + try/except——那份抄本審了四輪，
+        # 每一輪都在追它跟本尊的差異。它現在必須直接呼叫本尊。
+        light = self.SRC[self.SRC.index("        if light:"):]
+        light = light[:light.index("\n        else:")]
+        self.assertIn("identifier_only=True", light)
+        self.assertNotIn("from recall_for_conversation import", light,
+                         "light 路徑還在內嵌 import")
+        self.assertNotIn("_assoc_dict(", light,
+                         "light 路徑還在自己做映射")
 
     def test_source_type_is_card_for_memory_cards_paths(self) -> None:
         import recall_router as rr
@@ -174,16 +183,6 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
             self.assertIn("formatted_text", r, f"{exc}: route() 回了殘缺的 dict")
             self.assertTrue(noted, f"{exc} 被靜默吞掉了")
             self.assertEqual(noted[0][1], exc)
-
-    def test_import_failure_is_not_swallowed(self) -> None:
-        # symbol 改名 / 模組搬走是硬性安裝錯誤——import 在 try 外，要當場炸。
-        src = (ROOT / "scripts" / "recall_router.py").read_text(encoding="utf-8")
-        block = src[src.index("light scan 不跑，太貴"):]
-        block = block[:block.index("\n        else:")]
-        import_pos = block.index("from recall_for_conversation import (")
-        try_pos = block.index("try:")
-        self.assertLess(import_pos, try_pos,
-                        "identifier import 在 try 裡面——會被 except 吞掉")
 
 
 if __name__ == "__main__":
