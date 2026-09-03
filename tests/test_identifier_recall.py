@@ -157,15 +157,33 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
         self.addCleanup(setattr, rfc, "load_index", orig_load)
         self.addCleanup(setattr, xkb_failures, "note", orig_note)
 
-        # 不是 FileNotFoundError：索引 JSON 壞成 list，.get() 會丟 AttributeError。
-        # 這種例外一定要被抓住（route() 不能中止）而且要出聲。
-        rfc.load_index = lambda *a, **k: ["not", "a", "dict"]
         xkb_failures.note = lambda where, err: noted.append((where, type(err).__name__))
 
-        r = rr.route("2045420631295242340")
-        self.assertIsNotNone(r, "route() 因為索引壞掉而中止了整個召回")
-        self.assertTrue(noted, "索引壞掉被靜默吞掉了")
-        self.assertEqual(noted[0][1], "AttributeError")
+        # 兩種執行期壞法都要：出聲、route() 不中止、其他 soft 召回照回。
+        for breaker, exc in (
+            (FileNotFoundError("search index gone"), "FileNotFoundError"),
+            (["not", "a", "dict"], "AttributeError"),  # JSON 壞成 list -> .get() 炸
+        ):
+            noted.clear()
+            if isinstance(breaker, Exception):
+                rfc.load_index = lambda *a, _e=breaker, **k: (_ for _ in ()).throw(_e)
+            else:
+                rfc.load_index = lambda *a, _v=breaker, **k: _v
+            r = rr.route("2045420631295242340")
+            self.assertIsInstance(r, dict, f"{exc}: route() 中止了整個召回")
+            self.assertIn("formatted_text", r, f"{exc}: route() 回了殘缺的 dict")
+            self.assertTrue(noted, f"{exc} 被靜默吞掉了")
+            self.assertEqual(noted[0][1], exc)
+
+    def test_import_failure_is_not_swallowed(self) -> None:
+        # symbol 改名 / 模組搬走是硬性安裝錯誤——import 在 try 外，要當場炸。
+        src = (ROOT / "scripts" / "recall_router.py").read_text(encoding="utf-8")
+        block = src[src.index("light scan 不跑，太貴"):]
+        block = block[:block.index("\n        else:")]
+        import_pos = block.index("from recall_for_conversation import (")
+        try_pos = block.index("try:")
+        self.assertLess(import_pos, try_pos,
+                        "identifier import 在 try 裡面——會被 except 吞掉")
 
 
 if __name__ == "__main__":

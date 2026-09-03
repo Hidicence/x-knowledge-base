@@ -202,11 +202,14 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
     vs `.startswith`）——同一條巢狀路徑會在一處算 card、另一處算 bookmark。
     集中在這裡。
     """
+    if item.get("match_kind") == "literal":
+        # 字面命中一定要帶著它的尺度，不然 rank() 退回 source_type 的錨點
+        # (card 用 0.88 的 RRF 錨點) 把它算低 ~9%。這是契約，寫出來。
+        assert item.get("score_scale"), "literal 結果沒有 score_scale"
     rel = str(item.get("relative_path") or item.get("path") or "")
-    # 涵蓋 cards/、memory/cards/、data/cards/ 等所有形式。舊的兩份手抄一份用
-    # startswith("cards/")（漏掉 memory/cards/）、一份用 "cards/" in（會誤中
-    # bookmarks/xxx-cards/）。這一版兩者都不漏也不誤中。
-    is_card = rel.startswith("cards/") or "/cards/" in rel
+    # 只認 ingester 真的會產生的兩種前綴。"cards/" in rel 會誤中絕對路徑裡
+    # 任何一層叫 cards 的目錄（relative_path 缺時 rel 退回絕對 path）。
+    is_card = rel.startswith(("cards/", "memory/cards/"))
     score = item.get("score", 0.0)
     if item.get("match_kind") != "literal" and keyword_scale:
         # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；換算到 0–1，
@@ -419,23 +422,25 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             # 「每次提到版本號都跑完整向量召回」太貴。代價是：識別碼只在卡片
             # 內文出現、metadata 沒有時，light 掃描抓不到——但那種問法通常會
             # 寫成完整句子（就不是 light 了），走上面的完整召回。
-            try:
-                from recall_for_conversation import (
-                    _identifier_tokens as _ident, identifier_recall as _ir,
-                    load_index as _li, INDEX_FILE as _IDX)
-                if _ident(query):
+            # import 放在 try 外：symbol 改名 / 模組搬走是硬性安裝錯誤，
+            # 應當場炸、讓 CI 抓到，不是被吞成「查無資料」。
+            from recall_for_conversation import (
+                _identifier_tokens as _ident, identifier_recall as _ir,
+                load_index as _li, INDEX_FILE as _IDX)
+            if _ident(query):
+                try:
                     _items = _li(_IDX).get("items", [])
                     assoc_results = [_assoc_dict(h) for h in _ir(query, _items, 3)]
                     assoc_results, _ = _dedup_filter_new(assoc_results)
                     if assoc_results:
                         assoc_text = _format_assoc_chat(assoc_results)
-            except Exception as e:  # noqa: BLE001
-                # 原本這裡是 except Exception: pass，錯在 pass（靜默），不在
-                # 抓太廣：索引壞掉會長得跟「查無資料」一模一樣，這個專案的
-                # _session_dedup import 就是這樣被吞掉、核心保護失效四個月。
-                # 抓得廣是對的（JSON 壞成 list 會丟 AttributeError、名稱改了
-                # 會丟 ImportError），但一定要出聲，而且其他 soft 召回照跑。
-                xkb_failures.note("light identifier recall", e)
+                except Exception as e:  # noqa: BLE001
+                    # 執行期錯誤（索引壞成 list -> AttributeError、dedup state
+                    # 壞掉 -> KeyError…）：出聲，把這條腿清乾淨，讓 wiki /
+                    # contrarian 等其他 soft 召回照回。錯在原本的 pass（靜默），
+                    # 不在抓得廣——_session_dedup import 就是這樣被吞掉四個月。
+                    xkb_failures.note("light identifier recall", e)
+                    assoc_results, assoc_text = [], ""
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
             assoc_results = _drop_irrelevant_cards(query, assoc_results)
