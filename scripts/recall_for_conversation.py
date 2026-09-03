@@ -784,6 +784,96 @@ MODE_LABELS = {
 }
 
 
+_IDENT_SPLIT = re.compile(r"[\s,;，、。]+")
+_IDENT_HARD_FIELDS = ("id", "source_url", "relative_path", "path")
+_IDENT_SOFT_FIELDS = ("title", "searchable", "summary", "tags")
+
+
+def _identifier_tokens(query: str) -> List[str]:
+    """查詢裡看起來像識別碼、而不是普通詞的 token（原樣保留，不再切分）。
+
+    命中條件：含數字、含底線、或長度 >= 8 的純 ASCII 連字號字串。雙引號括住
+    的片段一律視為識別碼。斷詞器會把 gpt-5.6-luna 從 . 切成兩半，這裡不經過
+    它，所以識別碼保持完整。
+    """
+    quoted = re.findall(r'"([^"]+)"', query)
+    bare = [t for t in _IDENT_SPLIT.split(re.sub(r'"[^"]*"', " ", query)) if t]
+    out: List[str] = []
+    for tok in quoted + bare:
+        t = tok.strip().strip('"').lower()
+        if len(t) < 3:
+            continue
+        digits = sum(c.isdigit() for c in t)
+        alpha = sum(c.isalpha() for c in t)
+        looks_id = (
+            # 純數字要夠長才算識別碼（tweet ID 有 18-19 位）；四位數多半是年份
+            (digits >= 10 and alpha == 0)
+            # 英數混合、帶數字：型號、錯誤碼（gpt-5.6、err_1042）
+            or (digits and alpha and ("_" in t or "-" in t or "." in t or len(t) >= 6))
+            # 底線分隔的識別碼
+            or "_" in t
+            # 夠長的連字號 ASCII slug（repo 名）
+            or (len(t) >= 8 and "-" in t and t.isascii() and " " not in t)
+        )
+        if looks_id:
+            out.append(t)
+    return list(dict.fromkeys(out))
+
+
+def identifier_recall(query: str, items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """字面命中識別碼的卡片。分數高到能排進召回前段，但不保證第一。
+
+    向量腿對錯誤碼、repo slug、tweet ID 這種字串算不出意義，於是它們進不了
+    「純向量排名的前 2*limit」候選集，關鍵字腿也就沒機會重排到它們——救不回
+    沒入選的東西。這條腿直接掃索引補上。
+    """
+    idents = _identifier_tokens(query)
+    if not idents:
+        return []
+    # 一個 token 命中太多卡片 => 它其實不是識別碼（例如年份、常見縮寫）。
+    # 真正的 repo slug / tweet ID / 型號只會命中個位數張卡。
+    _MAX_IDENT_HITS = 8
+    _blobs = []
+    _noise = set()
+    for it in items:
+        b = (" ".join(str(it.get(k) or "") for k in _IDENT_HARD_FIELDS) + " " +
+             " ".join((" ".join(str(x) for x in it.get(k)) if isinstance(it.get(k), list)
+                        else str(it.get(k) or "")) for k in _IDENT_SOFT_FIELDS)).lower()
+        _blobs.append(b)
+    for t in idents:
+        if sum(1 for b in _blobs if t in b) > _MAX_IDENT_HITS:
+            _noise.add(t)
+    if all(t in _noise for t in idents):
+        return []
+    hits: List[tuple] = []
+    for item, blob in zip(items, _blobs):
+        hard = " ".join(str(item.get(k) or "") for k in _IDENT_HARD_FIELDS).lower()
+        matched = [t for t in idents if t in blob and t not in _noise]
+        if not matched:
+            continue
+        in_hard = sum(1 for t in matched if t in hard)
+        # 命中在 id / url / 路徑 這種「硬」欄位 => 幾乎確定就是要找的那張卡
+        score = round(min(0.99, 0.72 + 0.12 * min(in_hard, 2) + 0.03 * (len(matched) - 1)), 4)
+        rel_path = item.get("relative_path") or item.get("path") or ""
+        hits.append((score, {
+            "title": _display_title(item),
+            "summary": clean_summary(item.get("summary") or ""),
+            "category": item.get("category") or "general",
+            "tags": item.get("tags") or [],
+            "relative_path": rel_path,
+            "source_url": _normalize_source_url(item.get("source_url") or ""),
+            "score": score,
+            "score_scale": "card_semantic",
+            "topic_boost": 0.0,
+            "matched_categories": [],
+            "matched_tags": [],
+            "ranking_adjustments": {"total_adjustment": 0.0},
+            "relevance_reason": f"字面命中識別碼：{', '.join(matched)}",
+        }))
+    hits.sort(key=lambda x: x[0], reverse=True)
+    return [h[1] for h in hits[:limit]]
+
+
 def search(
     query: str,
     limit: int = 3,
@@ -837,6 +927,23 @@ def search(
             search_mode = "keyword_fallback"
     else:
         results = recall(query, limit, min_score, index_path, profile_path)
+
+    # 識別碼精確腿：任何後端跑完後都併一次。查詢沒有識別碼 token 時
+    # _identifier_tokens 回空，連索引都不載入，行為與改動前完全相同。
+    if _identifier_tokens(query):
+        try:
+            _idx_items = load_index(index_path).get("items", [])
+        except (FileNotFoundError, ValueError):
+            _idx_items = []
+        exact = identifier_recall(query, _idx_items, limit)
+        if exact:
+            def _rk(r: Dict[str, Any]) -> str:
+                return r.get("relative_path") or r.get("source_url") or r.get("title") or ""
+            seen = {_rk(r) for r in exact}
+            results = exact + [r for r in results if _rk(r) not in seen]
+            results = results[: max(limit, len(exact))]
+            if search_mode in ("gbrain", "semantic", "keyword", "keyword_fallback"):
+                search_mode = f"{search_mode}+ident"
 
     return {
         "query": query,
