@@ -184,6 +184,43 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
             self.assertTrue(noted, f"{exc} 被靜默吞掉了")
             self.assertEqual(noted[0][1], exc)
 
+class LightPathCostAndDegradation(unittest.TestCase):
+    def test_identifier_only_with_no_token_does_not_enter_search(self) -> None:
+        # collapse 之後一度無條件呼叫 search()，於是每一句 light 掃描都掃了
+        # 一遍 wiki + 開 executor，全在 _identifier_tokens 檢查之前。
+        import recall_router as rr
+        import recall_for_conversation as rfc
+        entered = []
+        orig = rfc.search
+        self.addCleanup(setattr, rfc, "search", orig)
+        rfc.search = lambda *a, **k: entered.append(1) or orig(*a, **k)
+
+        txt, res = rr.run_associative_recall("今天天氣真好", limit=3, identifier_only=True)
+        self.assertEqual((txt, res), ("", []))
+        self.assertEqual(entered, [], "沒有識別碼 token 卻還是進了 search()")
+
+    def test_broken_index_degrades_the_supplement_not_the_backend(self) -> None:
+        # 非 light：gbrain 已經回了好結果（gbrain 不讀本地索引）。識別碼腿的
+        # load_index 壞掉只該讓這條補充腿降級，不該把 gbrain 的結果一起丟掉。
+        import recall_for_conversation as rfc
+        import xkb_failures
+        noted = []
+        orig_load, orig_note = rfc.load_index, xkb_failures.note
+        self.addCleanup(setattr, rfc, "load_index", orig_load)
+        self.addCleanup(setattr, xkb_failures, "note", orig_note)
+        xkb_failures.note = lambda w, e: noted.append((w, type(e).__name__))
+
+        backend = [{"relative_path": "cards/a.md", "title": "gbrain 的結果",
+                    "summary": "s", "score": 0.8, "score_scale": "card_semantic"}]
+        self.addCleanup(setattr, rfc, "gbrain_semantic_recall", rfc.gbrain_semantic_recall)
+        rfc.gbrain_semantic_recall = lambda q, limit: list(backend)
+        rfc.load_index = lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("gone"))
+
+        r = rfc.search("infiniflow-ragflow 怎麼裝", limit=3, no_wiki=True, force_gbrain=True)
+        titles = [x.get("title") for x in r["results"]]
+        self.assertIn("gbrain 的結果", titles, "識別碼腿壞掉把 gbrain 的結果也丟了")
+        self.assertTrue(noted, "識別碼腿降級沒有出聲")
+
 
 if __name__ == "__main__":
     unittest.main()

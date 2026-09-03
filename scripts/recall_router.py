@@ -241,6 +241,15 @@ def run_associative_recall(query: str, limit: int = 2, *,
     nothing". gbrain's own 1.2 s is paid either way; what this removes is the
     part that was never doing any work.
     """
+    if identifier_only:
+        # 便宜的前置檢查：沒有識別碼 token 就什麼都不做——不開 executor、
+        # 不進 search()、不掃 wiki。light 掃描幾乎每句都會走到這裡。
+        try:
+            from recall_for_conversation import _identifier_tokens
+        except ImportError:
+            _identifier_tokens = None
+        if _identifier_tokens is not None and not _identifier_tokens(query):
+            return "", []
     try:
         from recall_for_conversation import search as _associative_search
     except ImportError as err:

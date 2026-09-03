@@ -912,8 +912,10 @@ def search(
     vector_path = Path(vector_file) if vector_file else VECTOR_FILE
     profile_path = Path(topic_profile_file) if topic_profile_file else TOPIC_PROFILE_FILE
 
-    # 第一層：wiki 知識層（先查合成知識）
-    wiki_hits: List[Dict[str, Any]] = [] if no_wiki else wiki_recall(query, limit=2)
+    # 第一層：wiki 知識層（先查合成知識）。identifier_only 是 light 掃描的
+    # 純識別碼模式，呼叫端已經自己查過 wiki，這裡再查一次只是丟掉——跳過。
+    wiki_hits: List[Dict[str, Any]] = ([] if (no_wiki or identifier_only)
+                                       else wiki_recall(query, limit=2))
 
     # 第二層：cards 細節層（gbrain > semantic > keyword）
     try:
@@ -950,10 +952,19 @@ def search(
     # 識別碼精確腿：任何後端跑完後都併一次。查詢沒有識別碼 token 時
     # _identifier_tokens 回空，連索引都不載入，行為與改動前完全相同。
     if _identifier_tokens(query):
-        # 索引讀不到不在這裡吞。呼叫端（run_associative_recall）用一個 broad
-        # except + xkb_failures.note 把整個 search() 包住，讓它出聲——這裡
-        # 自己 catch 成空清單，就又變回「壞掉長得像查無資料」。
-        _idx_items = load_index(index_path).get("items", [])
+        # 識別碼腿是**補充**：非 light 路徑上 gbrain 已經回了好結果，本地索引
+        # 讀不到只該讓這條補充腿降級，不該把 gbrain 的結果一起丟掉——那正是
+        # 第八輪審查抓到的「往上傳、連好結果一起炸」。所以本地 catch，但要
+        # 出聲（不是第七輪那個靜默的 _idx_items = []）。
+        try:
+            _idx_items = load_index(index_path).get("items", [])
+        except (FileNotFoundError, ValueError, AttributeError) as _e:
+            try:
+                import xkb_failures as _xf
+                _xf.note("identifier index", _e)
+            except Exception:  # noqa: BLE001 — 連告警都載不進來也不能因此中止
+                pass
+            _idx_items = []
         exact = identifier_recall(query, _idx_items, limit)
         if exact:
             def _rk(r: Dict[str, Any]) -> str:
