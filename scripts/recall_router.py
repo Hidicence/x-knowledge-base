@@ -203,7 +203,10 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
     集中在這裡。
     """
     rel = str(item.get("relative_path") or item.get("path") or "")
-    is_card = rel.startswith(("cards/", "memory/cards/"))
+    # 涵蓋 cards/、memory/cards/、data/cards/ 等所有形式。舊的兩份手抄一份用
+    # startswith("cards/")（漏掉 memory/cards/）、一份用 "cards/" in（會誤中
+    # bookmarks/xxx-cards/）。這一版兩者都不漏也不誤中。
+    is_card = rel.startswith("cards/") or "/cards/" in rel
     score = item.get("score", 0.0)
     if item.get("match_kind") != "literal" and keyword_scale:
         # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；換算到 0–1，
@@ -426,9 +429,12 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                     assoc_results, _ = _dedup_filter_new(assoc_results)
                     if assoc_results:
                         assoc_text = _format_assoc_chat(assoc_results)
-            except (FileNotFoundError, ValueError, KeyError) as e:
-                # 索引不見了、壞了、或項目缺鍵——這是設定/資料問題，要出聲，
-                # 不能靜靜變成「查無資料」。這個專案吃過這種虧。
+            except Exception as e:  # noqa: BLE001
+                # 原本這裡是 except Exception: pass，錯在 pass（靜默），不在
+                # 抓太廣：索引壞掉會長得跟「查無資料」一模一樣，這個專案的
+                # _session_dedup import 就是這樣被吞掉、核心保護失效四個月。
+                # 抓得廣是對的（JSON 壞成 list 會丟 AttributeError、名稱改了
+                # 會丟 ImportError），但一定要出聲，而且其他 soft 召回照跑。
                 xkb_failures.note("light identifier recall", e)
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)

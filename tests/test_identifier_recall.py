@@ -157,15 +157,15 @@ class RouterMappingIsSharedAndSafe(unittest.TestCase):
         self.addCleanup(setattr, rfc, "load_index", orig_load)
         self.addCleanup(setattr, xkb_failures, "note", orig_note)
 
-        def boom(*a, **k):
-            raise FileNotFoundError("search index gone")
-        rfc.load_index = boom
-        xkb_failures.note = lambda where, err: noted.append((where, str(err)))
+        # 不是 FileNotFoundError：索引 JSON 壞成 list，.get() 會丟 AttributeError。
+        # 這種例外一定要被抓住（route() 不能中止）而且要出聲。
+        rfc.load_index = lambda *a, **k: ["not", "a", "dict"]
+        xkb_failures.note = lambda where, err: noted.append((where, type(err).__name__))
 
-        # 一個會走 light 路徑、又帶識別碼 token 的查詢
-        rr.route("2045420631295242340")
-        self.assertTrue(noted, "索引壞掉被 except Exception: pass 吞掉了")
-        self.assertIn("index", noted[0][1].lower())
+        r = rr.route("2045420631295242340")
+        self.assertIsNotNone(r, "route() 因為索引壞掉而中止了整個召回")
+        self.assertTrue(noted, "索引壞掉被靜默吞掉了")
+        self.assertEqual(noted[0][1], "AttributeError")
 
 
 if __name__ == "__main__":
