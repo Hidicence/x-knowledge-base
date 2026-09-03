@@ -830,14 +830,15 @@ def _identifier_tokens(query: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def identifier_recall(query: str, items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+def identifier_recall(query: str, items: List[Dict[str, Any]], limit: int,
+                      *, _tokens: List[str] | None = None) -> List[Dict[str, Any]]:
     """字面命中識別碼的卡片。分數高到能排進召回前段，但不保證第一。
 
     向量腿對錯誤碼、repo slug、tweet ID 這種字串算不出意義，於是它們進不了
     「純向量排名的前 2*limit」候選集，關鍵字腿也就沒機會重排到它們——救不回
     沒入選的東西。這條腿直接掃索引補上。
     """
-    idents = _identifier_tokens(query)
+    idents = _tokens if _tokens is not None else _identifier_tokens(query)
     if not idents:
         return []
     # 一個 token 命中太多卡片 => 它其實不是識別碼（例如年份、常見縮寫）。
@@ -951,21 +952,23 @@ def search(
 
     # 識別碼精確腿：任何後端跑完後都併一次。查詢沒有識別碼 token 時
     # _identifier_tokens 回空，連索引都不載入，行為與改動前完全相同。
-    if _identifier_tokens(query):
+    _q_idents = _identifier_tokens(query)
+    if _q_idents:
         # 識別碼腿是**補充**：非 light 路徑上 gbrain 已經回了好結果，本地索引
         # 讀不到只該讓這條補充腿降級，不該把 gbrain 的結果一起丟掉——那正是
         # 第八輪審查抓到的「往上傳、連好結果一起炸」。所以本地 catch，但要
         # 出聲（不是第七輪那個靜默的 _idx_items = []）。
         try:
             _idx_items = load_index(index_path).get("items", [])
-        except (FileNotFoundError, ValueError, AttributeError) as _e:
+        except (OSError, ValueError, AttributeError) as _e:  # OSError 涵蓋
+            # FileNotFoundError / PermissionError / IsADirectoryError
             try:
                 import xkb_failures as _xf
                 _xf.note("identifier index", _e)
             except Exception:  # noqa: BLE001 — 連告警都載不進來也不能因此中止
                 pass
             _idx_items = []
-        exact = identifier_recall(query, _idx_items, limit)
+        exact = identifier_recall(query, _idx_items, limit, _tokens=_q_idents)
         if exact:
             def _rk(r: Dict[str, Any]) -> str:
                 return r.get("relative_path") or r.get("source_url") or r.get("title") or ""
