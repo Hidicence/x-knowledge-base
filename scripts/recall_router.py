@@ -194,6 +194,37 @@ def _format_assoc_chat(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
+    """把 recall() / identifier_recall() 形狀的項目映成聯想召回的結果 dict。
+
+    _format_assoc_chat、xkb_score.rank、_session_dedup 都吃這個形狀。以前
+    三個地方各寫一份，其中兩份連 source_type 的判斷都不一樣（`"cards/" in`
+    vs `.startswith`）——同一條巢狀路徑會在一處算 card、另一處算 bookmark。
+    集中在這裡。
+    """
+    rel = str(item.get("relative_path") or item.get("path") or "")
+    is_card = rel.startswith(("cards/", "memory/cards/"))
+    score = item.get("score", 0.0)
+    if item.get("match_kind") != "literal" and keyword_scale:
+        # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；換算到 0–1，
+        # 不然 rank() 用 0.88 錨點會把一張 15 分的卡片算成 0.94。
+        # 字面命中的 score 已經是 0–1 的固定值，不要碰。
+        score = _as_unit_scale(score)
+    return {
+        "source_type": "card" if is_card else "bookmark",
+        "source_file": item.get("relative_path") or item.get("path", ""),
+        "section": xkb_provenance.strip_markers(item.get("title", "")),
+        "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
+        "score": score,
+        "match_kind": item.get("match_kind"),
+        # score_scale 要帶過來：字面命中跳過 filter_irrelevant 的改寫路徑，
+        # 不帶的話 rank() 退回 card 的 RRF 錨點 (0.88) 而不是餘弦錨點 (0.72)，
+        # 把它算低 ~9%、排在它要超越的餘弦卡片下面。
+        "score_scale": item.get("score_scale"),
+        "url": item.get("source_url") or item.get("url", ""),
+    }
+
+
 def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]:
     """Returns (formatted_text, results_list).
 
@@ -233,27 +264,7 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
         # 得 15 分的卡片算出 0.94，壓過所有語意結果（最好也才 0.55）。
         # 分數要帶著自己的尺度，不要讓下游用猜的——這一類錯誤這個專案犯了四次。
         keyword_scale = mode in ("keyword", "keyword_fallback")
-        results = [
-            {
-                "source_type": "card" if str(item.get("relative_path", "")).startswith("cards/") else "bookmark",
-                "source_file": item.get("relative_path") or item.get("path", ""),
-                "section": xkb_provenance.strip_markers(item.get("title", "")),
-                "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
-                # 字面命中識別碼的結果，score 已經是 0–1 的固定值，
-                # 不要再套關鍵字換算（會把它壓到門檻以下）。
-                "score": item.get("score", 0.0) if item.get("match_kind") == "literal"
-                         else _as_unit_scale(item.get("score", 0.0)) if keyword_scale
-                         else item.get("score", 0.0),
-                "match_kind": item.get("match_kind"),
-                # score_scale 要帶過來：字面命中的結果跳過 filter_irrelevant 的
-                # 改寫路徑，不帶的話 rank() 會退回 source_type=card 的 RRF 錨點
-                # (0.88) 而不是餘弦錨點 (0.72)，把它算低 ~9%，反而排在它要
-                # 超越的餘弦卡片下面。
-                "score_scale": item.get("score_scale"),
-                "url": item.get("source_url") or item.get("url", ""),
-            }
-            for item in items
-        ]
+        results = [_assoc_dict(item, keyword_scale=keyword_scale) for item in items]
         return _format_assoc_chat(results), results
     except Exception as e:
         # 後端壞掉不能長得像「查無資料」。這裡原本還套了一層 except，
@@ -399,34 +410,26 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         # （run_associative_recall 會打向量/外部呼叫，~1.2s，而 light 幾乎每句都跑）。
         if light:
             assoc_text, assoc_results = "", []
-            # 例外：查詢裡有識別碼時，只跑 identifier_recall——它是純字串比對，
-            # 不打 embedding，命中太多卡的 token 會被當雜訊丟掉，所以 gpt-4o
-            # 這種常見版本號不會產生東西。真正的 tweet ID / repo slug 才會。
+            # 例外：查詢含識別碼時跑 identifier_recall——純字串比對、不打 embedding。
+            # 這是一條刻意的成本線：light trigger 上只比對卡片的 metadata
+            # （title / summary / tags / url / path），不跑語意腿。上一輪證明
+            # 「每次提到版本號都跑完整向量召回」太貴。代價是：識別碼只在卡片
+            # 內文出現、metadata 沒有時，light 掃描抓不到——但那種問法通常會
+            # 寫成完整句子（就不是 light 了），走上面的完整召回。
             try:
                 from recall_for_conversation import (
                     _identifier_tokens as _ident, identifier_recall as _ir,
                     load_index as _li, INDEX_FILE as _IDX)
                 if _ident(query):
                     _items = _li(_IDX).get("items", [])
-                    # identifier_recall 回的是 recall() 的 dict 形狀（title/summary），
-                    # 而下游的 _format_assoc_chat 與 xkb_score.rank 要的是
-                    # section/excerpt/source_type——跟 run_associative_recall 內部
-                    # 那個 list comp 同一個形狀。這裡照樣映一次。
-                    assoc_results = [{
-                        "source_type": "card" if "cards/" in str(h.get("relative_path", "")) else "bookmark",
-                        "source_file": h.get("relative_path", ""),
-                        "section": xkb_provenance.strip_markers(h.get("title", "")),
-                        "excerpt": xkb_provenance.strip_markers((h.get("summary") or "")[:200]),
-                        "score": h.get("score", 0.0),
-                        "match_kind": h.get("match_kind"),
-                        "score_scale": h.get("score_scale"),
-                        "url": h.get("source_url", ""),
-                    } for h in _ir(query, _items, 3)]
+                    assoc_results = [_assoc_dict(h) for h in _ir(query, _items, 3)]
                     assoc_results, _ = _dedup_filter_new(assoc_results)
                     if assoc_results:
                         assoc_text = _format_assoc_chat(assoc_results)
-            except Exception:
-                pass
+            except (FileNotFoundError, ValueError, KeyError) as e:
+                # 索引不見了、壞了、或項目缺鍵——這是設定/資料問題，要出聲，
+                # 不能靜靜變成「查無資料」。這個專案吃過這種虧。
+                xkb_failures.note("light identifier recall", e)
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
             assoc_results = _drop_irrelevant_cards(query, assoc_results)

@@ -128,5 +128,45 @@ class SearchMergeBehaviour(unittest.TestCase):
         self.assertNotIn("load_index(index_path)", src[:gate].rsplit("def search(", 1)[-1])
 
 
+class RouterMappingIsSharedAndSafe(unittest.TestCase):
+    SRC = (ROOT / "scripts" / "recall_router.py").read_text(encoding="utf-8")
+
+    def test_the_assoc_dict_mapping_has_one_definition(self) -> None:
+        # 以前這個映射有三份手抄，其中兩份 source_type 判斷還不一樣。
+        self.assertIn("def _assoc_dict(", self.SRC)
+        # run_associative_recall 與 light 路徑都要呼叫它，不能各自重寫 dict literal
+        assoc = self.SRC[self.SRC.index("def run_associative_recall"):]
+        assoc = assoc[:assoc.index("\n\ndef ")]
+        self.assertIn("_assoc_dict(", assoc)
+        self.assertNotIn('"source_type": "card" if', assoc,
+                         "run_associative_recall 還在自己組 dict，沒走共用函式")
+
+    def test_source_type_is_card_for_memory_cards_paths(self) -> None:
+        import recall_router as rr
+        d = rr._assoc_dict({"relative_path": "memory/cards/github_star-x.md",
+                            "title": "x", "summary": "y", "score": 0.8})
+        self.assertEqual(d["source_type"], "card")
+
+    def test_light_identifier_recall_reports_index_failure_not_silent(self) -> None:
+        import recall_router as rr
+        import recall_for_conversation as rfc
+        import xkb_failures
+
+        noted = []
+        orig_load, orig_note = rfc.load_index, xkb_failures.note
+        self.addCleanup(setattr, rfc, "load_index", orig_load)
+        self.addCleanup(setattr, xkb_failures, "note", orig_note)
+
+        def boom(*a, **k):
+            raise FileNotFoundError("search index gone")
+        rfc.load_index = boom
+        xkb_failures.note = lambda where, err: noted.append((where, str(err)))
+
+        # 一個會走 light 路徑、又帶識別碼 token 的查詢
+        rr.route("2045420631295242340")
+        self.assertTrue(noted, "索引壞掉被 except Exception: pass 吞掉了")
+        self.assertIn("index", noted[0][1].lower())
+
+
 if __name__ == "__main__":
     unittest.main()
