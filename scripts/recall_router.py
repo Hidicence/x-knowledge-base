@@ -202,10 +202,6 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
     vs `.startswith`）——同一條巢狀路徑會在一處算 card、另一處算 bookmark。
     集中在這裡。
     """
-    if item.get("match_kind") == "literal":
-        # 字面命中一定要帶著它的尺度，不然 rank() 退回 source_type 的錨點
-        # (card 用 0.88 的 RRF 錨點) 把它算低 ~9%。這是契約，寫出來。
-        assert item.get("score_scale"), "literal 結果沒有 score_scale"
     rel = str(item.get("relative_path") or item.get("path") or "")
     # 只認 ingester 真的會產生的兩種前綴。"cards/" in rel 會誤中絕對路徑裡
     # 任何一層叫 cards 的目錄（relative_path 缺時 rel 退回絕對 path）。
@@ -226,7 +222,12 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
         # score_scale 要帶過來：字面命中跳過 filter_irrelevant 的改寫路徑，
         # 不帶的話 rank() 退回 card 的 RRF 錨點 (0.88) 而不是餘弦錨點 (0.72)，
         # 把它算低 ~9%、排在它要超越的餘弦卡片下面。
-        "score_scale": item.get("score_scale"),
+        # 字面命中一定要帶尺度，不然 rank() 退回 source_type 的 RRF 錨點
+        # (0.88) 把它算低 ~9%。上游沒帶時給個防禦性預設——不要 assert，
+        # 在 route() 裡 assert 失敗會把整個召回打掉，正是這條腿要避免的。
+        "score_scale": item.get("score_scale") or (
+            ("card_semantic" if is_card else "bookmark")
+            if item.get("match_kind") == "literal" else None),
         "url": item.get("source_url") or item.get("url", ""),
     }
 
