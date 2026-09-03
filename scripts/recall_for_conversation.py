@@ -799,8 +799,15 @@ def _identifier_tokens(query: str) -> List[str]:
     quoted = re.findall(r'"([^"]+)"', query)
     bare = [t for t in _IDENT_SPLIT.split(re.sub(r'"[^"]*"', " ", query)) if t]
     out: List[str] = []
-    for tok in quoted + bare:
-        t = tok.strip().strip('"').lower()
+    # 引號括住的片段：使用者明講「就找這個字串」，一律當識別碼，連多字詞也算。
+    for tok in quoted:
+        t = tok.strip().strip('".,;:!?()[]').lower()
+        if len(t) >= 3:
+            out.append(t)
+    for tok in bare:
+        # 去掉句尾標點：_IDENT_SPLIT 會切 CJK 的「。」但不切 ASCII 的「.」，
+        # 於是 "gpt-5.6." 會帶著尾點，t in blob 就對不上 "gpt-5.6"。
+        t = tok.strip().strip('".,;:!?()[]').lower()
         if len(t) < 3:
             continue
         digits = sum(c.isdigit() for c in t)
@@ -864,6 +871,9 @@ def identifier_recall(query: str, items: List[Dict[str, Any]], limit: int) -> Li
             "source_url": _normalize_source_url(item.get("source_url") or ""),
             "score": score,
             "score_scale": "card_semantic",
+            # 字面命中：相關性由「索引裡真的有這個字串」建立，不是餘弦。
+            # 下游的相似度閘門要放這種結果過，不能用 0.55 的餘弦門檻砍掉。
+            "match_kind": "literal",
             "topic_boost": 0.0,
             "matched_categories": [],
             "matched_tags": [],
@@ -939,11 +949,14 @@ def search(
         if exact:
             def _rk(r: Dict[str, Any]) -> str:
                 return r.get("relative_path") or r.get("source_url") or r.get("title") or ""
+            # 上限 3：留下位子給語意結果，不然 len(exact)==limit 時
+            # 語意結果會在 rank() 重排之前就被整段截掉。
+            exact = exact[: min(3, limit)]
             seen = {_rk(r) for r in exact}
-            results = exact + [r for r in results if _rk(r) not in seen]
-            results = results[: max(limit, len(exact))]
-            if search_mode in ("gbrain", "semantic", "keyword", "keyword_fallback"):
-                search_mode = f"{search_mode}+ident"
+            results = (exact + [r for r in results if _rk(r) not in seen])[: max(limit, len(exact))]
+            # 不動 search_mode：recall_router 用它判斷「要不要把關鍵字分數
+            # 換算尺度」，加後綴會讓那個判斷失效，未換算的關鍵字分數就直接
+            # 壓過所有語意結果。識別碼的資訊改放在各筆結果的 match_kind 上。
 
     return {
         "query": query,

@@ -197,6 +197,11 @@ def filter_irrelevant(
 
     kept: list[dict[str, Any]] = []
     for item in items:
+        if item.get("match_kind") == "literal":
+            # 字面命中：相關性已經由「索引裡真的有這個字串」建立。餘弦對
+            # 識別碼算不出意義，用它砍會把這條腿存在的理由整個抵銷掉。
+            kept.append(item)
+            continue
         similarity = scores.get(keys[id(item)])
         if similarity is None:
             # 判斷不出來 → 放行，但要記住它沒有被驗證過。過濾器不能刪掉

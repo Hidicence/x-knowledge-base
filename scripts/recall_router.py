@@ -239,8 +239,12 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
                 "source_file": item.get("relative_path") or item.get("path", ""),
                 "section": xkb_provenance.strip_markers(item.get("title", "")),
                 "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
-                "score": _as_unit_scale(item.get("score", 0.0)) if keyword_scale
+                # 字面命中識別碼的結果，score 已經是 0–1 的固定值，
+                # 不要再套關鍵字換算（會把它壓到門檻以下）。
+                "score": item.get("score", 0.0) if item.get("match_kind") == "literal"
+                         else _as_unit_scale(item.get("score", 0.0)) if keyword_scale
                          else item.get("score", 0.0),
+                "match_kind": item.get("match_kind"),
                 "url": item.get("source_url") or item.get("url", ""),
             }
             for item in items
@@ -386,8 +390,15 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                "section": r.section, "excerpt": r.excerpt,
                                "score": r.score, "url": r.url} for r in wiki_results_filtered]
 
-        # Associative recall (bookmark/card supplement) — light scan 不跑，太貴
-        if light:
+        # Associative recall (bookmark/card supplement) — light scan 不跑，太貴。
+        # 例外：查詢裡有識別碼（錯誤碼、型號、repo slug、tweet ID）就是一個
+        # 明確的「找這份特定文件」訊號，值得那一次呼叫，即使信心分數低。
+        try:
+            from recall_for_conversation import _identifier_tokens as _ident
+            _has_ident = bool(_ident(query))
+        except Exception:
+            _has_ident = False
+        if light and not _has_ident:
             assoc_text, assoc_results = "", []
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
@@ -440,7 +451,10 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             r.source_type.endswith("_semantic") for r in wiki_results_filtered
         )
         wiki_threshold = SIDE_HINT_SEMANTIC if wiki_is_semantic else SIDE_HINT_KEYWORD
-        if best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
+        _has_literal = any(x.get("match_kind") == "literal" for x in assoc_results)
+        if _has_literal or best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
+            # 字面命中識別碼 => 使用者要的就是這張卡，直接給內容，
+            # 不要只回「你知識庫裡有 N 個相關片段」。
             delivery_mode = "side_hint"
         else:
             delivery_mode = "expandable_hint"

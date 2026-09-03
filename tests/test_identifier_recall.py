@@ -77,6 +77,42 @@ class IdentifierRecall(unittest.TestCase):
               "source_url": "", "summary": ""}], limit=5)[0]["score"]
         self.assertGreater(in_id, soft_only)
 
+    def test_hits_are_tagged_literal_for_the_downstream_filter(self) -> None:
+        # 這是審查抓到的缺口：透過 router 的路徑上，_drop_irrelevant_cards 會
+        # 用 0.55 的餘弦門檻砍結果，而識別碼的餘弦一定低。命中必須帶
+        # match_kind="literal"，下游才知道放它過。
+        hits = rfc.identifier_recall("2045420631295242340", self.ITEMS, limit=3)
+        self.assertTrue(all(h.get("match_kind") == "literal" for h in hits))
+
+    def test_quoted_multiword_phrase_is_an_identifier(self) -> None:
+        self.assertIn("machine learning survey",
+                      rfc._identifier_tokens('"machine learning survey" 相關卡片'))
+
+    def test_trailing_ascii_period_is_stripped(self) -> None:
+        self.assertIn("gpt-5.6", rfc._identifier_tokens("which model is gpt-5.6."))
+
+
+class LiteralMatchesSurviveTheRelevanceFilter(unittest.TestCase):
+    def test_filter_irrelevant_keeps_literal_matches_below_cosine_floor(self) -> None:
+        import xkb_relevance as xr
+        items = [
+            {"id": "a", "score": 0.9, "match_kind": "literal"},
+            {"id": "b", "score": 0.9},
+        ]
+        # 索引解不出 id 'a'/'b' 的向量鍵 => similarity 判不出來；但 literal 那筆
+        # 一定要留下。用一個保證低於門檻的假 similarities。
+        orig = xr.similarities
+        xr.similarities = lambda q, keys: {k: 0.10 for k in keys if k}
+        xr.vector_key = lambda s: s  # 讓鍵可解析
+        try:
+            kept, dropped, _ = xr.filter_irrelevant(
+                "q", items, key_of=lambda i: i["id"], threshold=0.55)
+        finally:
+            xr.similarities = orig
+        kept_ids = {i["id"] for i in kept}
+        self.assertIn("a", kept_ids, "字面命中的項目被餘弦門檻砍掉了")
+        self.assertNotIn("b", kept_ids, "非字面命中、低於門檻的項目應該被砍")
+
 
 class SearchMergeBehaviour(unittest.TestCase):
     def test_prose_query_does_not_touch_search_mode(self) -> None:
