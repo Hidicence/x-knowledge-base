@@ -245,6 +245,11 @@ def run_associative_recall(query: str, limit: int = 2) -> tuple[str, list[dict]]
                          else _as_unit_scale(item.get("score", 0.0)) if keyword_scale
                          else item.get("score", 0.0),
                 "match_kind": item.get("match_kind"),
+                # score_scale 要帶過來：字面命中的結果跳過 filter_irrelevant 的
+                # 改寫路徑，不帶的話 rank() 會退回 source_type=card 的 RRF 錨點
+                # (0.88) 而不是餘弦錨點 (0.72)，把它算低 ~9%，反而排在它要
+                # 超越的餘弦卡片下面。
+                "score_scale": item.get("score_scale"),
                 "url": item.get("source_url") or item.get("url", ""),
             }
             for item in items
@@ -390,16 +395,38 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
                                "section": r.section, "excerpt": r.excerpt,
                                "score": r.score, "url": r.url} for r in wiki_results_filtered]
 
-        # Associative recall (bookmark/card supplement) — light scan 不跑，太貴。
-        # 例外：查詢裡有識別碼（錯誤碼、型號、repo slug、tweet ID）就是一個
-        # 明確的「找這份特定文件」訊號，值得那一次呼叫，即使信心分數低。
-        try:
-            from recall_for_conversation import _identifier_tokens as _ident
-            _has_ident = bool(_ident(query))
-        except Exception:
-            _has_ident = False
-        if light and not _has_ident:
+        # Associative recall (bookmark/card supplement) — light scan 不跑，太貴
+        # （run_associative_recall 會打向量/外部呼叫，~1.2s，而 light 幾乎每句都跑）。
+        if light:
             assoc_text, assoc_results = "", []
+            # 例外：查詢裡有識別碼時，只跑 identifier_recall——它是純字串比對，
+            # 不打 embedding，命中太多卡的 token 會被當雜訊丟掉，所以 gpt-4o
+            # 這種常見版本號不會產生東西。真正的 tweet ID / repo slug 才會。
+            try:
+                from recall_for_conversation import (
+                    _identifier_tokens as _ident, identifier_recall as _ir,
+                    load_index as _li, INDEX_FILE as _IDX)
+                if _ident(query):
+                    _items = _li(_IDX).get("items", [])
+                    # identifier_recall 回的是 recall() 的 dict 形狀（title/summary），
+                    # 而下游的 _format_assoc_chat 與 xkb_score.rank 要的是
+                    # section/excerpt/source_type——跟 run_associative_recall 內部
+                    # 那個 list comp 同一個形狀。這裡照樣映一次。
+                    assoc_results = [{
+                        "source_type": "card" if "cards/" in str(h.get("relative_path", "")) else "bookmark",
+                        "source_file": h.get("relative_path", ""),
+                        "section": xkb_provenance.strip_markers(h.get("title", "")),
+                        "excerpt": xkb_provenance.strip_markers((h.get("summary") or "")[:200]),
+                        "score": h.get("score", 0.0),
+                        "match_kind": h.get("match_kind"),
+                        "score_scale": h.get("score_scale"),
+                        "url": h.get("source_url", ""),
+                    } for h in _ir(query, _items, 3)]
+                    assoc_results, _ = _dedup_filter_new(assoc_results)
+                    if assoc_results:
+                        assoc_text = _format_assoc_chat(assoc_results)
+            except Exception:
+                pass
         else:
             assoc_text, assoc_results = run_associative_recall(query, limit=2)
             assoc_results = _drop_irrelevant_cards(query, assoc_results)

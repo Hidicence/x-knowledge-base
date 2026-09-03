@@ -84,9 +84,12 @@ class IdentifierRecall(unittest.TestCase):
         hits = rfc.identifier_recall("2045420631295242340", self.ITEMS, limit=3)
         self.assertTrue(all(h.get("match_kind") == "literal" for h in hits))
 
-    def test_quoted_multiword_phrase_is_an_identifier(self) -> None:
-        self.assertIn("machine learning survey",
-                      rfc._identifier_tokens('"machine learning survey" 相關卡片'))
+    def test_quoted_prose_is_not_an_identifier(self) -> None:
+        # 引號不是免死金牌：隨口一句 "good idea" 不該拿到字面命中的特權
+        self.assertEqual(rfc._identifier_tokens('他說那是個 "good idea" 啦'), [])
+
+    def test_quoted_identifier_still_works(self) -> None:
+        self.assertIn("gpt-5.6", rfc._identifier_tokens('查一下 "gpt-5.6" 的卡'))
 
     def test_trailing_ascii_period_is_stripped(self) -> None:
         self.assertIn("gpt-5.6", rfc._identifier_tokens("which model is gpt-5.6."))
@@ -101,14 +104,13 @@ class LiteralMatchesSurviveTheRelevanceFilter(unittest.TestCase):
         ]
         # 索引解不出 id 'a'/'b' 的向量鍵 => similarity 判不出來；但 literal 那筆
         # 一定要留下。用一個保證低於門檻的假 similarities。
-        orig = xr.similarities
+        orig_sim, orig_key = xr.similarities, xr.vector_key
+        self.addCleanup(setattr, xr, "similarities", orig_sim)
+        self.addCleanup(setattr, xr, "vector_key", orig_key)
         xr.similarities = lambda q, keys: {k: 0.10 for k in keys if k}
         xr.vector_key = lambda s: s  # 讓鍵可解析
-        try:
-            kept, dropped, _ = xr.filter_irrelevant(
-                "q", items, key_of=lambda i: i["id"], threshold=0.55)
-        finally:
-            xr.similarities = orig
+        kept, dropped, _ = xr.filter_irrelevant(
+            "q", items, key_of=lambda i: i["id"], threshold=0.55)
         kept_ids = {i["id"] for i in kept}
         self.assertIn("a", kept_ids, "字面命中的項目被餘弦門檻砍掉了")
         self.assertNotIn("b", kept_ids, "非字面命中、低於門檻的項目應該被砍")

@@ -792,22 +792,25 @@ _IDENT_SOFT_FIELDS = ("title", "searchable", "summary", "tags")
 def _identifier_tokens(query: str) -> List[str]:
     """查詢裡看起來像識別碼、而不是普通詞的 token（原樣保留，不再切分）。
 
-    命中條件：含數字、含底線、或長度 >= 8 的純 ASCII 連字號字串。雙引號括住
-    的片段一律視為識別碼。斷詞器會把 gpt-5.6-luna 從 . 切成兩半，這裡不經過
-    它，所以識別碼保持完整。
+    命中條件：含數字、含底線、或長度 >= 8 的純 ASCII 連字號字串。斷詞器會把
+    gpt-5.6-luna 從 . 切成兩半，這裡不經過它，所以識別碼保持完整。
+
+    引號不是免死金牌。一度讓「引號括住就一律算識別碼」，於是隨口一句
+    `他說那是個 "good idea"` 就讓幾張字面沾到邊的卡片拿到字面命中的特權
+    （跳過餘弦門檻、強制 side_hint、繞過 light 掃描的成本閘門）。引號片段
+    照樣要通過 looks_id：引號裡的 "gpt-5.6" 本來就會過，"machine learning
+    survey" 不會。
     """
-    quoted = re.findall(r'"([^"]+)"', query)
-    bare = [t for t in _IDENT_SPLIT.split(re.sub(r'"[^"]*"', " ", query)) if t]
+    # 引號內的內容拆開來，跟一般 token 走同一條 looks_id 判斷
+    parts = re.findall(r'"([^"]+)"', query)
+    parts += _IDENT_SPLIT.split(re.sub(r'"[^"]*"', " ", query))
     out: List[str] = []
-    # 引號括住的片段：使用者明講「就找這個字串」，一律當識別碼，連多字詞也算。
-    for tok in quoted:
-        t = tok.strip().strip('".,;:!?()[]').lower()
-        if len(t) >= 3:
-            out.append(t)
-    for tok in bare:
+    for tok in parts:
+        if not tok:
+            continue
         # 去掉句尾標點：_IDENT_SPLIT 會切 CJK 的「。」但不切 ASCII 的「.」，
         # 於是 "gpt-5.6." 會帶著尾點，t in blob 就對不上 "gpt-5.6"。
-        t = tok.strip().strip('".,;:!?()[]').lower()
+        t = tok.strip().strip('".,;:!?()[] ').lower()
         if len(t) < 3:
             continue
         digits = sum(c.isdigit() for c in t)
