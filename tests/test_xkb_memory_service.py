@@ -247,18 +247,27 @@ class XKBMemoryServiceTests(unittest.TestCase):
 
         strong = packet_for(0.75)
         self.assertEqual(strong[0], "wiki 結論",
-                         "消化過的結論該排在原始素材之前")
+                         "消化過的結論該排在相近強度的原始素材之前")
         self.assertLess(strong.index("卡片"), strong.index("對話軌跡"),
-                        "語意命中很強的卡片該排在關鍵字命中的對話軌跡之前")
+                        "語意命中的卡片該排在關鍵字命中的對話軌跡之前")
 
-        # 而且對話軌跡不能被系統性地擠掉。原本它被扣兩次分（呼叫端已經乘過
-        # 0.65 的折扣，尺度表又用未折扣的錨點再壓一次權重），滿分命中只得
-        # 0.2979，低於每一個剛過門檻的卡片與 wiki——知識層一填滿 limit 就被
-        # 整段截掉，共享對話記憶等於從 /v1/recall 消失。
+        # 對話軌跡仍然在封包裡——不是被系統性地丟掉。RRF 之下它就是另一條腿，
+        # 照名次貢獻，不再被雙重折扣（呼叫端 0.65 折扣 + 尺度表未折扣錨點）
+        # 壓到門檻之下、一填滿 limit 就整段消失。
         marginal = packet_for(0.56)
-        self.assertLess(marginal.index("對話軌跡"), marginal.index("卡片"),
-                        "滿分命中的對話軌跡該排在勉強過門檻的卡片之前"
-                        "——排不到前面，知識層一填滿 limit 它就被整段截掉")
+        self.assertIn("對話軌跡", marginal,
+                      "對話層被整段擠出封包")
+
+        # scale mixing 結構上不可能：關鍵字尺度的分數（6~20）跟餘弦尺度的
+        # 分數（0~1）在 RRF 裡都只是「腿內第 N 名」，不會因為原始數字大就碾壓。
+        import xkb_score
+        mixed = xkb_score.rank([
+            {"title": "關鍵字命中的書籤", "score": 15.0, "score_scale": "card_keyword"},
+            {"title": "餘弦命中的卡片", "score": 0.62, "score_scale": "card_semantic"},
+        ])
+        self.assertLess(abs(mixed[0]["unified_score"] - mixed[1]["unified_score"]),
+                        0.001,
+                        "15 分的關鍵字書籤把 0.62 的餘弦卡片碾壓了——scale mixing 回來了")
 
     def test_each_producer_declares_a_scale_xkb_score_knows(self) -> None:
         """算出分數的地方要標對尺度，而且是 xkb_score 認得的那些。

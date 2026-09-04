@@ -72,27 +72,34 @@ DEFAULT_ANCHORS = {
     "conversation": 0.72,
 }
 
-# 來源權威度：消化過的結論 > 原始素材 > 補充提醒
+# 來源權威度：消化過的結論 > 原始素材 > 補充提醒。
+# RRF 之下這是 RRF 貢獻的乘數，不是正規化分數的乘數——某一層改了計分方式
+# 不需要重調這裡，因為那一層只貢獻一個名次。壓縮在 0.5~1.0：權威度是
+# 平手時的傾向，不該讓 wiki 第 5 名壓過卡片第 1 名。
 DEFAULT_WEIGHTS = {
+    # 權威度是**平手時的傾向**，不是跨好幾個名次的碾壓。K=60 之下，相鄰名次
+    # 的 RRF 貢獻很接近，所以權重必須擠在一個窄帶裡：wiki 第 2 名壓過卡片
+    # 第 1 名可以，wiki 第 7 名壓過卡片第 1 名不行。實測 0.96 對 1.0 的差
+    # 大約值「一個名次」。
     "wiki": 1.0,
     "memory": 1.0,
     "wiki_semantic": 1.0,
     "memory_semantic": 1.0,
-    "card": 0.85,
-    "bookmark": 0.85,
-    # 尺度換了，來源權威度沒換：還是原始素材。
-    "card_semantic": 0.85,
-    "card_keyword": 0.85,
     "wiki_keyword": 1.0,
-    # 驗不出來不代表不相關，所以不是零；但它不該壓過任何驗證過的東西。
-    "unverified": 0.6,
-    "contrarian": 0.7,
-    "action": 0.6,
-    # 「關鍵字證據較弱」這個判斷已經由 KEYWORD_EVIDENCE_DISCOUNT 表達過了，
-    # 這裡不要再扣一次。權重只講來源權威度：對話是現場的紀錄，比消化過的
-    # wiki 低，與原始卡片相當。
-    "conversation": 0.85,
+    "card": 0.96,
+    "bookmark": 0.96,
+    "card_semantic": 0.96,
+    "card_keyword": 0.96,
+    "conversation": 0.93,
+    "contrarian": 0.90,
+    "action": 0.87,
+    # 驗不出來（網址、semantic: id、索引讀不到）：不是零（不代表不相關），
+    # 但穩定墊在所有驗證過的東西之下。
+    "unverified": 0.80,
 }
+
+# RRF 常數。60 是慣例值——讓相鄰名次的貢獻接近，融合才穩。
+K_RRF = 60
 
 FALLBACK_ANCHOR = 0.5
 FALLBACK_WEIGHT = 0.5
@@ -133,25 +140,47 @@ def unified(raw_score: float, source_type: str) -> float:
     return round(relevance(raw_score, source_type) * weight_for(source_type), 4)
 
 
-def rank(results: list[dict]) -> list[dict]:
-    """就地補上 relevance / unified_score，並依 unified_score 由高到低排序。
+def _leg_of(item: dict) -> str:
+    """這筆結果是哪一條召回腿產生的。
 
-    原始 score 保留不動：各層的門檻是照自己的尺度調的，改它會牽動一堆判斷。
+    score_scale 是「分數怎麼算的」，由算出它的地方標上；同一個 score_scale
+    的兩筆一定來自同一條腿，可以照各自的原始分數排出腿內名次。沒標的退回
+    source_type。
     """
+    return str(item.get("score_scale") or item.get("source_type", "") or "?")
+
+
+def rank(results: list[dict]) -> list[dict]:
+    """用 reciprocal rank fusion 融合多條召回腿，就地補上 unified_score 並排序。
+
+    舊版把每層的原始分數用手調錨點壓到 0~1 再乘權重——那個設計會因為調一個
+    錨點就讓某層靜默壓過另一層（這個 session 為此繞了六輪）。RRF 融合的是
+    **名次**，所以 BM25 的無上限分數跟餘弦的 0~1 從來不需要被弄成可比。
+
+    每筆結果的 unified_score = Σ（該腿權重 / (K + 腿內名次)），對它出現過的
+    每一條腿加總。目前每筆只在一條腿裡，所以是單項；未來加真 BM25 腿、
+    同一張卡被 BM25 和向量都撈到時，兩項會相加。
+    """
+    legs: dict[str, list[dict]] = {}
     for item in results:
-        # score_scale 是「這個數字是哪一套尺度算出來的」，由算出它的地方
-        # 標上；source_type 是「這筆東西是什麼」，會回給 API 用戶。兩者
-        # 常常不同：wiki 的語意召回 source_type 是 wiki、尺度卻是餘弦，
-        # 而 wiki 的錨點是照關鍵字尺度（0.40–3.65）量的。用錯錨點就等於
-        # 沒有對齊。沒標的沿用舊行為。
-        source_type = str(item.get("score_scale") or item.get("source_type", ""))
-        raw = float(item.get("score") or 0.0)
-        item["relevance"] = round(relevance(raw, source_type), 4)
-        # 驗不出相似度的項目由 xkb_relevance 標成 score_scale="unverified"，
-        # 排序就由上面那張表決定——不再靠改寫分數，也就不會因為某個門檻的
-        # 環境變數改了而翻面。這句話以前寫的是「已經降到門檻之下」，
-        # 而那在整批驗不出來的路徑上並不成立。
-        item["unified_score"] = unified(raw, source_type)
+        legs.setdefault(_leg_of(item), []).append(item)
+
+    fused: dict[int, float] = {}
+    for leg, group in legs.items():
+        group.sort(key=lambda r: float(r.get("score") or 0.0), reverse=True)
+        w = weight_for(leg)
+        for i, item in enumerate(group, 1):
+            fused[id(item)] = fused.get(id(item), 0.0) + w / (K_RRF + i)
+            item.setdefault("leg_rank", i)
+            # 這筆是被哪些腿撈到的。目前每筆只在一條腿裡；加了真 BM25 腿之後，
+            # 同一張卡被 BM25 和向量都撈到就會是 ["card_keyword", "card_semantic"]。
+            # 這 session 的除錯有這個欄位會快很多。
+            item.setdefault("matched_by", []).append(leg)
+            # relevance 仍照舊算，給顯示層當「這一層裡有多相關」的參考；排序不用它。
+            item["relevance"] = round(relevance(float(item.get("score") or 0.0), leg), 4)
+
+    for item in results:
+        item["unified_score"] = round(fused.get(id(item), 0.0), 6)
     return sorted(results, key=lambda r: r.get("unified_score", 0.0), reverse=True)
 
 
