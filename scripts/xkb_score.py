@@ -187,9 +187,18 @@ def rank(results: list[dict]) -> list[dict]:
                  or r.get("source_url") or r.get("url"))
         if not ident:
             return id(r)
+        ident = str(ident).split("#", 1)[0]
         st = str(r.get("source_type") or "")
-        if st in ("card", "bookmark") or str(ident).startswith(("cards/", "memory/cards/")):
+        # wiki／memory 段落：身分是 (檔, 段落標題)，跟哪條腿撈到無關。語意腿
+        # （wiki_semantic）和 BM25 腿（wiki）撈到同一段要合併成一筆、兩條腿的
+        # RRF 都算——不要各佔一格。
+        if ident.startswith(("wiki/", "memory/")) and not ident.startswith("memory/cards/"):
+            return ("wiki", ident, r.get("section") or "")
+        # 卡片 / 書籤：一個檔就是一張卡，section 只是標題不進 key——同一張卡被
+        # 語意腿和 BM25 腿撈到要能合併。
+        if st in ("card", "bookmark") or ident.startswith(("cards/", "memory/cards/")):
             return ("card", ident)
+        # 其餘（反例、動作…）：source_file 底下可能多段，標題才是身分。
         return (st or "sec", ident, r.get("section") or "")
 
     # 按路徑去重：一張卡被 BM25 和向量都撈到（最強訊號）只留一筆，但兩條腿
@@ -219,6 +228,7 @@ def rank(results: list[dict]) -> list[dict]:
             if leg not in best or score > best[leg]:
                 best[leg] = score
         surv["_legs"] = list(best.items())
+        surv["_has_semantic"] = any(str(l).endswith("_semantic") for l in best)
         for leg, score in best.items():
             legs.setdefault(leg, []).append((score, surv))
 
@@ -226,12 +236,12 @@ def rank(results: list[dict]) -> list[dict]:
         # 有分數的排名次；<=0 或缺分的沉到這條腿最後。
         pairs.sort(key=lambda ps: (ps[0] > 0.0, ps[0]), reverse=True)
         w = weight_for(leg)
-        # BM25 命中、以及「驗不出來」的項目：兩者都沒經過餘弦比對，用相關度
-        # 地板把它們打到 -1.0 基底層，是拿沒發生過的比較當證據——broken index
-        # 會因此長得像空知識庫（本專案記錄在案的失敗模式）。給名次代理分數，
-        # 不上地板懲罰；0.80 的腿權重已經讓 unverified 排在真命中之後。
-        is_bm25 = leg.endswith("_bm25")
-        floor_exempt = is_bm25 or leg == "unverified"
+        # 相關度地板只管語意腿。餘弦有校準過的絕對門檻（~0.55），小到某個值
+        # 就是「其實沒關係」。BM25／關鍵字／memory／conversation 命中要嘛是
+        # 字面命中、要嘛已過各自上游門檻，沒有這種問題——對它們套地板等於
+        # 拿沒發生過的比較把整條腿打到 -1.0，broken index 會因此長得像空知識庫
+        # （本專案記錄在案）。thin wiki leg 那個問題出在 wiki_semantic，仍受地板。
+        is_semantic = leg.endswith("_semantic")
         for i, (score, surv) in enumerate(pairs, 1):
             if score <= 0.0:
                 surv.setdefault("relevance", 0.0)
@@ -239,14 +249,16 @@ def rank(results: list[dict]) -> list[dict]:
             surv["matched_by"].append(leg)
             surv["leg_rank"] = min(surv.get("leg_rank", i), i)
             surv["_rrf"] += w / (K_RRF + i)
-            if floor_exempt:
-                surv["_above_floor"] = True
-                r = round(1.0 / i, 4)
-            else:
+            if is_semantic:
                 rel = relevance(score, leg)
                 if rel >= RELEVANCE_FLOOR:
                     surv["_above_floor"] = True
                 r = round(rel, 4)
+            else:
+                surv["_above_floor"] = True
+                # 名次代理只在「這一筆完全沒有語意腿」時才拿來當顯示 relevance——
+                # 不要用 rank-1 => 1.0 蓋掉同一張卡真的餘弦強度。
+                r = round(1.0 / i, 4) if not surv.get("_has_semantic") else -1.0
             if r > surv.get("relevance", -1.0):
                 surv["relevance"] = r
 

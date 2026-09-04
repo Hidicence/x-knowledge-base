@@ -15,8 +15,8 @@ import xkb_score as xs
 
 class LooksSpecific(unittest.TestCase):
     def test_identifier_shaped_queries(self):
-        for q in ["Open-Magiviz", "2045420631295242340", "gpt-5.6-instruct",
-                  "ERR_CONNECTION_RESET", "infiniflow-ragflow", "v2.3.1", "nash_su"]:
+        for q in ["2045420631295242340", "gpt-5.6-instruct", "ERR_CONNECTION_RESET",
+                  "v2.3.1", "nash_su", "zvec-ai/zvec-grep", "sha256"]:
             self.assertTrue(rr._looks_specific(q), q)
 
     def test_prose_is_not_specific(self):
@@ -29,11 +29,13 @@ class LooksSpecific(unittest.TestCase):
         for q in ["3 個重點", "2024 年回顧", "第 5 頁", "整理成 10 條"]:
             self.assertFalse(rr._looks_specific(q), q)
 
-    def test_known_false_positive_hyphenated_english_is_tolerated(self):
-        # trade-off / end-to-end 跟 infiniflow-ragflow 在字面上無法區分；既有
-        # 測試把後者釘成 specific，所以這個偽陽是刻意接受的（只多跑一次 BM25
-        # 查詢、可能升 side_hint，低傷害）。這條測試把它記錄下來。
-        self.assertTrue(rr._looks_specific("trade-off"))
+    def test_hyphenated_english_is_not_specific(self):
+        # 純連字號英文詞不含數字／底線／斜線，一律不算 specific——precision
+        # 優先。代價：沒帶 URL 的 repo slug（Open-Magiviz、infiniflow-ragflow）
+        # 也不會觸發 BM25 腿，但它們跟 open-source 在字面上無法區分。
+        for q in ["trade-off", "end-to-end", "open-source", "real-time",
+                  "machine-learning", "Open-Magiviz", "infiniflow-ragflow"]:
+            self.assertFalse(rr._looks_specific(q), q)
 
 
 class BM25SurvivesTheRelevanceFilter(unittest.TestCase):
@@ -86,15 +88,24 @@ class RankDedupsAndAccumulatesLegs(unittest.TestCase):
         ])
         self.assertEqual(len(out), 1)
 
-    def test_wiki_cross_leg_is_not_forced_to_merge(self):
-        # 卡片跨腿合併靠乾淨的路徑身分；wiki 兩條腿對同一段的敘述（標題 vs
-        # 段落 heading）不保證字面一致，所以不強求合併——各自成列即可，
-        # 分層排序與去重會處理重複。這條把現況釘住，避免又被誤當成 bug。
+    def test_wiki_same_section_two_legs_merges(self):
+        # F6：語意腿（wiki_semantic）和 BM25 腿（wiki）撈到同一頁同一段
+        # -> 一筆，兩條腿的 RRF 都算。source_type 字串不同不該擋住合併。
         out = xs.rank([
             {"source_type": "wiki_semantic", "source_file": "wiki/topics/x.md",
              "section": "四層架構", "score": 0.8, "score_scale": "wiki_semantic"},
             {"source_type": "wiki", "source_file": "wiki/topics/x.md",
-             "section": "四層架構分工", "score": 9.0, "score_scale": "wiki_bm25"},
+             "section": "四層架構", "score": 9.0, "score_scale": "wiki_bm25"},
+        ])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(set(out[0]["matched_by"]), {"wiki_semantic", "wiki_bm25"})
+
+    def test_wiki_different_sections_stay_separate(self):
+        out = xs.rank([
+            {"source_type": "wiki_semantic", "source_file": "wiki/topics/x.md",
+             "section": "四層架構", "score": 0.8, "score_scale": "wiki_semantic"},
+            {"source_type": "wiki", "source_file": "wiki/topics/x.md",
+             "section": "退場機制", "score": 9.0, "score_scale": "wiki_bm25"},
         ])
         self.assertEqual(len(out), 2)
 

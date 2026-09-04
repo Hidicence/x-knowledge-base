@@ -324,20 +324,30 @@ def main() -> int:
     # 沒有卡片變動，排程就永遠不重建它，BM25 腿靜默熄燈。
     # 一支腳本裡建一次，就不必在 6 支排程腳本裡各加一行、各自漂移。
     if not args.dry_run:
+        fts_db = xkb_paths.BOOKMARKS_DIR / "fts_index.db"
         try:
-            import build_fts_index
-            build_fts_index.build(index_path)
-            if not (xkb_paths.BOOKMARKS_DIR / "fts_index.db").exists():
-                raise RuntimeError("build_fts_index 跑完但 fts_index.db 不存在")
-        except Exception as e:  # noqa: BLE001
-            # cron 把 stderr 丟掉，光印警告等於靜默。走 xkb_failures，健檢
-            # （純 Python、不經 LLM）才看得到 BM25 索引連續建不起來。
-            print(f"⚠️  BM25 索引沒建成（向量索引不受影響）：{e}", file=sys.stderr)
+            fresh = (fts_db.exists()
+                     and fts_db.stat().st_mtime >= index_path.stat().st_mtime)
+        except OSError:
+            fresh = False
+        # build_fts_index 沒有 incremental：整包重讀、重斷詞、重建 FTS5、optimize、
+        # 原子換檔。卡片沒動就不必每個 tick 都做一遍。mtime 比不到獨立改動的
+        # wiki／memory 檔——那些靠每日全量管線補。
+        if not fresh:
             try:
-                import xkb_failures
-                xkb_failures.note("bm25 index build", e)
-            except Exception:  # noqa: BLE001
-                pass
+                import build_fts_index
+                build_fts_index.build(index_path)
+                if not fts_db.exists():
+                    raise RuntimeError("build_fts_index 跑完但 fts_index.db 不存在")
+            except Exception as e:  # noqa: BLE001
+                # cron 把 stderr 丟掉，光印警告等於靜默。走 xkb_failures，健檢
+                # （純 Python、不經 LLM）才看得到 BM25 索引連續建不起來。
+                print(f"⚠️  BM25 索引沒建成（向量索引不受影響）：{e}", file=sys.stderr)
+                try:
+                    import xkb_failures
+                    xkb_failures.note("bm25 index build", e)
+                except Exception:  # noqa: BLE001
+                    pass
     items = raw.get("items", raw) if isinstance(raw, dict) else raw
     print(f"📚 Loaded {len(items)} cards from {index_path}")
 

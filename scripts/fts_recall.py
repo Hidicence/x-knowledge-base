@@ -31,7 +31,9 @@ def _db() -> sqlite3.Connection | None:
         return _conn
     if not FTS_DB.exists():
         return None
-    _conn = sqlite3.connect(f"file:{FTS_DB}?mode=ro", uri=True, check_same_thread=False)
+    # Path.as_uri()：空白、#、Windows 反斜線與磁碟機冒號都要正確轉義，
+    # 不然本機鏡像上 file:C:\... 是壞 URI，BM25 腿會靜默回空。
+    _conn = sqlite3.connect(f"{FTS_DB.as_uri()}?mode=ro", uri=True, check_same_thread=False)
     return _conn
 
 

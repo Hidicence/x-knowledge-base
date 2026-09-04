@@ -234,11 +234,14 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
 # 一個「看起來是在找特定東西」的 token：含數字（tweet ID、錯誤碼、gpt-5.6）、
 # 含底線（ERR_CONNECTION_RESET、nash_su）、或帶連字號/點的 ASCII slug（repo 名、模型名）。純英文詞不算。
 _SPECIFIC_TOKEN = re.compile(
-    r"\d{5,}"                                   # 長數字串（tweet ID、timestamp）——排除年份、頁碼
-    r"|[A-Za-z0-9]*[0-9][A-Za-z0-9]*[._-][A-Za-z0-9._-]*"  # 數字 + . _ -（gpt-5.6、v2.3）
-    r"|[A-Za-z0-9]*_[A-Za-z0-9_]*"              # 含底線（ERR_CONNECTION_RESET、nash_su）
-    r"|[A-Za-z][A-Za-z0-9]*[.-][A-Za-z0-9][A-Za-z0-9.-]*"  # 連字號/點 slug（repo、模型名）
-                                               # ——trade-off 會偽陽，代價換 infiniflow-ragflow 這種真陽
+    r"\d{5,}"                                  # 長數字串（tweet ID、timestamp）——排除年份
+    r"|_"                                      # 底線＝識別碼慣例（ERR_CONNECTION_RESET、nash_su）
+    r"|[A-Za-z0-9]/[A-Za-z0-9]"                # 斜線分段（owner/repo、api/v2）
+    r"|\d[A-Za-z0-9]*[.\-][A-Za-z0-9]"         # 數字後接 . - 分隔（gpt-5.6、v2.3、2024-01）
+    r"|[A-Za-z0-9]*[.\-]\d"                    # . - 分隔後接數字（rc-3、v.2）
+    r"|[A-Za-z][A-Za-z0-9]*\d[A-Za-z0-9]*\d"   # 字母開頭且含 2+ 數字（sha256、h264）
+    # 純連字號英文詞（open-source、end-to-end、trade-off）不含以上任何訊號，
+    # 一律不算——寧可漏掉沒帶 URL 的 repo slug，也不要拿概念查詢去跑 BM25。
 )
 
 
