@@ -197,12 +197,10 @@ def filter_irrelevant(
 
     kept: list[dict[str, Any]] = []
     for item in items:
-        if (item.get("match_kind") == "literal"
-                or str(item.get("score_scale") or "").endswith("_bm25")):
-            # 字面 / BM25 命中：相關性已經由「索引裡真的有這些詞」建立。餘弦對
-            # 識別碼算不出意義，用 0.55 門檻砍會把這條腿存在的理由整個抵銷掉。
-            # score_scale 也不改寫——下游要靠 *_bm25 判斷「這是字面命中，
-            # 直接給卡片內容」。
+        if str(item.get("score_scale") or "").endswith("_bm25"):
+            # BM25 命中：相關性已經由「索引裡真的有這些詞」建立。餘弦對識別碼
+            # 算不出意義，用 0.55 門檻砍會把這條腿存在的理由整個抵銷掉。
+            # score_scale 不改寫——下游要靠 *_bm25 判斷「直接給卡片內容」。
             kept.append(item)
             continue
         similarity = scores.get(keys[id(item)])

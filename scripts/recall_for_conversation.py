@@ -815,6 +815,7 @@ def search(
     force_semantic: bool = False,
     force_gbrain: bool = False,
     fts_only: bool = False,
+    with_bm25: bool = True,
 ) -> dict:
     """兩層召回：先查合成過的 wiki 知識，再查卡片細節。
 
@@ -867,11 +868,11 @@ def search(
     # BM25 腿：任何語意後端跑完後都併一次（fts_only 模式上面已經跑過，跳過）。
     # 這條腿跟語意腿對等——語意查詢語意腿扛，字面查詢 BM25 扛，xkb_score.rank()
     # 用 RRF 融合。BM25 結果帶 score_scale=card_bm25 / wiki_bm25，自成一條腿。
-    if not fts_only:
+    if not fts_only and with_bm25:
         # 不在這裡去重。同一張卡被語意腿和 BM25 都撈到是最強訊號——兩筆都要
-        # 進 xkb_score.rank()，它按 _key 合併、把兩條腿的 RRF 貢獻都算進去
-        # （rank() 的 docstring 講的就是這件事）。在這裡先按路徑丟掉 BM25 的
-        # 重複，等於把那個雙腿加分永遠關掉。
+        # 進 xkb_score.rank()，它按 _key 合併、把兩條腿的 RRF 貢獻都算進去。
+        # with_bm25 由呼叫端按查詢形狀決定：概念查詢不跑 BM25（n-gram 會撞到
+        # 只共用一個 2-gram 的無關卡片，而下游的餘弦門檻對 *_bm25 是放行的）。
         results = results + _fts_leg(query, limit)
 
     return {

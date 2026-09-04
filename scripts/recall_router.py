@@ -213,8 +213,15 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
         # 換算到 0–1，不然 rank() 會把一張 15 分的卡片算成壓過所有語意結果。
         # BM25 結果自帶 score_scale=card_bm25/wiki_bm25，分數是 -bm25()，不要碰。
         score = _as_unit_scale(score)
+    scale = item.get("score_scale") or ""
+    if scale == "wiki_bm25":
+        # BM25 的 wiki／memory 段落命中不是書籤。標成 bookmark 會讓
+        # xkb_score._key 用「一個檔一筆」的卡片邏輯，把同一頁的不同段併掉。
+        src_type = "wiki"
+    else:
+        src_type = "card" if is_card else "bookmark"
     return {
-        "source_type": "card" if is_card else "bookmark",
+        "source_type": src_type,
         "source_file": item.get("relative_path") or item.get("path", ""),
         "section": xkb_provenance.strip_markers(item.get("title", "")),
         "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
@@ -229,7 +236,6 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
 _SPECIFIC_TOKEN = re.compile(
     r"\d{5,}"                                   # 長數字串（tweet ID、timestamp）——排除年份、頁碼
     r"|[A-Za-z0-9]*[0-9][A-Za-z0-9]*[._-][A-Za-z0-9._-]*"  # 數字 + . _ -（gpt-5.6、v2.3）
-    r"|[A-Za-z]+[0-9][A-Za-z0-9]*"              # 字母緊接數字（gpt5、sha256）
     r"|[A-Za-z0-9]*_[A-Za-z0-9_]*"              # 含底線（ERR_CONNECTION_RESET、nash_su）
     r"|[A-Za-z][A-Za-z0-9]*[.-][A-Za-z0-9][A-Za-z0-9.-]*"  # 連字號/點 slug（repo、模型名）
                                                # ——trade-off 會偽陽，代價換 infiniflow-ragflow 這種真陽
@@ -279,9 +285,10 @@ def run_associative_recall(query: str, limit: int = 2, *,
             found = _associative_search(query, limit=limit, fts_only=True)
         else:
             bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
+            _bm25_ok = _looks_specific(query)  # 概念查詢不掛 BM25 腿（見 search()）
             try:
                 found = bounded.submit(
-                    lambda: _associative_search(query, limit=limit)
+                    lambda: _associative_search(query, limit=limit, with_bm25=_bm25_ok)
                 ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
             finally:
                 bounded.shutdown(wait=False)

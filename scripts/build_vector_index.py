@@ -327,8 +327,17 @@ def main() -> int:
         try:
             import build_fts_index
             build_fts_index.build(index_path)
+            if not (xkb_paths.BOOKMARKS_DIR / "fts_index.db").exists():
+                raise RuntimeError("build_fts_index 跑完但 fts_index.db 不存在")
         except Exception as e:  # noqa: BLE001
+            # cron 把 stderr 丟掉，光印警告等於靜默。走 xkb_failures，健檢
+            # （純 Python、不經 LLM）才看得到 BM25 索引連續建不起來。
             print(f"⚠️  BM25 索引沒建成（向量索引不受影響）：{e}", file=sys.stderr)
+            try:
+                import xkb_failures
+                xkb_failures.note("bm25 index build", e)
+            except Exception:  # noqa: BLE001
+                pass
     items = raw.get("items", raw) if isinstance(raw, dict) else raw
     print(f"📚 Loaded {len(items)} cards from {index_path}")
 

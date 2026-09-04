@@ -226,7 +226,12 @@ def rank(results: list[dict]) -> list[dict]:
         # 有分數的排名次；<=0 或缺分的沉到這條腿最後。
         pairs.sort(key=lambda ps: (ps[0] > 0.0, ps[0]), reverse=True)
         w = weight_for(leg)
+        # BM25 命中、以及「驗不出來」的項目：兩者都沒經過餘弦比對，用相關度
+        # 地板把它們打到 -1.0 基底層，是拿沒發生過的比較當證據——broken index
+        # 會因此長得像空知識庫（本專案記錄在案的失敗模式）。給名次代理分數，
+        # 不上地板懲罰；0.80 的腿權重已經讓 unverified 排在真命中之後。
         is_bm25 = leg.endswith("_bm25")
+        floor_exempt = is_bm25 or leg == "unverified"
         for i, (score, surv) in enumerate(pairs, 1):
             if score <= 0.0:
                 surv.setdefault("relevance", 0.0)
@@ -234,9 +239,7 @@ def rank(results: list[dict]) -> list[dict]:
             surv["matched_by"].append(leg)
             surv["leg_rank"] = min(surv.get("leg_rank", i), i)
             surv["_rrf"] += w / (K_RRF + i)
-            if is_bm25:
-                # BM25 命中本身就是相關度證據；這條腿回夠多候選、名次有意義，
-                # 不需要相關度地板。relevance 顯示欄位用名次代理。
+            if floor_exempt:
                 surv["_above_floor"] = True
                 r = round(1.0 / i, 4)
             else:

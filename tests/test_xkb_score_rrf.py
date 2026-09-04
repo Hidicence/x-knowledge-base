@@ -122,14 +122,10 @@ class RankKeyAndLegDedup(unittest.TestCase):
     def test_same_key_same_leg_adds_the_rrf_term_once(self) -> None:
         # 合併後 _legs 對同一條腿有兩筆（同頁 wiki 兩段被舊 _key 併掉、或
         # search() 不再去重後的重複列）。w/(K+i) 不能加兩次、matched_by 不能重複。
-        one = xs.rank([{"source_file": "wiki/topics/x.md", "section": "a",
-                        "score": 0.8, "score_scale": "wiki_semantic"}])
-        dup = xs.rank([
-            {"source_file": "wiki/topics/x.md", "section": "a",
-             "score": 0.8, "score_scale": "wiki_semantic"},
-            {"source_file": "wiki/topics/x.md", "section": "a",
-             "score": 0.5, "score_scale": "wiki_semantic"},
-        ])
+        row = lambda sc: {"source_type": "wiki", "source_file": "wiki/topics/x.md",
+                          "section": "a", "score": sc, "score_scale": "wiki_semantic"}
+        one = xs.rank([row(0.8)])
+        dup = xs.rank([row(0.8), row(0.5)])
         self.assertEqual(len(dup), 1)
         self.assertEqual(dup[0]["matched_by"], ["wiki_semantic"])
         self.assertAlmostEqual(dup[0]["unified_score"], one[0]["unified_score"], places=6)
