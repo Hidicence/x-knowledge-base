@@ -326,8 +326,9 @@ def main() -> int:
     if not args.dry_run:
         fts_db = xkb_paths.BOOKMARKS_DIR / "fts_index.db"
         try:
+            # 嚴格大於：同一秒重生的 index（1 秒 mtime 解析度）要能觸發重建。
             fresh = (fts_db.exists()
-                     and fts_db.stat().st_mtime >= index_path.stat().st_mtime)
+                     and fts_db.stat().st_mtime > index_path.stat().st_mtime)
         except OSError:
             fresh = False
         # build_fts_index 沒有 incremental：整包重讀、重斷詞、重建 FTS5、optimize、

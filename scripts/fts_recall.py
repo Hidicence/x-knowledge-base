@@ -23,17 +23,31 @@ import xkb_text
 FTS_DB = xkb_paths.BOOKMARKS_DIR / "fts_index.db"
 
 _conn: sqlite3.Connection | None = None
+_conn_key: tuple[float, int] | None = None  # 快取的連線指向的 db 檔 (mtime, size)
 
 
 def _db() -> sqlite3.Connection | None:
-    global _conn
-    if _conn is not None:
-        return _conn
-    if not FTS_DB.exists():
+    global _conn, _conn_key
+    try:
+        st = FTS_DB.stat()
+    except OSError:
         return None
+    key = (st.st_mtime, st.st_size)
+    if _conn is not None and _conn_key == key:
+        return _conn
+    # build_fts_index 結尾是 tmp.replace(FTS_DB)：舊 inode 還在、只是被 unlink。
+    # 長命行程（recall server）若不重連，會一直查舊索引——本專案記錄在案的
+    # 靜默過期失敗模式。檔案的 (mtime, size) 一變就重連。
+    if _conn is not None:
+        try:
+            _conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _conn = None
     # Path.as_uri()：空白、#、Windows 反斜線與磁碟機冒號都要正確轉義，
     # 不然本機鏡像上 file:C:\... 是壞 URI，BM25 腿會靜默回空。
     _conn = sqlite3.connect(f"{FTS_DB.as_uri()}?mode=ro", uri=True, check_same_thread=False)
+    _conn_key = key
     return _conn
 
 

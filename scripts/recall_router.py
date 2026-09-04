@@ -237,11 +237,14 @@ _SPECIFIC_TOKEN = re.compile(
     r"\d{5,}"                                  # 長數字串（tweet ID、timestamp）——排除年份
     r"|_"                                      # 底線＝識別碼慣例（ERR_CONNECTION_RESET、nash_su）
     r"|[A-Za-z0-9]/[A-Za-z0-9]"                # 斜線分段（owner/repo、api/v2）
-    r"|\d[A-Za-z0-9]*[.\-][A-Za-z0-9]"         # 數字後接 . - 分隔（gpt-5.6、v2.3、2024-01）
-    r"|[A-Za-z0-9]*[.\-]\d"                    # . - 分隔後接數字（rc-3、v.2）
-    r"|[A-Za-z][A-Za-z0-9]*\d[A-Za-z0-9]*\d"   # 字母開頭且含 2+ 數字（sha256、h264）
-    # 純連字號英文詞（open-source、end-to-end、trade-off）不含以上任何訊號，
-    # 一律不算——寧可漏掉沒帶 URL 的 repo slug，也不要拿概念查詢去跑 BM25。
+    r"|[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]"       # 字母開頭的連字號 token（open-source、
+                                              #   infiniflow-ragflow、Open-Magiviz、gpt-5）。
+                                              #   recall 優先：接受 open-source/trade-off 偽陽，
+                                              #   換沒帶 URL 的 repo slug 也能觸發 BM25。
+    r"|[A-Za-z][A-Za-z0-9]*[.][A-Za-z0-9]*\d"  # 字母 + 點 + 數字（v2.3.1；node.js 無數字不算）
+    r"|[A-Za-z][A-Za-z0-9]*\d[A-Za-z0-9]*\d"   # 字母開頭且含 2+ 數字（sha256、h264；mp4 不算）
+    # 純數字帶分隔（2-3、1.5、2024-01-15）不含字母訊號，一律不算——不然
+    # 「這方法有 2-3 個步驟」會被當成識別碼查詢、可能強制 side_hint。
 )
 
 

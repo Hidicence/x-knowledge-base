@@ -16,7 +16,8 @@ import xkb_score as xs
 class LooksSpecific(unittest.TestCase):
     def test_identifier_shaped_queries(self):
         for q in ["2045420631295242340", "gpt-5.6-instruct", "ERR_CONNECTION_RESET",
-                  "v2.3.1", "nash_su", "zvec-ai/zvec-grep", "sha256"]:
+                  "v2.3.1", "nash_su", "zvec-ai/zvec-grep", "sha256",
+                  "Open-Magiviz", "infiniflow-ragflow"]:
             self.assertTrue(rr._looks_specific(q), q)
 
     def test_prose_is_not_specific(self):
@@ -29,12 +30,20 @@ class LooksSpecific(unittest.TestCase):
         for q in ["3 個重點", "2024 年回顧", "第 5 頁", "整理成 10 條"]:
             self.assertFalse(rr._looks_specific(q), q)
 
-    def test_hyphenated_english_is_not_specific(self):
-        # 純連字號英文詞不含數字／底線／斜線，一律不算 specific——precision
-        # 優先。代價：沒帶 URL 的 repo slug（Open-Magiviz、infiniflow-ragflow）
-        # 也不會觸發 BM25 腿，但它們跟 open-source 在字面上無法區分。
-        for q in ["trade-off", "end-to-end", "open-source", "real-time",
-                  "machine-learning", "Open-Magiviz", "infiniflow-ragflow"]:
+    def test_hyphenated_tokens_are_specific_recall_priority(self):
+        # Pan 的取捨：任何字母開頭帶連字號的 token 都算 specific，好讓沒帶
+        # URL 的 repo slug（infiniflow-ragflow、Open-Magiviz）觸發 BM25。
+        # 代價是 open-source / trade-off 這種英文複合詞也會跑一次 BM25——
+        # recall 優先於 precision。
+        for q in ["infiniflow-ragflow", "Open-Magiviz", "open-source",
+                  "trade-off", "end-to-end"]:
+            self.assertTrue(rr._looks_specific(q), q)
+
+    def test_numeric_ranges_in_prose_are_not_specific(self):
+        # 純數字帶分隔沒有字母訊號 -> 不是識別碼查詢（回歸：round-17 的
+        # regex 會誤中 2-3 / 1.5，強制 side_hint）。
+        for q in ["2-3", "1.5", "2024-01-15", "這方法有 2-3 個步驟",
+                  "成本降了 1.5 倍", "mp4", "gpt4"]:
             self.assertFalse(rr._looks_specific(q), q)
 
 

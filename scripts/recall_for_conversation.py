@@ -815,7 +815,7 @@ def search(
     force_semantic: bool = False,
     force_gbrain: bool = False,
     fts_only: bool = False,
-    with_bm25: bool = True,
+    with_bm25: bool = False,  # 概念查詢會被 n-gram 撞到，呼叫端明確開
 ) -> dict:
     """兩層召回：先查合成過的 wiki 知識，再查卡片細節。
 
@@ -925,6 +925,7 @@ def main() -> int:
         no_semantic=args.no_semantic,
         force_semantic=args.semantic,
         force_gbrain=args.gbrain,
+        with_bm25=True,  # CLI：全部都秀出來
     )
     wiki_hits = found["wiki_hits"]
     results = found["results"]
