@@ -43,6 +43,28 @@ class RankFusesRanksNotScales(unittest.TestCase):
         ])
         self.assertEqual(out[0]["t"], "wiki")
 
+    def test_below_floor_hit_sorts_behind_every_above_floor_hit_any_leg_size(self) -> None:
+        # review：eff = i + 20 只把弱命中推到某條腿的前 ~17 名之後。一條腿有
+        # 25 筆時，第 18~25 的真命中還是會被弱命中壓過。分層排序不管腿多長都對。
+        cards = [{"t": f"c{n}", "score": 0.72 - n * 0.006, "score_scale": "card_semantic"}
+                 for n in range(25)]
+        weak_wiki = {"t": "weak", "score": 0.29, "score_scale": "wiki_semantic"}
+        out = xs.rank(cards + [weak_wiki])
+        self.assertEqual(out[-1]["t"], "weak",
+                         "下地板命中沒有排在所有上地板命中之後")
+
+    def test_leg_rank_and_unified_score_do_not_contradict(self) -> None:
+        # review finding 2：leg_rank 存 penalty 前的 i，unified 反映 i+20。
+        # 分層排序沒有動名次，兩者不該打架：同一條腿裡 leg_rank 小 => unified 大。
+        out = xs.rank([
+            {"t": "a", "score": 0.9, "score_scale": "card_semantic"},
+            {"t": "b", "score": 0.7, "score_scale": "card_semantic"},
+            {"t": "c", "score": 0.6, "score_scale": "card_semantic"},
+        ])
+        by_leg_rank = sorted(out, key=lambda r: r["leg_rank"])
+        by_unified = sorted(out, key=lambda r: r["unified_score"], reverse=True)
+        self.assertEqual([r["t"] for r in by_leg_rank], [r["t"] for r in by_unified])
+
     def test_authority_is_a_few_ranks_not_a_domination(self) -> None:
         # wiki 腿內第 3 名壓過卡片第 1 名可以；第 8 名不行。
         legs_wiki = [{"t": f"w{i}", "score": 0.8 - i * 0.02, "score_scale": "wiki_semantic"}

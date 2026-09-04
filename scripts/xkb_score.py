@@ -16,8 +16,9 @@ gbrain RRF 或餘弦、對話是折扣過的關鍵字比例、反例、可復用
 傾向，不是碾壓；K=60 是 RRF 慣例值。
 
 XKB 的 wiki 腿只有十幾個 topic，常常只回一個弱命中——純 RRF 會讓那個弱命中拿
-腿內第 1、壓過強卡片。所以低於相關度地板（RELEVANCE_FLOOR）的命中，有效名次
-往後推，排在所有上地板命中之後。
+腿內第 1、壓過強卡片。所以排序分兩層：先所有「在至少一條腿裡過了相關度地板
+（RELEVANCE_FLOOR）」的命中，再所有沒過的，各層照 unified_score。名次本身不動，
+分層保證弱命中排在所有上地板命中之後、不管別條腿回了幾筆。
 
 relevance() / unified()（舊的 raw/(raw+anchor)×權重）留著只給 relevance 這個
 顯示欄位用；排序不走它。anchor 與權重可用環境變數覆寫（XKB_SCORE_ANCHOR_WIKI）。
@@ -103,7 +104,6 @@ K_RRF = 60
 # 算明顯偏弱。偏弱的命中名次往後推，排在所有上地板命中之後——這樣「wiki 腿
 # 只回一個弱命中」不會因為腿內唯一就搶到第 1 名壓過強卡片（審查 finding 1）。
 RELEVANCE_FLOOR = 0.35
-_BELOW_FLOOR_RANK_PENALTY = 20
 
 FALLBACK_ANCHOR = 0.5
 FALLBACK_WEIGHT = 0.5
@@ -162,22 +162,26 @@ def rank(results: list[dict]) -> list[dict]:
     錨點就讓某層靜默壓過另一層（這個 session 為此繞了六輪）。RRF 融合的是
     **名次**，所以 BM25 的無上限分數跟餘弦的 0~1 從來不需要被弄成可比。
 
-    unified_score = Σ（該腿權重 / (K + 有效名次)），對它出現過的每一條腿加總
+    unified_score = Σ（該腿權重 / (K + 腿內名次)），對它出現過的每一條腿加總
     （目前每筆只在一條腿；加 BM25 腿後、同一張卡被 BM25 和向量都撈到會有兩項）。
-    有效名次 = 腿內名次，但低於相關度地板的命中往後推 20 名（見 RELEVANCE_FLOOR）。
 
-    idempotent：matched_by / leg_rank / relevance 每次呼叫都重建，不累加。
-    原始分數 <= 0 或缺分的項目不拿名次，穩定墊底。
+    排序分兩層：先所有「在至少一條腿裡過了相關度地板」的命中（照 unified_score），
+    再所有沒過的。XKB 的 wiki 腿只有十幾個 topic、常常只回一個弱命中——分層排序
+    保證那個弱命中排在**所有**上地板命中之後，不管別條腿回了幾筆。
+
+    idempotent：matched_by / leg_rank / relevance / unified_score 每次呼叫都重建。
+    原始分數 <= 0 或缺分的項目不拿名次，歸到下層、墊底。
     """
     for item in results:
         item["matched_by"] = []
+        item["_rrf"] = 0.0
+        item["_above_floor"] = False
         item.pop("leg_rank", None)
 
     legs: dict[str, list[dict]] = {}
     for item in results:
         legs.setdefault(_leg_of(item), []).append(item)
 
-    fused: dict[int, float] = {}
     for leg, group in legs.items():
         # 有分數的才排名次；<=0 或缺分的沉到這條腿的最後。
         group.sort(key=lambda r: (float(r.get("score") or 0.0) > 0.0,
@@ -189,16 +193,20 @@ def rank(results: list[dict]) -> list[dict]:
             item["relevance"] = round(rel, 4)
             item["matched_by"].append(leg)
             if raw <= 0.0:
-                continue  # 不拿名次；unified_score 留 0
+                continue  # 不拿名次；unified_score 留 0、歸下層
             item.setdefault("leg_rank", i)
-            # 偏弱的命中（低於腿內相關度地板）名次往後推，排在所有上地板
-            # 命中之後——「wiki 腿只回一個弱命中」不會因為腿內唯一就搶第 1。
-            eff = i if rel >= RELEVANCE_FLOOR else i + _BELOW_FLOOR_RANK_PENALTY
-            fused[id(item)] = fused.get(id(item), 0.0) + w / (K_RRF + eff)
+            item["_rrf"] += w / (K_RRF + i)
+            if rel >= RELEVANCE_FLOOR:
+                item["_above_floor"] = True
 
-    for item in results:
-        item["unified_score"] = round(fused.get(id(item), 0.0), 6)
-    return sorted(results, key=lambda r: r.get("unified_score", 0.0), reverse=True)
+    ranked = sorted(
+        results,
+        key=lambda r: (0 if r["_above_floor"] else 1, -r["_rrf"]),
+    )
+    for item in ranked:
+        item["unified_score"] = round(item.pop("_rrf"), 6)
+        item.pop("_above_floor")
+    return ranked
 
 
 if __name__ == "__main__":
