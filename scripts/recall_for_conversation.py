@@ -868,13 +868,11 @@ def search(
     # 這條腿跟語意腿對等——語意查詢語意腿扛，字面查詢 BM25 扛，xkb_score.rank()
     # 用 RRF 融合。BM25 結果帶 score_scale=card_bm25 / wiki_bm25，自成一條腿。
     if not fts_only:
-        bm25 = _fts_leg(query, limit)
-        if bm25:
-            seen = {(r.get("relative_path") or r.get("source_url") or r.get("title") or "")
-                    for r in results}
-            results = results + [r for r in bm25
-                                 if (r.get("relative_path") or r.get("source_url")
-                                     or r.get("title") or "") not in seen]
+        # 不在這裡去重。同一張卡被語意腿和 BM25 都撈到是最強訊號——兩筆都要
+        # 進 xkb_score.rank()，它按 _key 合併、把兩條腿的 RRF 貢獻都算進去
+        # （rank() 的 docstring 講的就是這件事）。在這裡先按路徑丟掉 BM25 的
+        # 重複，等於把那個雙腿加分永遠關掉。
+        results = results + _fts_leg(query, limit)
 
     return {
         "query": query,

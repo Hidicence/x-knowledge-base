@@ -227,9 +227,12 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
 # 一個「看起來是在找特定東西」的 token：含數字（tweet ID、錯誤碼、gpt-5.6）、
 # 含底線（ERR_CONNECTION_RESET、nash_su）、或帶連字號/點的 ASCII slug（repo 名、模型名）。純英文詞不算。
 _SPECIFIC_TOKEN = re.compile(
-    r"[A-Za-z0-9]*[0-9][A-Za-z0-9._-]*"
-    r"|[A-Za-z0-9]*_[A-Za-z0-9_]*"
-    r"|[A-Za-z][A-Za-z0-9]{2,}[.-][A-Za-z0-9.-]{2,}"  # 帶連字號/點的 ASCII slug
+    r"\d{5,}"                                   # 長數字串（tweet ID、timestamp）——排除年份、頁碼
+    r"|[A-Za-z0-9]*[0-9][A-Za-z0-9]*[._-][A-Za-z0-9._-]*"  # 數字 + . _ -（gpt-5.6、v2.3）
+    r"|[A-Za-z]+[0-9][A-Za-z0-9]*"              # 字母緊接數字（gpt5、sha256）
+    r"|[A-Za-z0-9]*_[A-Za-z0-9_]*"              # 含底線（ERR_CONNECTION_RESET、nash_su）
+    r"|[A-Za-z][A-Za-z0-9]*[.-][A-Za-z0-9][A-Za-z0-9.-]*"  # 連字號/點 slug（repo、模型名）
+                                               # ——trade-off 會偽陽，代價換 infiniflow-ragflow 這種真陽
 )
 
 

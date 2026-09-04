@@ -24,6 +24,17 @@ class LooksSpecific(unittest.TestCase):
                   "how to rank recall", "怎麼做碳盤查", "隨便聊聊"]:
             self.assertFalse(rr._looks_specific(q), q)
 
+    def test_bare_numbers_are_not_specific(self):
+        # 「3 個重點」「2024 年回顧」「第 5 頁」以前會因為單一數字被當成識別碼查詢。
+        for q in ["3 個重點", "2024 年回顧", "第 5 頁", "整理成 10 條"]:
+            self.assertFalse(rr._looks_specific(q), q)
+
+    def test_known_false_positive_hyphenated_english_is_tolerated(self):
+        # trade-off / end-to-end 跟 infiniflow-ragflow 在字面上無法區分；既有
+        # 測試把後者釘成 specific，所以這個偽陽是刻意接受的（只多跑一次 BM25
+        # 查詢、可能升 side_hint，低傷害）。這條測試把它記錄下來。
+        self.assertTrue(rr._looks_specific("trade-off"))
+
 
 class BM25SurvivesTheRelevanceFilter(unittest.TestCase):
     def test_bm25_hit_kept_below_cosine_floor_and_scale_not_rewritten(self):

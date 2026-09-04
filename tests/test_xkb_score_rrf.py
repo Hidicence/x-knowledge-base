@@ -118,5 +118,50 @@ class RankFusesRanksNotScales(unittest.TestCase):
         self.assertEqual([r["t"] for r in out], [r["t"] for r in by_unified])
 
 
+class RankKeyAndLegDedup(unittest.TestCase):
+    def test_same_key_same_leg_adds_the_rrf_term_once(self) -> None:
+        # 合併後 _legs 對同一條腿有兩筆（同頁 wiki 兩段被舊 _key 併掉、或
+        # search() 不再去重後的重複列）。w/(K+i) 不能加兩次、matched_by 不能重複。
+        one = xs.rank([{"source_file": "wiki/topics/x.md", "section": "a",
+                        "score": 0.8, "score_scale": "wiki_semantic"}])
+        dup = xs.rank([
+            {"source_file": "wiki/topics/x.md", "section": "a",
+             "score": 0.8, "score_scale": "wiki_semantic"},
+            {"source_file": "wiki/topics/x.md", "section": "a",
+             "score": 0.5, "score_scale": "wiki_semantic"},
+        ])
+        self.assertEqual(len(dup), 1)
+        self.assertEqual(dup[0]["matched_by"], ["wiki_semantic"])
+        self.assertAlmostEqual(dup[0]["unified_score"], one[0]["unified_score"], places=6)
+
+    def test_two_sections_of_one_wiki_file_stay_separate(self) -> None:
+        out = xs.rank([
+            {"source_type": "wiki", "source_file": "wiki/topics/x.md",
+             "section": "四層架構", "score": 0.8, "score_scale": "wiki_semantic"},
+            {"source_type": "wiki", "source_file": "wiki/topics/x.md",
+             "section": "退場機制", "score": 0.7, "score_scale": "wiki_semantic"},
+        ])
+        self.assertEqual(len(out), 2)
+
+    def test_card_merges_across_legs_even_if_section_differs(self) -> None:
+        # 卡片身分是路徑；語意腿和 BM25 腿給的 section（標題）可能字面不同，
+        # 不能因此就併不起來——否則雙腿 RRF 加分又沒了。
+        out = xs.rank([
+            {"source_type": "card", "source_file": "cards/a.md",
+             "section": "標題 A", "score": 0.6, "score_scale": "card_semantic"},
+            {"source_type": "card", "source_file": "cards/a.md",
+             "section": "標題 A（索引版）", "score": 12.0, "score_scale": "card_bm25"},
+        ])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(set(out[0]["matched_by"]), {"card_semantic", "card_bm25"})
+
+    def test_titleless_rows_do_not_merge_on_a_shared_section(self) -> None:
+        out = xs.rank([
+            {"section": "常見問題", "score": 0.6, "score_scale": "card_semantic"},
+            {"section": "常見問題", "score": 0.7, "score_scale": "card_semantic"},
+        ])
+        self.assertEqual(len(out), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -176,8 +176,21 @@ def rank(results: list[dict]) -> list[dict]:
     原始分數 <= 0 或缺分的項目不拿名次，歸到下層、墊底。
     """
     def _key(r: dict) -> object:
-        return (r.get("source_file") or r.get("relative_path")
-                or r.get("source_url") or r.get("section") or id(r))
+        # 身分：卡片 / 書籤在 _assoc_dict 之後路徑落在 source_file（cards/xxx.md），
+        # 一個檔就是一張卡——section 只是標題，不進 key，不然同一張卡被語意腿和
+        # BM25 腿撈到會被當成兩筆、雙腿 RRF 加分就沒了。
+        # wiki / memory / 反例 / 動作的 source_file 是一個檔、底下很多段，段落
+        # 標題才是身分——只靠 source_file 會把同一頁不同段併成一筆、RRF 重複累加。
+        # section（其實是標題）不能當「沒有路徑」時的退路：兩個剛好同名的書籤
+        # 會被併掉。
+        ident = (r.get("source_file") or r.get("relative_path")
+                 or r.get("source_url") or r.get("url"))
+        if not ident:
+            return id(r)
+        st = str(r.get("source_type") or "")
+        if st in ("card", "bookmark") or str(ident).startswith(("cards/", "memory/cards/")):
+            return ("card", ident)
+        return (st or "sec", ident, r.get("section") or "")
 
     # 按路徑去重：一張卡被 BM25 和向量都撈到（最強訊號）只留一筆，但兩條腿
     # 的貢獻都要算進去。search() 原本按路徑丟掉 BM25 的重複，於是雙腿加分
@@ -198,7 +211,15 @@ def rank(results: list[dict]) -> list[dict]:
 
     legs: dict[str, list[tuple[float, dict]]] = {}
     for surv in survivors:
+        # 同一筆在同一條腿裡只算一次（取最高分）。合併後 _legs 可能對同一條腿
+        # 有多筆（同一頁 wiki 的兩段、search() 不再去重後的重複列），不去重就
+        # 會把 w/(K+i) 加兩次、matched_by 也重複。
+        best: dict[str, float] = {}
         for leg, score in surv["_legs"]:
+            if leg not in best or score > best[leg]:
+                best[leg] = score
+        surv["_legs"] = list(best.items())
+        for leg, score in best.items():
             legs.setdefault(leg, []).append((score, surv))
 
     for leg, pairs in legs.items():
