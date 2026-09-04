@@ -1,7 +1,8 @@
 """xkb_score.rank() — reciprocal rank fusion.
 
 rank() replaced a hand-tuned anchor table (one anchor per scale, measured on 8
-queries) with RRF: unified_score = Σ weight_leg/(K + rank_in_leg) + λ·relevance.
+queries) with RRF: unified_score = Σ weight_leg/(K + rank_in_leg); below-floor
+hits then get -1.0 so they sort last regardless of leg size.
 The properties that matter, and the ones review found broken in the first cut:
 """
 from __future__ import annotations
@@ -82,7 +83,7 @@ class RankFusesRanksNotScales(unittest.TestCase):
             {"t": "missing", "source_type": "action"},
         ])
         self.assertEqual(out[0]["t"], "real")
-        self.assertEqual(out[-1]["unified_score"], 0.0)
+        self.assertLess(out[-1]["unified_score"], out[0]["unified_score"])
         self.assertEqual({r["t"] for r in out[1:]}, {"zero", "missing"})
 
     def test_rank_is_idempotent(self) -> None:
@@ -104,6 +105,17 @@ class RankFusesRanksNotScales(unittest.TestCase):
         by_u = sorted(out, key=lambda r: r["unified_score"], reverse=True)
         by_r = sorted(out, key=lambda r: r["relevance"], reverse=True)
         self.assertEqual([r["t"] for r in by_u], [r["t"] for r in by_r])
+
+
+    def test_unified_score_order_matches_returned_order_across_tiers(self) -> None:
+        # review：sort key 是 (tier, -rrf) 但 unified_score 只存 rrf，於是照
+        # unified_score 重排會把被降級的弱命中又抬回去。兩者必須一致。
+        cards = [{"t": f"c{n}", "score": 0.72 - n * 0.01, "score_scale": "card_semantic"}
+                 for n in range(6)]
+        weak = {"t": "weak", "score": 0.29, "score_scale": "wiki_semantic"}
+        out = xs.rank(cards + [weak])
+        by_unified = sorted(out, key=lambda r: r["unified_score"], reverse=True)
+        self.assertEqual([r["t"] for r in out], [r["t"] for r in by_unified])
 
 
 if __name__ == "__main__":

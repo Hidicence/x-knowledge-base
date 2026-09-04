@@ -10,7 +10,8 @@ gbrain RRF 或餘弦、對話是折扣過的關鍵字比例、反例、可復用
 不看原始分數的絕對值。BM25 的無上限分數跟餘弦的 0~1 從來不需要被弄成可比，
 因為只有名次跨過腿的邊界。
 
-    unified_score = Σ（該腿權重 / (K + 腿內名次)）  ...加上一個小的腿內相關度項
+    unified_score = Σ（該腿權重 / (K + 腿內名次)）；低於相關度地板的命中再減 1.0，
+    穩定墊底（見 rank()）。
 
 權重（wiki > 卡片 > 對話 > 反例 > 動作 > 驗不出來，擠在 0.80~1.0）是平手時的
 傾向，不是碾壓；K=60 是 RRF 慣例值。
@@ -88,6 +89,8 @@ DEFAULT_WEIGHTS = {
     "bookmark": 0.96,
     "card_semantic": 0.96,
     "card_keyword": 0.96,
+    "card_bm25": 0.96,
+    "wiki_bm25": 1.0,
     "conversation": 0.93,
     "contrarian": 0.90,
     "action": 0.87,
@@ -189,24 +192,32 @@ def rank(results: list[dict]) -> list[dict]:
         w = weight_for(leg)
         for i, item in enumerate(group, 1):
             raw = float(item.get("score") or 0.0)
-            rel = relevance(raw, leg) if raw > 0.0 else 0.0
-            item["relevance"] = round(rel, 4)
-            item["matched_by"].append(leg)
+            is_bm25 = leg.endswith("_bm25")
             if raw <= 0.0:
+                item["relevance"] = 0.0
+                item["matched_by"].append(leg)
                 continue  # 不拿名次；unified_score 留 0、歸下層
             item.setdefault("leg_rank", i)
+            item["matched_by"].append(leg)
             item["_rrf"] += w / (K_RRF + i)
-            if rel >= RELEVANCE_FLOOR:
+            if is_bm25:
+                # BM25 命中本身就是相關度證據，而且這條腿回夠多候選、名次有意義，
+                # 不需要相關度地板。relevance 顯示欄位用名次代理。
+                item["relevance"] = round(1.0 / i, 4)
                 item["_above_floor"] = True
+            else:
+                rel = relevance(raw, leg)
+                item["relevance"] = round(rel, 4)
+                if rel >= RELEVANCE_FLOOR:
+                    item["_above_floor"] = True
 
-    ranked = sorted(
-        results,
-        key=lambda r: (0 if r["_above_floor"] else 1, -r["_rrf"]),
-    )
-    for item in ranked:
-        item["unified_score"] = round(item.pop("_rrf"), 6)
-        item.pop("_above_floor")
-    return ranked
+    for item in results:
+        # 下地板的減 1.0——_rrf 都在 0.01~0.02，減完必為負，穩定墊在所有上地板
+        # 之下。這樣「照 unified_score 由大到小排」就等於回傳順序（recall server
+        # 叫模型拿 unified_score 當順序用，兩者不能對不上）。
+        item["unified_score"] = round(item.pop("_rrf", 0.0)
+                                       - (0.0 if item.pop("_above_floor", False) else 1.0), 6)
+    return sorted(results, key=lambda r: r["unified_score"], reverse=True)
 
 
 if __name__ == "__main__":

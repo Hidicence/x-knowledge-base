@@ -195,7 +195,7 @@ def _format_assoc_chat(results: list[dict]) -> str:
 
 
 def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
-    """把 recall() / identifier_recall() 形狀的項目映成聯想召回的結果 dict。
+    """把 recall() / fts_recall() 形狀的項目映成聯想召回的結果 dict。
 
     _format_assoc_chat、xkb_score.rank、_session_dedup 都吃這個形狀。以前
     三個地方各寫一份，其中兩份連 source_type 的判斷都不一樣（`"cards/" in`
@@ -207,10 +207,10 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
     # 任何一層叫 cards 的目錄（relative_path 缺時 rel 退回絕對 path）。
     is_card = rel.startswith(("cards/", "memory/cards/"))
     score = item.get("score", 0.0)
-    if item.get("match_kind") != "literal" and keyword_scale:
-        # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；換算到 0–1，
-        # 不然 rank() 用 0.88 錨點會把一張 15 分的卡片算成 0.94。
-        # 字面命中的 score 已經是 0–1 的固定值，不要碰。
+    if not item.get("score_scale") and keyword_scale:
+        # 沒有自帶 score_scale 的舊關鍵字結果：base + 調整×10、下限 6、沒有上界，
+        # 換算到 0–1，不然 rank() 會把一張 15 分的卡片算成壓過所有語意結果。
+        # BM25 結果自帶 score_scale=card_bm25/wiki_bm25，分數是 -bm25()，不要碰。
         score = _as_unit_scale(score)
     return {
         "source_type": "card" if is_card else "bookmark",
@@ -218,21 +218,13 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
         "section": xkb_provenance.strip_markers(item.get("title", "")),
         "excerpt": xkb_provenance.strip_markers((item.get("summary") or "")[:200]),
         "score": score,
-        "match_kind": item.get("match_kind"),
-        # 字面命中跳過 filter_irrelevant 的改寫路徑，score_scale 要在這裡
-        # 補齊：沒帶的話 rank() 退回 card 的 RRF 錨點 (0.88) 而不是餘弦錨點
-        # (0.72)，把它算低 ~9%。literal 一律用 card_semantic——沒有
-        # bookmark_semantic 這個錨點，而一個 0.72–0.99 的字面命中分數配
-        # RRF 錨點正是它要避免的低估。不用 assert：在 route() 裡 assert
-        # 失敗會把整個召回打掉。
-        "score_scale": item.get("score_scale") or (
-            "card_semantic" if item.get("match_kind") == "literal" else None),
+        "score_scale": item.get("score_scale"),
         "url": item.get("source_url") or item.get("url", ""),
     }
 
 
 def run_associative_recall(query: str, limit: int = 2, *,
-                           identifier_only: bool = False) -> tuple[str, list[dict]]:
+                           fts_only: bool = False) -> tuple[str, list[dict]]:
     """Returns (formatted_text, results_list).
 
     Calls recall_for_conversation.search() directly. It used to spawn the same
@@ -241,15 +233,6 @@ def run_associative_recall(query: str, limit: int = 2, *,
     nothing". gbrain's own 1.2 s is paid either way; what this removes is the
     part that was never doing any work.
     """
-    if identifier_only:
-        # 便宜的前置檢查：沒有識別碼 token 就什麼都不做——不開 executor、
-        # 不進 search()、不掃 wiki。light 掃描幾乎每句都會走到這裡。
-        try:
-            from recall_for_conversation import _identifier_tokens
-        except ImportError:
-            _identifier_tokens = None
-        if _identifier_tokens is not None and not _identifier_tokens(query):
-            return "", []
     try:
         from recall_for_conversation import search as _associative_search
     except ImportError as err:
@@ -265,17 +248,18 @@ def run_associative_recall(query: str, limit: int = 2, *,
         # 之後那個區塊還是會等到工作結束——實測宣稱 0.5 秒、實際 3.00 秒。
         # 這個界線存在的理由就是不要被卡住的端點拖住六秒的 hook 預算，
         # 而它原本一秒都沒擋到。
-        bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
-        try:
-            found = bounded.submit(
-                lambda: _associative_search(query, limit=limit,
-                                            identifier_only=identifier_only)
-            ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
-            items, mode = found["results"], found["search_mode"]
-        finally:
-            # wait=False：放棄它，不要等。執行緒是 daemon，所以卡住的請求
-            # 也不會讓整個行程留著不走。
-            bounded.shutdown(wait=False)
+        if fts_only:
+            # BM25 腿是一次 SQLite MATCH，不打 embedding、不阻塞，不需要 executor。
+            found = _associative_search(query, limit=limit, fts_only=True)
+        else:
+            bounded = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xkb-assoc")
+            try:
+                found = bounded.submit(
+                    lambda: _associative_search(query, limit=limit)
+                ).result(timeout=ASSOCIATIVE_TIMEOUT_S)
+            finally:
+                bounded.shutdown(wait=False)
+        items, mode = found["results"], found["search_mode"]
         # 關鍵字分數是 base + 調整×10、下限 6、沒有上界；RRF 是 0–1。
         # 下游的 rank() 用 0.88 當錨點，對 RRF 是對的，對關鍵字分數會讓一張
         # 得 15 分的卡片算出 0.94，壓過所有語意結果（最好也才 0.55）。
@@ -428,11 +412,11 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
         if light:
             # light 掃描不跑昂貴的語意腿，但識別碼（錯誤碼 / 型號 / repo slug /
             # tweet ID）是純字串比對、不打 embedding，值得跑。走跟非 light
-            # 完全相同的函式（identifier_only 模式），不要在這裡另抄一份
+            # 完全相同的函式（fts_only 模式），不要在這裡另抄一份
             # import / try / except / note / 映射——那份抄本審了四輪都在追它
             # 跟本尊的差異。
             assoc_text, assoc_results = run_associative_recall(
-                query, limit=3, identifier_only=True)
+                query, limit=3, fts_only=True)
             assoc_results, _ = _dedup_filter_new(assoc_results)
             assoc_text = _format_assoc_chat(assoc_results) if assoc_results else ""
         else:
@@ -486,9 +470,10 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             r.source_type.endswith("_semantic") for r in wiki_results_filtered
         )
         wiki_threshold = SIDE_HINT_SEMANTIC if wiki_is_semantic else SIDE_HINT_KEYWORD
-        _has_literal = any(x.get("match_kind") == "literal" for x in assoc_results)
-        if _has_literal or best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
-            # 字面命中識別碼 => 使用者要的就是這張卡，直接給內容，
+        _has_bm25 = any(str(x.get("score_scale") or "").endswith("_bm25")
+                        for x in assoc_results)
+        if _has_bm25 or best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
+            # BM25 字面命中 => 使用者查的多半就是這張卡，直接給內容，
             # 不要只回「你知識庫裡有 N 個相關片段」。
             delivery_mode = "side_hint"
         else:

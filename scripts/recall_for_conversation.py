@@ -784,107 +784,22 @@ MODE_LABELS = {
 }
 
 
-_IDENT_SPLIT = re.compile(r"[\s,;，、。]+")
-_IDENT_HARD_FIELDS = ("id", "source_url", "relative_path", "path")
-_IDENT_SOFT_FIELDS = ("title", "searchable", "summary", "tags")
-
-
-def _identifier_tokens(query: str) -> List[str]:
-    """查詢裡看起來像識別碼、而不是普通詞的 token（原樣保留，不再切分）。
-
-    命中條件：含數字、含底線、或長度 >= 8 的純 ASCII 連字號字串。斷詞器會把
-    gpt-5.6-luna 從 . 切成兩半，這裡不經過它，所以識別碼保持完整。
-
-    引號不是免死金牌。一度讓「引號括住就一律算識別碼」，於是隨口一句
-    `他說那是個 "good idea"` 就讓幾張字面沾到邊的卡片拿到字面命中的特權
-    （跳過餘弦門檻、強制 side_hint、繞過 light 掃描的成本閘門）。引號片段
-    照樣要通過 looks_id：引號裡的 "gpt-5.6" 本來就會過，"machine learning
-    survey" 不會。
-    """
-    # 引號內的內容拆開來，跟一般 token 走同一條 looks_id 判斷
-    parts = re.findall(r'"([^"]+)"', query)
-    parts += _IDENT_SPLIT.split(re.sub(r'"[^"]*"', " ", query))
-    out: List[str] = []
-    for tok in parts:
-        if not tok:
-            continue
-        # 去掉句尾標點：_IDENT_SPLIT 會切 CJK 的「。」但不切 ASCII 的「.」，
-        # 於是 "gpt-5.6." 會帶著尾點，t in blob 就對不上 "gpt-5.6"。
-        t = tok.strip().strip('".,;:!?()[] ').lower()
-        if len(t) < 3:
-            continue
-        digits = sum(c.isdigit() for c in t)
-        alpha = sum(c.isalpha() for c in t)
-        looks_id = (
-            # 純數字要夠長才算識別碼（tweet ID 有 18-19 位）；四位數多半是年份
-            (digits >= 10 and alpha == 0)
-            # 英數混合、帶數字：型號、錯誤碼（gpt-5.6、err_1042）
-            or (digits and alpha and ("_" in t or "-" in t or "." in t or len(t) >= 6))
-            # 底線分隔的識別碼
-            or "_" in t
-            # 夠長的連字號 ASCII slug（repo 名）
-            or (len(t) >= 8 and "-" in t and t.isascii() and " " not in t)
-        )
-        if looks_id:
-            out.append(t)
-    return list(dict.fromkeys(out))
-
-
-def identifier_recall(query: str, items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
-    """字面命中識別碼的卡片。分數高到能排進召回前段，但不保證第一。
-
-    向量腿對錯誤碼、repo slug、tweet ID 這種字串算不出意義，於是它們進不了
-    「純向量排名的前 2*limit」候選集，關鍵字腿也就沒機會重排到它們——救不回
-    沒入選的東西。這條腿直接掃索引補上。
-    """
-    idents = _identifier_tokens(query)
-    if not idents:
+def _fts_leg(query: str, limit: int) -> List[Dict[str, Any]]:
+    """BM25 腿。fts_recall 載不進來或索引沒建就回空——不是「查無資料」的訊號，
+    但也不該讓整條召回中止。"""
+    try:
+        from fts_recall import fts_search
+    except ImportError:
         return []
-    # 一個 token 命中太多卡片 => 它其實不是識別碼（例如年份、常見縮寫）。
-    # 真正的 repo slug / tweet ID / 型號只會命中個位數張卡。
-    _MAX_IDENT_HITS = 8
-    _blobs = []
-    _noise = set()
-    for it in items:
-        b = (" ".join(str(it.get(k) or "") for k in _IDENT_HARD_FIELDS) + " " +
-             " ".join((" ".join(str(x) for x in it.get(k)) if isinstance(it.get(k), list)
-                        else str(it.get(k) or "")) for k in _IDENT_SOFT_FIELDS)).lower()
-        _blobs.append(b)
-    for t in idents:
-        if sum(1 for b in _blobs if t in b) > _MAX_IDENT_HITS:
-            _noise.add(t)
-    if all(t in _noise for t in idents):
+    try:
+        return fts_search(query, limit)
+    except Exception as e:  # noqa: BLE001
+        try:
+            import xkb_failures
+            xkb_failures.note("bm25 leg", e)
+        except Exception:  # noqa: BLE001
+            pass
         return []
-    hits: List[tuple] = []
-    for item, blob in zip(items, _blobs):
-        hard = " ".join(str(item.get(k) or "") for k in _IDENT_HARD_FIELDS).lower()
-        matched = [t for t in idents if t in blob and t not in _noise]
-        if not matched:
-            continue
-        in_hard = sum(1 for t in matched if t in hard)
-        # 命中在 id / url / 路徑 這種「硬」欄位 => 幾乎確定就是要找的那張卡
-        score = round(min(0.99, 0.72 + 0.12 * min(in_hard, 2) + 0.03 * (len(matched) - 1)), 4)
-        rel_path = item.get("relative_path") or item.get("path") or ""
-        hits.append((score, {
-            "title": _display_title(item),
-            "summary": clean_summary(item.get("summary") or ""),
-            "category": item.get("category") or "general",
-            "tags": item.get("tags") or [],
-            "relative_path": rel_path,
-            "source_url": _normalize_source_url(item.get("source_url") or ""),
-            "score": score,
-            "score_scale": "card_semantic",
-            # 字面命中：相關性由「索引裡真的有這個字串」建立，不是餘弦。
-            # 下游的相似度閘門要放這種結果過，不能用 0.55 的餘弦門檻砍掉。
-            "match_kind": "literal",
-            "topic_boost": 0.0,
-            "matched_categories": [],
-            "matched_tags": [],
-            "ranking_adjustments": {"total_adjustment": 0.0},
-            "relevance_reason": f"字面命中識別碼：{', '.join(matched)}",
-        }))
-    hits.sort(key=lambda x: x[0], reverse=True)
-    return [h[1] for h in hits[:limit]]
 
 
 def search(
@@ -899,7 +814,7 @@ def search(
     no_semantic: bool = False,
     force_semantic: bool = False,
     force_gbrain: bool = False,
-    identifier_only: bool = False,
+    fts_only: bool = False,
 ) -> dict:
     """兩層召回：先查合成過的 wiki 知識，再查卡片細節。
 
@@ -912,9 +827,9 @@ def search(
     vector_path = Path(vector_file) if vector_file else VECTOR_FILE
     profile_path = Path(topic_profile_file) if topic_profile_file else TOPIC_PROFILE_FILE
 
-    # 第一層：wiki 知識層（先查合成知識）。identifier_only 是 light 掃描的
-    # 純識別碼模式，呼叫端已經自己查過 wiki，這裡再查一次只是丟掉——跳過。
-    wiki_hits: List[Dict[str, Any]] = ([] if (no_wiki or identifier_only)
+    # 第一層：wiki 知識層（先查合成知識）。fts_only 是 light 掃描的純 BM25
+    # 模式，呼叫端已經自己查過 wiki，這裡再查一次只是丟掉——跳過。
+    wiki_hits: List[Dict[str, Any]] = ([] if (no_wiki or fts_only)
                                        else wiki_recall(query, limit=2))
 
     # 第二層：cards 細節層（gbrain > semantic > keyword）
@@ -927,11 +842,11 @@ def search(
     use_gbrain = force_gbrain or (not no_semantic and _gbrain_available and bool(_gemini_key))
 
     search_mode = "keyword"
-    if identifier_only:
-        # light 掃描專用：跳過所有語意/關鍵字後端，只留識別碼那條腿。
-        # 下面的識別碼合併對「沒有識別碼 token」的查詢本來就是 no-op。
-        results = []
-        search_mode = "identifier_only"
+    if fts_only:
+        # light 掃描專用：跳過所有語意後端，只跑 BM25 腿——一次 SQLite MATCH，
+        # 不打 embedding，light 幾乎每句都跑得起。
+        results = _fts_leg(query, limit)
+        search_mode = "bm25" if results else "bm25_empty"
     elif use_gbrain:
         results = gbrain_semantic_recall(query, limit)
         if results:
@@ -949,35 +864,17 @@ def search(
     else:
         results = recall(query, limit, min_score, index_path, profile_path)
 
-    # 識別碼精確腿：任何後端跑完後都併一次。查詢沒有識別碼 token 時
-    # _identifier_tokens 回空，連索引都不載入，行為與改動前完全相同。
-    if _identifier_tokens(query):
-        # 識別碼腿是**補充**：非 light 路徑上 gbrain 已經回了好結果，本地索引
-        # 讀不到只該讓這條補充腿降級，不該把 gbrain 的結果一起丟掉——那正是
-        # 第八輪審查抓到的「往上傳、連好結果一起炸」。所以本地 catch，但要
-        # 出聲（不是第七輪那個靜默的 _idx_items = []）。
-        try:
-            _idx_items = load_index(index_path).get("items", [])
-        except (OSError, ValueError, AttributeError) as _e:  # OSError 涵蓋
-            # FileNotFoundError / PermissionError / IsADirectoryError（多寫入者情境）
-            try:
-                import xkb_failures as _xf
-                _xf.note("identifier index", _e)
-            except Exception:  # noqa: BLE001 — 連告警都載不進來也不能因此中止
-                pass
-            _idx_items = []
-        exact = identifier_recall(query, _idx_items, limit)
-        if exact:
-            def _rk(r: Dict[str, Any]) -> str:
-                return r.get("relative_path") or r.get("source_url") or r.get("title") or ""
-            # 上限 3：留下位子給語意結果，不然 len(exact)==limit 時
-            # 語意結果會在 rank() 重排之前就被整段截掉。
-            exact = exact[: min(3, limit)]
-            seen = {_rk(r) for r in exact}
-            results = (exact + [r for r in results if _rk(r) not in seen])[: max(limit, len(exact))]
-            # 不動 search_mode：recall_router 用它判斷「要不要把關鍵字分數
-            # 換算尺度」，加後綴會讓那個判斷失效，未換算的關鍵字分數就直接
-            # 壓過所有語意結果。識別碼的資訊改放在各筆結果的 match_kind 上。
+    # BM25 腿：任何語意後端跑完後都併一次（fts_only 模式上面已經跑過，跳過）。
+    # 這條腿跟語意腿對等——語意查詢語意腿扛，字面查詢 BM25 扛，xkb_score.rank()
+    # 用 RRF 融合。BM25 結果帶 score_scale=card_bm25 / wiki_bm25，自成一條腿。
+    if not fts_only:
+        bm25 = _fts_leg(query, limit)
+        if bm25:
+            seen = {(r.get("relative_path") or r.get("source_url") or r.get("title") or "")
+                    for r in results}
+            results = results + [r for r in bm25
+                                 if (r.get("relative_path") or r.get("source_url")
+                                     or r.get("title") or "") not in seen]
 
     return {
         "query": query,

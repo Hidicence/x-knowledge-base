@@ -533,6 +533,16 @@ def main() -> int:
     print(f"\n✅ Saved {len(new_vectors)} vectors → {vector_path}")
     print(f"   Provider : {output['meta']['provider']} / {output['meta']['model']}")
     print(f"   Dims     : {output['meta']['dims']}")
+
+    # BM25 全文索引跟向量索引同源、同時建——放這裡就不必在 6 支排程腳本裡
+    # 各加一行、各自漂移。FTS 建失敗不該讓向量建置也算失敗。
+    try:
+        import build_fts_index
+        build_fts_index.build(Path(args.index_file))
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️  BM25 索引沒建成（向量索引不受影響）：{e}",
+              file=sys.stderr)
+
     return 0
 
 
