@@ -258,6 +258,24 @@ class XKBMemoryServiceTests(unittest.TestCase):
         self.assertIn("對話軌跡", marginal,
                       "對話層被整段擠出封包")
 
+        # 截斷防護：知識層填滿 limit 時，最強的對話軌跡仍要進封包（不是被
+        # marginal 卡片擠到 records[:limit] 之外）。這是舊測試那條順序斷言真正
+        # 要守的東西——RRF 之下順序斷言不再成立，但「不被整段截掉」還是要守。
+        many_cards = {
+            "records": [
+                {"title": f"卡片{n}", "score": 0.56, "score_scale": "card_semantic",
+                 "record_type": "knowledge_chunk"} for n in range(8)
+            ],
+            "retrieval_mode": "xbrain_hybrid", "filtered_counts": {},
+            "semantic_retrieval_attempted": True,
+            "semantic_backend": {"status": "used"}, "dropped_as_irrelevant": 0,
+        }
+        conversation = {"memories": [{"query": "強對話軌跡", "answer": "", "score": 0.65}]}
+        with mock.patch.object(type(self.store.catalog), "search", return_value=many_cards),              mock.patch.object(type(self.store), "recall", return_value=conversation):
+            packet = self.store.knowledge_recall("任意", 5, "private")
+        titles = [r.get("title") or r.get("query") for r in packet["records"]]
+        self.assertIn("強對話軌跡", titles, "知識層填滿 limit 後對話軌跡被整段截掉")
+
         # scale mixing 結構上不可能：關鍵字尺度的分數（6~20）跟餘弦尺度的
         # 分數（0~1）在 RRF 裡都只是「腿內第 N 名」，不會因為原始數字大就碾壓。
         import xkb_score

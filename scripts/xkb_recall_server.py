@@ -60,7 +60,7 @@ TOOL_DEF = {
         "candidate and silently drop the ones that are not genuinely related. "
         "Surfacing an unrelated card as if it were the user's own knowledge is worse than "
         "returning nothing — it makes the knowledge base look wrong. "
-        "Use `relevance` and `unified_score` in the metadata as hints, never as a verdict."
+        "`relevance` (0-1) is how strong the match is within its own retrieval leg; `unified_score` is only the fused rank position and compresses into a narrow band, so use it for order, not for confidence. Neither is a verdict — read each candidate yourself."
     ),
     "inputSchema": {
         "type": "object",

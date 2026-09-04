@@ -1,29 +1,26 @@
 #!/usr/bin/env python3
 """
-跨層分數換算
+跨層召回融合
 
-每個召回層都有自己的計分方式，尺度互不相同：
+每條召回腿有自己的計分方式，尺度互不相同：wiki 是關鍵字或餘弦、卡片是
+gbrain RRF 或餘弦、對話是折扣過的關鍵字比例、反例、可復用資產各一套。
+把這些原始數字並排排序，等於拿公分比英吋。
 
-    wiki        標題×3 + tags×1.5 + body×0.4，沒有上限（實測 0.40 ~ 3.65）
-    卡片/書籤   gbrain RRF 或向量餘弦，0 ~ 1
-    反例        相關度×0.6 + 信號詞×0.4，0 ~ 1
-    可復用資產  命中率 + phrase bonus
+**rank() 用 reciprocal rank fusion（RRF）**：只看每筆在自己那條腿裡的名次，
+不看原始分數的絕對值。BM25 的無上限分數跟餘弦的 0~1 從來不需要被弄成可比，
+因為只有名次跨過腿的邊界。
 
-router 原本把這些數字直接並排輸出，等於拿公分跟英吋比大小——
-「哪個比較相關」其實從來沒有被真正比較過。
+    unified_score = Σ（該腿權重 / (K + 腿內名次)）  ...加上一個小的腿內相關度項
 
-這裡做兩件事：
+權重（wiki > 卡片 > 對話 > 反例 > 動作 > 驗不出來，擠在 0.80~1.0）是平手時的
+傾向，不是碾壓；K=60 是 RRF 慣例值。
 
-1. **對齊**：用 `raw / (raw + anchor)` 把每層壓進 0~1，anchor 取該層實測的中位數。
-   意思是「這一層的中等相關」在每層都會落在 0.5，跨層才有共同基準。
-   飽和曲線而不是除以最大值——最大值會被單一離群結果綁架，
-   而且高分區本來就該遞減，3.6 分和 3.0 分的差別遠不如 0.4 和 1.0 之間的差別。
+XKB 的 wiki 腿只有十幾個 topic，常常只回一個弱命中——純 RRF 會讓那個弱命中拿
+腿內第 1、壓過強卡片。所以低於相關度地板（RELEVANCE_FLOOR）的命中，有效名次
+往後推，排在所有上地板命中之後。
 
-2. **加權**：對齊之後乘上來源權威度。wiki 是自己消化過的結論，
-   卡片是原始素材；同樣「中等相關」時前者該排前面。
-
-anchor 與權重可用環境變數覆寫（XKB_SCORE_ANCHOR_WIKI 等），
-換一個知識庫、分數分佈不同時不必改程式碼。
+relevance() / unified()（舊的 raw/(raw+anchor)×權重）留著只給 relevance 這個
+顯示欄位用；排序不走它。anchor 與權重可用環境變數覆寫（XKB_SCORE_ANCHOR_WIKI）。
 """
 from __future__ import annotations
 
@@ -101,6 +98,13 @@ DEFAULT_WEIGHTS = {
 # RRF 常數。60 是慣例值——讓相鄰名次的貢獻接近，融合才穩。
 K_RRF = 60
 
+
+# 腿內相關度的地板。relevance() 設計成「該腿中位相關」落在 0.5；低於這個地板
+# 算明顯偏弱。偏弱的命中名次往後推，排在所有上地板命中之後——這樣「wiki 腿
+# 只回一個弱命中」不會因為腿內唯一就搶到第 1 名壓過強卡片（審查 finding 1）。
+RELEVANCE_FLOOR = 0.35
+_BELOW_FLOOR_RANK_PENALTY = 20
+
 FALLBACK_ANCHOR = 0.5
 FALLBACK_WEIGHT = 0.5
 
@@ -136,7 +140,8 @@ def relevance(raw_score: float, source_type: str) -> float:
 
 
 def unified(raw_score: float, source_type: str) -> float:
-    """對齊後再乘來源權威度，這才是跨層可比的分數。"""
+    """舊的對齊分數（raw/(raw+anchor)×權重）。rank() 已改用 RRF，不再呼叫它；
+    留著給還在讀這個欄位的舊呼叫端。"""
     return round(relevance(raw_score, source_type) * weight_for(source_type), 4)
 
 
@@ -157,27 +162,39 @@ def rank(results: list[dict]) -> list[dict]:
     錨點就讓某層靜默壓過另一層（這個 session 為此繞了六輪）。RRF 融合的是
     **名次**，所以 BM25 的無上限分數跟餘弦的 0~1 從來不需要被弄成可比。
 
-    每筆結果的 unified_score = Σ（該腿權重 / (K + 腿內名次)），對它出現過的
-    每一條腿加總。目前每筆只在一條腿裡，所以是單項；未來加真 BM25 腿、
-    同一張卡被 BM25 和向量都撈到時，兩項會相加。
+    unified_score = Σ（該腿權重 / (K + 有效名次)），對它出現過的每一條腿加總
+    （目前每筆只在一條腿；加 BM25 腿後、同一張卡被 BM25 和向量都撈到會有兩項）。
+    有效名次 = 腿內名次，但低於相關度地板的命中往後推 20 名（見 RELEVANCE_FLOOR）。
+
+    idempotent：matched_by / leg_rank / relevance 每次呼叫都重建，不累加。
+    原始分數 <= 0 或缺分的項目不拿名次，穩定墊底。
     """
+    for item in results:
+        item["matched_by"] = []
+        item.pop("leg_rank", None)
+
     legs: dict[str, list[dict]] = {}
     for item in results:
         legs.setdefault(_leg_of(item), []).append(item)
 
     fused: dict[int, float] = {}
     for leg, group in legs.items():
-        group.sort(key=lambda r: float(r.get("score") or 0.0), reverse=True)
+        # 有分數的才排名次；<=0 或缺分的沉到這條腿的最後。
+        group.sort(key=lambda r: (float(r.get("score") or 0.0) > 0.0,
+                                  float(r.get("score") or 0.0)), reverse=True)
         w = weight_for(leg)
         for i, item in enumerate(group, 1):
-            fused[id(item)] = fused.get(id(item), 0.0) + w / (K_RRF + i)
+            raw = float(item.get("score") or 0.0)
+            rel = relevance(raw, leg) if raw > 0.0 else 0.0
+            item["relevance"] = round(rel, 4)
+            item["matched_by"].append(leg)
+            if raw <= 0.0:
+                continue  # 不拿名次；unified_score 留 0
             item.setdefault("leg_rank", i)
-            # 這筆是被哪些腿撈到的。目前每筆只在一條腿裡；加了真 BM25 腿之後，
-            # 同一張卡被 BM25 和向量都撈到就會是 ["card_keyword", "card_semantic"]。
-            # 這 session 的除錯有這個欄位會快很多。
-            item.setdefault("matched_by", []).append(leg)
-            # relevance 仍照舊算，給顯示層當「這一層裡有多相關」的參考；排序不用它。
-            item["relevance"] = round(relevance(float(item.get("score") or 0.0), leg), 4)
+            # 偏弱的命中（低於腿內相關度地板）名次往後推，排在所有上地板
+            # 命中之後——「wiki 腿只回一個弱命中」不會因為腿內唯一就搶第 1。
+            eff = i if rel >= RELEVANCE_FLOOR else i + _BELOW_FLOOR_RANK_PENALTY
+            fused[id(item)] = fused.get(id(item), 0.0) + w / (K_RRF + eff)
 
     for item in results:
         item["unified_score"] = round(fused.get(id(item), 0.0), 6)
@@ -185,11 +202,16 @@ def rank(results: list[dict]) -> list[dict]:
 
 
 if __name__ == "__main__":
-    print(f"{'source':12} {'raw':>6} {'relevance':>10} {'unified':>8}")
-    samples = [("wiki", 3.65), ("wiki", 0.93), ("wiki", 0.40),
-               ("card", 0.91), ("card", 0.88), ("card", 0.50),
-               ("contrarian", 0.80), ("contrarian", 0.52),
-               ("action", 0.97), ("action", 0.31)]
-    for source_type, raw in samples:
-        print(f"{source_type:12} {raw:>6.2f} {relevance(raw, source_type):>10.3f} "
-              f"{unified(raw, source_type):>8.3f}")
+    # 示範 RRF 融合：三條腿合在一起，看排序
+    demo = [
+        {"title": "wiki 強命中", "score": 0.85, "score_scale": "wiki_semantic"},
+        {"title": "wiki 弱命中（腿內唯一）", "score": 0.31, "score_scale": "wiki_semantic"},
+        {"title": "卡片 強命中", "score": 0.88, "score_scale": "card_semantic"},
+        {"title": "卡片 中命中", "score": 0.66, "score_scale": "card_semantic"},
+        {"title": "對話 滿分", "score": 0.65, "score_scale": "conversation"},
+        {"title": "驗不出來的網址", "score": 0.9, "score_scale": "unverified"},
+        {"title": "動作提示（無分）", "score": 0.0, "source_type": "action"},
+    ]
+    for r in rank(demo):
+        print(f"  {r['unified_score']:.6f}  rel={r['relevance']:.3f}  "
+              f"leg#{r.get('leg_rank', '-')}  {r['title']}")
