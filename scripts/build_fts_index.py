@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_text
-from build_vector_index import extract_card_text, knowledge_section_docs, _resolve_md_path
+from build_vector_index import extract_card_text, knowledge_section_docs
 
 FTS_DB = xkb_paths.BOOKMARKS_DIR / "fts_index.db"
 

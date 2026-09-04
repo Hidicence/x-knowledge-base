@@ -175,49 +175,64 @@ def rank(results: list[dict]) -> list[dict]:
     idempotent：matched_by / leg_rank / relevance / unified_score 每次呼叫都重建。
     原始分數 <= 0 或缺分的項目不拿名次，歸到下層、墊底。
     """
-    for item in results:
-        item["matched_by"] = []
-        item["_rrf"] = 0.0
-        item["_above_floor"] = False
-        item.pop("leg_rank", None)
+    def _key(r: dict) -> object:
+        return (r.get("source_file") or r.get("relative_path")
+                or r.get("source_url") or r.get("section") or id(r))
 
-    legs: dict[str, list[dict]] = {}
+    # 按路徑去重：一張卡被 BM25 和向量都撈到（最強訊號）只留一筆，但兩條腿
+    # 的貢獻都要算進去。search() 原本按路徑丟掉 BM25 的重複，於是雙腿加分
+    # 永遠不會發生；light 路徑上同一頁 wiki 被兩條腿撈到會重複出現。
+    uniq: dict = {}
     for item in results:
-        legs.setdefault(_leg_of(item), []).append(item)
+        k = _key(item)
+        if k not in uniq:
+            item["matched_by"] = []
+            item["_rrf"] = 0.0
+            item["_above_floor"] = False
+            item["_legs"] = []
+            item.pop("leg_rank", None)
+            item.pop("relevance", None)
+            uniq[k] = item
+        uniq[k]["_legs"].append((_leg_of(item), float(item.get("score") or 0.0)))
+    survivors = list(uniq.values())
 
-    for leg, group in legs.items():
-        # 有分數的才排名次；<=0 或缺分的沉到這條腿的最後。
-        group.sort(key=lambda r: (float(r.get("score") or 0.0) > 0.0,
-                                  float(r.get("score") or 0.0)), reverse=True)
+    legs: dict[str, list[tuple[float, dict]]] = {}
+    for surv in survivors:
+        for leg, score in surv["_legs"]:
+            legs.setdefault(leg, []).append((score, surv))
+
+    for leg, pairs in legs.items():
+        # 有分數的排名次；<=0 或缺分的沉到這條腿最後。
+        pairs.sort(key=lambda ps: (ps[0] > 0.0, ps[0]), reverse=True)
         w = weight_for(leg)
-        for i, item in enumerate(group, 1):
-            raw = float(item.get("score") or 0.0)
-            is_bm25 = leg.endswith("_bm25")
-            if raw <= 0.0:
-                item["relevance"] = 0.0
-                item["matched_by"].append(leg)
-                continue  # 不拿名次；unified_score 留 0、歸下層
-            item.setdefault("leg_rank", i)
-            item["matched_by"].append(leg)
-            item["_rrf"] += w / (K_RRF + i)
+        is_bm25 = leg.endswith("_bm25")
+        for i, (score, surv) in enumerate(pairs, 1):
+            if score <= 0.0:
+                surv.setdefault("relevance", 0.0)
+                continue
+            surv["matched_by"].append(leg)
+            surv["leg_rank"] = min(surv.get("leg_rank", i), i)
+            surv["_rrf"] += w / (K_RRF + i)
             if is_bm25:
-                # BM25 命中本身就是相關度證據，而且這條腿回夠多候選、名次有意義，
+                # BM25 命中本身就是相關度證據；這條腿回夠多候選、名次有意義，
                 # 不需要相關度地板。relevance 顯示欄位用名次代理。
-                item["relevance"] = round(1.0 / i, 4)
-                item["_above_floor"] = True
+                surv["_above_floor"] = True
+                r = round(1.0 / i, 4)
             else:
-                rel = relevance(raw, leg)
-                item["relevance"] = round(rel, 4)
+                rel = relevance(score, leg)
                 if rel >= RELEVANCE_FLOOR:
-                    item["_above_floor"] = True
+                    surv["_above_floor"] = True
+                r = round(rel, 4)
+            if r > surv.get("relevance", -1.0):
+                surv["relevance"] = r
 
-    for item in results:
+    for surv in survivors:
+        surv.pop("_legs", None)
         # 下地板的減 1.0——_rrf 都在 0.01~0.02，減完必為負，穩定墊在所有上地板
-        # 之下。這樣「照 unified_score 由大到小排」就等於回傳順序（recall server
-        # 叫模型拿 unified_score 當順序用，兩者不能對不上）。
-        item["unified_score"] = round(item.pop("_rrf", 0.0)
-                                       - (0.0 if item.pop("_above_floor", False) else 1.0), 6)
-    return sorted(results, key=lambda r: r["unified_score"], reverse=True)
+        # 之下。這樣「照 unified_score 由大到小排」就等於回傳順序。
+        surv["unified_score"] = round(surv.pop("_rrf", 0.0)
+                                      - (0.0 if surv.pop("_above_floor", False) else 1.0), 6)
+    return sorted(survivors, key=lambda r: r["unified_score"], reverse=True)
 
 
 if __name__ == "__main__":

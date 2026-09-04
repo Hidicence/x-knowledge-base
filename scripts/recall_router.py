@@ -90,6 +90,7 @@ from action_recall import recall as action_recall, format_hint as format_action_
 from _session_dedup import filter_new as _dedup_filter_new, mark_shown as _dedup_mark_shown
 
 import xkb_paths
+import re
 import xkb_failures
 import xkb_provenance
 import xkb_relevance
@@ -223,6 +224,26 @@ def _assoc_dict(item: dict, *, keyword_scale: bool = False) -> dict:
     }
 
 
+# 一個「看起來是在找特定東西」的 token：含數字（tweet ID、錯誤碼、gpt-5.6）、
+# 含底線（ERR_CONNECTION_RESET、nash_su）、或帶連字號/點的 ASCII slug（repo 名、模型名）。純英文詞不算。
+_SPECIFIC_TOKEN = re.compile(
+    r"[A-Za-z0-9]*[0-9][A-Za-z0-9._-]*"
+    r"|[A-Za-z0-9]*_[A-Za-z0-9_]*"
+    r"|[A-Za-z][A-Za-z0-9]{2,}[.-][A-Za-z0-9.-]{2,}"  # 帶連字號/點的 ASCII slug
+)
+
+
+def _looks_specific(query: str) -> bool:
+    """查詢裡有沒有「在找特定東西」的 token。
+
+    light 掃描跑在幾乎每一句話上。BM25 對任何可斷詞的查詢都會命中——閒聊
+    「今天天氣真好」也會 n-gram 撞到某張卡的內文。所以 light 路徑只在查詢
+    看起來像在找識別碼（錯誤碼、型號、repo slug、ID）時才跑 BM25。
+    非 light 路徑不受這個閘門限制——那是真的在召回，值得跑整條腿。
+    """
+    return bool(_SPECIFIC_TOKEN.search(query or ""))
+
+
 def run_associative_recall(query: str, limit: int = 2, *,
                            fts_only: bool = False) -> tuple[str, list[dict]]:
     """Returns (formatted_text, results_list).
@@ -233,6 +254,8 @@ def run_associative_recall(query: str, limit: int = 2, *,
     nothing". gbrain's own 1.2 s is paid either way; what this removes is the
     part that was never doing any work.
     """
+    if fts_only and not _looks_specific(query):
+        return "", []
     try:
         from recall_for_conversation import search as _associative_search
     except ImportError as err:
@@ -470,11 +493,13 @@ def route(message: str, dry_run: bool = False) -> dict[str, Any]:
             r.source_type.endswith("_semantic") for r in wiki_results_filtered
         )
         wiki_threshold = SIDE_HINT_SEMANTIC if wiki_is_semantic else SIDE_HINT_KEYWORD
-        _has_bm25 = any(str(x.get("score_scale") or "").endswith("_bm25")
-                        for x in assoc_results)
-        if _has_bm25 or best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
-            # BM25 字面命中 => 使用者查的多半就是這張卡，直接給內容，
-            # 不要只回「你知識庫裡有 N 個相關片段」。
+        # BM25 命中 + 查詢看起來在找特定東西 => 使用者查的多半就是這張卡，
+        # 直接給內容。概念查詢就算 BM25 也命中，還是走 wiki 門檻那套判斷——
+        # 不然任何非 light 查詢只要 BM25 回東西就會被強制 side_hint。
+        _bm25_specific = (_looks_specific(query) and
+                          any(str(x.get("score_scale") or "").endswith("_bm25")
+                              for x in assoc_results))
+        if _bm25_specific or best_wiki_score >= wiki_threshold or (not has_wiki and parsed.confidence >= 0.6):
             delivery_mode = "side_hint"
         else:
             delivery_mode = "expandable_hint"

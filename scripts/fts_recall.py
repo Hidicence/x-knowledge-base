@@ -13,7 +13,6 @@ xkb_score.rank() 用 RRF 融合。
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
@@ -81,5 +80,3 @@ def fts_search(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         })
     return out
 
-
-_URL_SPLIT = re.compile(r"[/:?#=&]+")
