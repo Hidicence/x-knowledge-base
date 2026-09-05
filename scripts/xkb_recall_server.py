@@ -14,13 +14,15 @@ Tool: xkb_recall
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import xkb_paths
+
+from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
 
@@ -102,6 +104,17 @@ def _run_recall_structured(message: str) -> dict:
     if not ROUTER_SCRIPT.exists():
         return _failure(f"router not found at {ROUTER_SCRIPT}")
     try:
+        # Resolve the same portable contract at the MCP boundary, rather than
+        # relying on the router (or a future worker) to rediscover it.  This
+        # keeps process env > XKB_ENV_FILE precedence and ensures the
+        # canonical GEMINI_API_KEY reaches the child without putting a secret
+        # in the MCP command/configuration.
+        child_env = runtime_env()
+        child_env.update({
+            "OPENCLAW_WORKSPACE": str(WORKSPACE),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        })
         result = subprocess.run(
             [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
             capture_output=True,
@@ -109,8 +122,7 @@ def _run_recall_structured(message: str) -> dict:
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            env={**os.environ, "OPENCLAW_WORKSPACE": str(WORKSPACE),
-                 "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+            env=child_env,
         )
     except subprocess.TimeoutExpired:
         return _failure("router timed out after 30s")
