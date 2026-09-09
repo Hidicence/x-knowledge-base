@@ -634,12 +634,21 @@ def check_index_freshness() -> dict:
         "msg": f"search_index last written {age_hours:.1f}h ago",
     })
 
+    # 比對要用「來源」不是「檔名」。同一個來源在 memory/cards/ 可能有兩個
+    # 檔名（github-x 與 github_star-x、卡片與書籤各一份），索引去重之後只留
+    # 一列，留下的那一列指向另一個檔名。純比檔名會把這種重複檔報成「漏了、
+    # 關鍵字查不到」——內容其實查得到，那是紅燈但不是故障，跟它要取代的
+    # 誤報一樣沒用。
     grace_hours = int(os.getenv("XKB_INDEX_MISS_GRACE_HOURS", "26"))
     indexed_stems = set()
+    indexed_urls = set()
     for item in items:
         rel = item.get("relative_path") or item.get("path") or ""
         if rel:
             indexed_stems.add(Path(rel).stem)
+        url = (item.get("source_url") or "").strip()
+        if url:
+            indexed_urls.add(url)
 
     cutoff = datetime.now().timestamp() - grace_hours * 3600
     missed = []
@@ -647,10 +656,15 @@ def check_index_freshness() -> dict:
         if card.stem in indexed_stems:
             continue
         try:
-            if card.stat().st_mtime < cutoff:
-                missed.append(card.name)
+            if card.stat().st_mtime >= cutoff:
+                continue  # 剛產出，還沒輪到同步
+            text = card.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        source = re.search(r'^source_url:\s*"?([^"\n]+)"?\s*$', text, re.MULTILINE)
+        if source and source.group(1).strip() in indexed_urls:
+            continue  # 同一個來源已經以另一個檔名進了索引
+        missed.append(card.name)
 
     result["checks"].append({
         "ok": not missed,
@@ -658,7 +672,7 @@ def check_index_freshness() -> dict:
                 if not missed else
                 f"{len(missed)} 張卡片不在 search_index 裡（{grace_hours}h 以上）"
                 f"，關鍵字查不到：{', '.join(sorted(missed)[:3])}"
-                f"{' …' if len(missed) > 3 else ''} — 跑 scripts/sync_enriched_index.py"),
+                f"{' …' if len(missed) > 3 else ''} — 跑 scripts/build_search_index.sh --incremental"),
     })
 
     # vector_index：檢查新鮮度就好，不要把 62MB 讀進來數個數。

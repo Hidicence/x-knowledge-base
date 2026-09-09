@@ -99,12 +99,37 @@ class CardProduction(_Sandbox):
 
 
 class IndexFreshness(_Sandbox):
-    def _write_index(self, *stems: str, hours_ago: float = 1):
+    def _write_index(self, *stems: str, hours_ago: float = 1, urls: dict[str, str] | None = None):
+        urls = urls or {}
         rows = ",".join(
-            '{"relative_path": "memory/cards/%s.md", "summary": "s", "enriched": true}' % s
+            '{"relative_path": "memory/cards/%s.md", "source_url": "%s",'
+            ' "summary": "s", "enriched": true}' % (s, urls.get(s, ""))
             for s in stems
         )
         _touch(self.index, hours_ago=hours_ago, body='{"items": [%s]}' % rows)
+
+    def test_a_duplicate_card_file_is_not_a_missing_one(self):
+        """同一個來源有兩個卡片檔名，索引去重後只留一列。
+
+        內容查得到，這不是故障。比檔名的版本會在這裡誤報——而誤報正是這一項
+        原本要修掉的毛病。
+        """
+        url = "https://github.com/Hidicence/x-knowledge-base"
+        _touch(self.cards / "github_fork-x.md", hours_ago=200,
+               body=f'---\nsource_url: "{url}"\n---\n')
+        _touch(self.cards / "github_star-x.md", hours_ago=200,
+               body=f'---\nsource_url: "{url}"\n---\n')
+        # 陪襯用的卡片：讓「卡片數 vs 索引數」那一項維持在門檻內，這個測試
+        # 要問的是漏索引判斷，不是覆蓋率。
+        padding = [f"pad{i}" for i in range(20)]
+        for stem in padding:
+            _touch(self.cards / f"{stem}.md", hours_ago=200)
+        self._write_index("github_fork-x", *padding, hours_ago=100,
+                          urls={"github_fork-x": url})
+
+        section = hc.check_index_freshness()
+
+        self.assertTrue(all(c["ok"] for c in section["checks"]), self._msgs(section))
 
     def test_a_card_the_index_never_picked_up_is_reported(self):
         _touch(self.cards / "indexed.md", hours_ago=200)
