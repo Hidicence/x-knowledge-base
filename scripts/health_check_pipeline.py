@@ -526,8 +526,77 @@ def check_provenance_markers() -> dict:
     return result
 
 
+def _newest_card() -> tuple[float | None, str]:
+    """最新一張卡片的 mtime 與檔名；沒有卡片時回 (None, "")。"""
+    newest_mtime: float | None = None
+    newest_name = ""
+    for card in xkb_paths.card_files():
+        try:
+            mtime = card.stat().st_mtime
+        except OSError:
+            continue
+        if newest_mtime is None or mtime > newest_mtime:
+            newest_mtime, newest_name = mtime, card.name
+    return newest_mtime, newest_name
+
+
+def check_card_production() -> dict:
+    """書籤有沒有真的在變成知識卡。
+
+    2026-09-01 到 09-09，排程每晚都跑、每晚都回報成功，但每一筆都以 404 失敗：
+    八天、25 筆失敗、0 張卡。整條擷取管線是死的，而這份健檢一個字都沒提——
+    它只看得到「索引檔很久沒被寫過」，因為沒有新卡片本來就不會寫索引。
+
+    所以這裡問的是最上游那件事：東西進來了，有沒有變成知識。佇列本身變長不算
+    故障（那是消化速度，limit 的事）；佇列不是空的、卻連一張新卡都生不出來，
+    才是故障。
+    """
+    result = {"name": "card_production", "checks": []}
+
+    try:
+        from xkb_pending_work import uncarded_bookmarks
+        pending = len(uncarded_bookmarks(BOOKMARKS_DIR, CARDS_DIR))
+    except Exception as err:  # noqa: BLE001 — 健檢自己不能把整份報告弄掛
+        result["checks"].append({
+            "ok": False,
+            "msg": f"讀不出待轉書籤數量，無法判斷擷取管線是否還活著：{err}",
+        })
+        return result
+
+    stall_hours = int(os.getenv("XKB_CARD_STALL_HOURS", "48"))
+    newest_mtime, newest_name = _newest_card()
+
+    if newest_mtime is None:
+        result["checks"].append({
+            "ok": pending == 0,
+            "msg": f"memory/cards/ 是空的，還有 {pending} 筆書籤待轉",
+        })
+        return result
+
+    idle_hours = (datetime.now().timestamp() - newest_mtime) / 3600
+
+    # 佇列空的時候，多久沒產出新卡片都是正常的——那只代表你沒有新書籤。
+    if pending == 0:
+        result["checks"].append({
+            "ok": True,
+            "msg": f"書籤佇列已清空；最後一張卡 {newest_name}（{idle_hours:.0f}h 前）",
+        })
+        return result
+
+    stalled = idle_hours > stall_hours
+    result["checks"].append({
+        "ok": not stalled,
+        "msg": (f"{pending} 筆書籤待轉，最後一張卡 {idle_hours:.0f}h 前產出"
+                if not stalled else
+                f"{pending} 筆書籤待轉，但已經 {idle_hours:.0f}h 沒有任何新卡片"
+                f"（超過 {stall_hours}h）——書籤轉卡可能每晚都在失敗，"
+                f"看 /tmp/xkb-bookmark-batch.log"),
+    })
+    return result
+
+
 def check_index_freshness() -> dict:
-    """檢查 search_index 和 vector_index 的 summary 覆蓋率與更新時間。"""
+    """檢查 search_index 和 vector_index 的 summary 覆蓋率，以及有沒有漏掉卡片。"""
     result = {"name": "index_freshness", "checks": []}
 
     # search_index
@@ -547,12 +616,49 @@ def check_index_freshness() -> dict:
         "msg": f"search_index summary coverage: {has_summary}/{total} ({coverage}%) | enriched: {enriched}"
     })
 
-    # 最後修改時間
+    # 索引有沒有落後於卡片。
+    #
+    # 這裡原本問的是「索引檔 26 小時內有沒有被寫過」，而 sync_enriched_index
+    # 只在真的有東西要寫時才寫檔。於是這一項實際上問的是「今天有沒有新知識
+    # 進來」——安靜的一天會報壞，而 2026-09-01 到 09-09 書籤轉卡整個停擺時，
+    # 它也只報得出「索引沒有跟上」，沒有一個字提到一張卡都沒產出。症狀的症狀。
+    #
+    # 改成比時間戳也不行：卡片會被去重、鏡像、回填之類的維護動到 mtime，那會
+    # 讓「最新的卡比索引新」每天亮紅燈，換一種噪音而已。落後與否是名詞的問題
+    # 不是時鐘的問題——哪幾張卡不在索引裡。剛產出的卡還在路上，所以只算那些
+    # 已經過了一輪同步時間、卻仍然沒進索引的。
     mtime = INDEX_FILE.stat().st_mtime
     age_hours = (datetime.now().timestamp() - mtime) / 3600
     result["checks"].append({
-        "ok": age_hours < 26,
-        "msg": f"search_index last updated: {age_hours:.1f}h ago"
+        "ok": True,
+        "msg": f"search_index last written {age_hours:.1f}h ago",
+    })
+
+    grace_hours = int(os.getenv("XKB_INDEX_MISS_GRACE_HOURS", "26"))
+    indexed_stems = set()
+    for item in items:
+        rel = item.get("relative_path") or item.get("path") or ""
+        if rel:
+            indexed_stems.add(Path(rel).stem)
+
+    cutoff = datetime.now().timestamp() - grace_hours * 3600
+    missed = []
+    for card in xkb_paths.card_files():
+        if card.stem in indexed_stems:
+            continue
+        try:
+            if card.stat().st_mtime < cutoff:
+                missed.append(card.name)
+        except OSError:
+            continue
+
+    result["checks"].append({
+        "ok": not missed,
+        "msg": ("every card older than the sync window is in the search index"
+                if not missed else
+                f"{len(missed)} 張卡片不在 search_index 裡（{grace_hours}h 以上）"
+                f"，關鍵字查不到：{', '.join(sorted(missed)[:3])}"
+                f"{' …' if len(missed) > 3 else ''} — 跑 scripts/sync_enriched_index.py"),
     })
 
     # vector_index：檢查新鮮度就好，不要把 62MB 讀進來數個數。
@@ -567,11 +673,14 @@ def check_index_freshness() -> dict:
             "msg": "vector_index.json absent — 召回讀 semantic_index，此檔僅為重建用中間產物",
         })
     else:
+        v_mtime = VECTOR_FILE.stat().st_mtime
         size_mb = VECTOR_FILE.stat().st_size / 1e6
-        v_age_hours = (datetime.now().timestamp() - VECTOR_FILE.stat().st_mtime) / 3600
+        v_age_hours = (datetime.now().timestamp() - v_mtime) / 3600
+        # 同樣不看時鐘：這份也是有東西才寫。語意層真正的落後由 semantic_index
+        # 那一節比對內容判斷，這裡只確認檔案不是空的。
         result["checks"].append({
-            "ok": size_mb > 0.1 and v_age_hours < 26,
-            "msg": f"vector_index: {size_mb:.0f}MB, last updated {v_age_hours:.1f}h ago"
+            "ok": size_mb > 0.1,
+            "msg": f"vector_index: {size_mb:.0f}MB, last written {v_age_hours:.1f}h ago",
         })
 
     # cards vs index coverage
@@ -609,6 +718,7 @@ def main() -> int:
         check_governance_actionable(),
         check_provenance_markers(),
         check_conversation_capture(),
+        check_card_production(),
         check_index_freshness(),
     ]
 

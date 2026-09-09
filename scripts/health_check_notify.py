@@ -85,7 +85,8 @@ FAULT_LABELS = {
     "recall_telemetry": "召回沒有留下紀錄",
     "semantic_index": "語意索引",
     "topic_map": "分類對應表",
-    "index_freshness": "索引沒有跟上新內容",
+    "card_production": "書籤沒有變成知識卡",
+    "index_freshness": "索引落後於卡片",
     "provenance_markers": "知識來源標記不一致",
     "conversation_capture": "對話沒有被記錄下來",
 }

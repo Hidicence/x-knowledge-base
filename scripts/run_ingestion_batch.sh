@@ -25,6 +25,8 @@
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/_xkb_env.sh
+source "$SKILL_DIR/scripts/_xkb_env.sh"
 LOG_FILE="${XKB_INGESTION_LOG:-/tmp/xkb-ingestion-batch.log}"
 LOCK_FILE="/tmp/xkb-ingestion-batch.lock"
 
@@ -42,6 +44,9 @@ if [[ -n "$ENV_FILE" && ! -f "$ENV_FILE" ]]; then
   echo "[ERROR] XKB env file not found: $ENV_FILE" >&2
   exit 1
 fi
+
+# An explicit --env-file outranks whatever the scheduler put in the environment.
+xkb_env_file_wins "$ENV_FILE"
 
 EMBED_ARGS=(--incremental)
 [[ -n "$ENV_FILE" ]] && EMBED_ARGS+=(--env-file "$ENV_FILE")
