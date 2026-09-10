@@ -123,17 +123,33 @@ def _parse_ts(row: dict) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+# 比這個更近的兩次執行，是同一段人工操作，不是排程的節奏。
+# 這個值存在的理由見 typical_gap_seconds。
+SAME_SESSION_SECONDS = 3600.0
+
+
 def typical_gap_seconds(rows: list[dict]) -> float | None:
     """這個階段平常多久跑一次——用它自己的紀錄算,不要手調常數。
 
     門檻寫死成「24 小時」的話,改排程就會變成誤報,而每天誤報的檢查等於沒有
-    檢查。取間隔的中位數,離群的一次補跑不會把它拉歪。
+    檢查。所以取間隔的中位數。
+
+    但中位數只擋得住「一次」離群。2026-09-10 我為了驗證連續手動跑了六次書籤
+    批次,每次相隔幾分鐘,中位間隔就被壓成 0 小時——於是健檢說「平常每 0h 跑
+    一次,已經 11h 沒有紀錄」,把一個正常的階段報成排程死掉。我上一版的註解寫
+    著「一次補跑不會把它拉歪」,而我的測試也只測了一次。
+
+    所以先把「同一段人工操作」濾掉：靠得比 SAME_SESSION_SECONDS 還近的兩次
+    執行不算節奏。濾完不足三個間隔就回 None——沒有節奏可比的時候要保持沉默,
+    而不是拿一個算出來的假節奏去判斷。
     """
     times = sorted(t for t in (_parse_ts(r) for r in rows) if t is not None)
     if len(times) < 3:
         return None
-    gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:]))
-    if not gaps:
+    gaps = sorted(gap for gap in
+                  ((b - a).total_seconds() for a, b in zip(times, times[1:]))
+                  if gap >= SAME_SESSION_SECONDS)
+    if len(gaps) < 2:
         return None
     mid = len(gaps) // 2
     return gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2

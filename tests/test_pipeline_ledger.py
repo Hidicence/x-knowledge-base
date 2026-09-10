@@ -115,6 +115,34 @@ class TypicalGap(_LedgerSandbox):
         gap = xkb_ledger.typical_gap_seconds(rows)
         self.assertAlmostEqual(gap, DAY, delta=DAY * 0.1)
 
+    def test_a_burst_of_manual_runs_does_not_move_the_median(self):
+        """中位數只擋得住「一次」離群。
+
+        2026-09-10 我為了驗證連續手動跑了六次書籤批次，每次相隔幾分鐘，中位
+        間隔被壓成 0 小時——健檢於是說「平常每 0h 跑一次，已經 11h 沒有紀錄」，
+        把一個正常的階段報成排程死掉。上一版的註解寫著「一次補跑不會把它拉
+        歪」，而上一版的測試也只測了一次。
+        """
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        rows = [{"ts": (now - timedelta(days=d)).isoformat(), "stage": "s"}
+                for d in range(8, 0, -1)]
+        rows += [{"ts": (now - timedelta(minutes=m)).isoformat(), "stage": "s"}
+                 for m in (40, 32, 25, 18, 9, 2)]
+
+        gap = xkb_ledger.typical_gap_seconds(rows)
+
+        self.assertIsNotNone(gap)
+        self.assertAlmostEqual(gap, DAY, delta=DAY * 0.2)
+
+    def test_a_history_with_no_rhythm_yet_says_so(self):
+        """全部都在同一段操作裡——沒有節奏可比，就不要拿假節奏去判斷。"""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        rows = [{"ts": (now - timedelta(minutes=m)).isoformat(), "stage": "s"}
+                for m in (30, 20, 10, 4)]
+        self.assertIsNone(xkb_ledger.typical_gap_seconds(rows))
+
 
 class HealthCheckReadsIt(_LedgerSandbox):
     def test_eight_quiet_nights_are_a_fault(self):
