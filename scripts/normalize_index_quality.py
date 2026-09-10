@@ -26,23 +26,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_frontmatter
-
-
-def _card_path(item: dict) -> Path | None:
-    """索引列指向的那個檔案。找不到就回 None——標記不上要說得出來。"""
-    raw = (item.get("path") or "").strip()
-    if raw:
-        candidate = Path(raw)
-        if candidate.is_absolute() and candidate.exists():
-            return candidate
-    rel = (item.get("relative_path") or "").strip()
-    if not rel:
-        return None
-    for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
-        candidate = base / rel
-        if candidate.exists():
-            return candidate
-    return None
+import xkb_index
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -125,12 +109,17 @@ def main() -> int:
             merged = sorted(set(current_reasons) | set(reasons))
             # 標在檔案上，不是索引列上。索引是衍生物，重建一次就把這個決定
             # 洗掉——實測正式索引 1680 筆裡帶 excluded 的是 0 筆。
-            card = _card_path(item)
-            if card is None:
+            #
+            # 而且一列代表的是一組檔案：同一份知識可能被歸進兩個分類資料夾。
+            # 只標其中一份的話，重建時去重會挑「沒有被排除」的那一份留下，
+            # 排除等於沒發生——實測 8 筆標記只有 5 筆生效，而輸出說 8 筆成功。
+            files = xkb_index.files_for_item(item)
+            if not files:
                 unmarkable.append(rel_path)
-            elif xkb_frontmatter.mark_excluded(
-                    card, "; ".join(merged), dry_run=args.dry_run):
-                changed += 1
+            for path in files:
+                if xkb_frontmatter.mark_excluded(
+                        path, "; ".join(merged), dry_run=args.dry_run):
+                    changed += 1
             excluded += 1
             if len(examples) < 20:
                 examples.append((rel_path, item.get("title", ""), merged))

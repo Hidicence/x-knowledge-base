@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,102 @@ import xkb_failures
 import xkb_paths
 
 BUILDER = xkb_paths.SCRIPTS_DIR / "build_search_index.sh"
+
+
+_SOURCE_URL = re.compile(r'^source_url:[ \t]*"?([^"\n]*?)"?[ \t]*$', re.MULTILINE)
+
+_by_stem: dict[str, list[Path]] | None = None
+_by_url: dict[str, list[Path]] | None = None
+
+
+def _scan() -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
+    """掃一次磁碟，建 stem → 檔案 與 source_url → 檔案 兩張表。
+
+    每一列各自去掃全部檔案的話是 1680 × 3300 次讀檔。掃一次就夠。
+    """
+    global _by_stem, _by_url
+    if _by_stem is not None and _by_url is not None:
+        return _by_stem, _by_url
+    by_stem: dict[str, list[Path]] = {}
+    by_url: dict[str, list[Path]] = {}
+    for root in (xkb_paths.CARDS_DIR, xkb_paths.BOOKMARKS_DIR):
+        if not root.exists():
+            continue
+        for found in root.rglob("*.md"):
+            if found.name.startswith(".") or not found.is_file():
+                continue
+            by_stem.setdefault(found.stem, []).append(found)
+            try:
+                text = found.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            match = _SOURCE_URL.search(text)
+            url = match.group(1).strip() if match else ""
+            # 只有真的是網址才當識別依據。空字串會把所有沒有來源的卡片串成一組。
+            if url.startswith(("http://", "https://")):
+                by_url.setdefault(url, []).append(found)
+    _by_stem, _by_url = by_stem, by_url
+    return by_stem, by_url
+
+
+def reset_scan() -> None:
+    """測試用，或磁碟在同一個行程裡被改過之後。"""
+    global _by_stem, _by_url
+    _by_stem = _by_url = None
+
+
+def files_for_item(item: dict, *, by_source: bool = True) -> list[Path]:
+    """索引的一列代表的是「一組檔案」，不是一個檔案。
+
+    by_source 決定「一組」有多大，而這個差別很要緊：
+
+      True （預設）連同來源相同的其他檔案一起——品質排除要的是這個。一個
+            沒被充實過的空殼書籤，它的每一份副本都該一起排除。
+
+      False 只認路徑與檔名相同的那些。去重要的是這個：重複組本來就共用同一
+            個來源，用來源去找會連「要保留的那一份」都撈進來。2026-09-10 我
+            就是這樣寫的，結果整組七份全被標成排除——那份知識會從召回裡完全
+            消失，而輸出只會說「已標記」。
+
+
+    索引會依 source_url 去重，所以同一份知識在磁碟上可能有兩三個檔案——同一
+    個書籤被歸進兩個分類資料夾、或書籤與卡片各一份——而索引裡只留下最好的那
+    一列。
+
+    2026-09-10：品質腳本照著那一列去標記檔案，標到的是「贏的那一列指向的檔
+    案」，另外那幾份沒標。重建之後去重會挑「沒有被排除」的那一份留下，於是
+    排除等於沒有發生：8 筆標記，索引裡只看得到 5 筆生效，而兩支腳本都回報成功。
+
+    所以要標就要標齊。這裡回傳同一份知識的所有檔案。
+    """
+    by_stem, by_url = _scan()
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(path: Path) -> None:
+        key = str(path.resolve())
+        if key not in seen and path.is_file():
+            seen.add(key)
+            paths.append(path)
+
+    raw = (item.get("path") or "").strip()
+    if raw and Path(raw).is_absolute():
+        _add(Path(raw))
+    rel = (item.get("relative_path") or "").strip()
+    if rel:
+        for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
+            _add(base / rel)
+
+    stem = Path(rel or raw).stem
+    for found in by_stem.get(stem, []):
+        _add(found)
+
+    if by_source:
+        url = (item.get("source_url") or "").strip()
+        if url.startswith(("http://", "https://")):
+            for found in by_url.get(url, []):
+                _add(found)
+    return paths
 
 
 def rebuild(*, incremental: bool = True, timeout: int = 900) -> bool:

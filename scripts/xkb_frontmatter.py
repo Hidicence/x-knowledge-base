@@ -91,6 +91,33 @@ def mark_excluded(path: Path, reason: str = "", *, dry_run: bool = False) -> boo
     return True
 
 
+def unmark_excluded(path: Path, *, dry_run: bool = False) -> bool:
+    """撤掉排除標記。回傳有沒有改動。
+
+    一個把知識從召回裡拿掉的決定，必須有辦法反悔。2026-09-10 一個寫錯的
+    「標記整組」把重複組裡要保留的那一份也標掉了——那份知識會完全消失，而
+    當時沒有任何工具可以還原，只能一個檔案一個檔案手動改。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not has_frontmatter(text):
+        return False
+    if (get(text, "excluded") or "").strip().lower() not in {"true", "yes", "1"}:
+        return False
+    updated = set_field(text, "excluded", "false")
+    if get(updated, "excluded_reason") is not None:
+        updated = set_field(updated, "excluded_reason", "")
+    if dry_run:
+        return True
+    try:
+        path.write_text(updated, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def is_excluded(path: Path) -> bool:
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")

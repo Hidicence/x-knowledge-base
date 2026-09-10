@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -281,6 +282,114 @@ class GovernanceRunsTheTidyStep(unittest.TestCase):
         self.assertIn("canonicalize_duplicates", text)
         self.assertIn("normalize_index_quality", text)
         self.assertIn("xkb_index", text)
+
+
+class DeduplicationMustLeaveOneCopy(unittest.TestCase):
+    """去重不可以把整組都標掉——那不是去重，那是刪除。
+
+    2026-09-10：把「標記一個檔案」改成「標記同一份知識的所有檔案」時，用的是
+    source_url 去找。品質排除要的正是那個（空殼書籤的每一份副本都該排除），但
+    重複組本來就共用同一個來源，於是「要保留的那一份」也被撈進來標掉。七份全
+    排除，那份知識會從召回裡完全消失，而輸出只會說「已標記 6 張」。
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import xkb_index
+        self.xkb_index = xkb_index
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.cards = self.root / "cards"
+        self.cards.mkdir()
+        self.addCleanup(self._tmp.cleanup)
+        patches = [
+            mock.patch.object(xkb_index.xkb_paths, "CARDS_DIR", self.cards),
+            mock.patch.object(xkb_index.xkb_paths, "BOOKMARKS_DIR", self.root / "bookmarks"),
+            mock.patch.object(xkb_index.xkb_paths, "WORKSPACE", self.root),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        xkb_index.reset_scan()
+        self.addCleanup(xkb_index.reset_scan)
+
+    def _card(self, stem: str, url: str) -> Path:
+        path = self.cards / f"{stem}.md"
+        path.write_text(
+            "---\n"
+            f"id: {stem}\n"
+            "type: knowledge-card\n"
+            f"source_url: {url}\n"
+            "category: 99-general\n"
+            "tags: [a]\n"
+            "---\n"
+            "\n"
+            f"# {stem}\n",
+            encoding="utf-8")
+        return path
+
+    def test_by_source_gathers_every_copy(self):
+        """品質排除要的是這個：同一份知識的每一份副本。"""
+        url = "https://x.com/i/status/123456789012345678"
+        self._card("copy_a", url)
+        self._card("copy_b", url)
+        item = {"relative_path": "copy_a.md", "source_url": url}
+
+        found = self.xkb_index.files_for_item(item, by_source=True)
+
+        self.assertEqual({p.stem for p in found}, {"copy_a", "copy_b"})
+
+    def test_without_by_source_only_this_row_files(self):
+        """去重要的是這個：不要把同組的其他成員撈進來。"""
+        url = "https://x.com/i/status/123456789012345678"
+        self._card("copy_a", url)
+        self._card("copy_b", url)
+        item = {"relative_path": "copy_a.md", "source_url": url}
+
+        found = self.xkb_index.files_for_item(item, by_source=False)
+
+        self.assertEqual({p.stem for p in found}, {"copy_a"})
+
+    def test_the_canonical_copy_is_never_marked(self):
+        """跑完整支腳本，確認保留的那一份沒有被標。"""
+        url = "https://x.com/i/status/123456789012345678"
+        keep = self._card("keeper", url)
+        drop = self._card("dropper", url)
+        index = self.root / "search_index.json"
+        index.write_text(json.dumps({"version": "1.1", "items": [
+            {"path": str(keep), "relative_path": "keeper.md", "title": "好標題",
+             "summary": "夠長的摘要內容，超過十八個字元的門檻",
+             "tags": [], "category": "99-general", "source_url": url,
+             "source_type": "x-bookmark", "enriched": True},
+            {"path": str(drop), "relative_path": "dropper.md", "title": "dropper",
+             "summary": "", "tags": [], "category": "99-general", "source_url": url,
+             "source_type": "x-bookmark", "enriched": False},
+        ]}, ensure_ascii=False), encoding="utf-8")
+
+        env = {**os.environ,
+               "XKB_DATA_DIR": str(self.root),
+               "CARDS_DIR": str(self.cards),
+               "BOOKMARKS_DIR": str(self.root / "bookmarks"),
+               "INDEX_FILE": str(index),
+               "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "canonicalize_duplicates.py")],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        self.assertFalse(xkb_frontmatter.is_excluded(keep), "保留的那一份被標掉了")
+        self.assertTrue(xkb_frontmatter.is_excluded(drop))
+
+    def test_a_marking_can_be_undone(self):
+        """把知識從召回裡拿掉的決定，必須有辦法反悔。"""
+        card = self._card("x", "https://example.test/x")
+        xkb_frontmatter.mark_excluded(card, "reason")
+        self.assertTrue(xkb_frontmatter.is_excluded(card))
+
+        self.assertTrue(xkb_frontmatter.unmark_excluded(card))
+
+        self.assertFalse(xkb_frontmatter.is_excluded(card))
+        self.assertFalse(xkb_frontmatter.unmark_excluded(card))
 
 
 if __name__ == "__main__":

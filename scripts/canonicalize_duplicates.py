@@ -28,27 +28,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_frontmatter
-
-
-def _card_path(item: dict) -> Path | None:
-    """索引列指向的那個檔案。找不到就回 None——標記不上要說得出來。"""
-    raw = (item.get("path") or "").strip()
-    if raw:
-        candidate = Path(raw)
-        if candidate.is_absolute() and candidate.exists():
-            return candidate
-    rel = (item.get("relative_path") or "").strip()
-    if not rel:
-        return None
-    for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
-        candidate = base / rel
-        if candidate.exists():
-            return candidate
-    return None
+import xkb_index
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 INDEX_FILE = xkb_paths.INDEX_FILE
+
 LOW_SIGNAL_SUMMARIES = {"", "（待整理）", "待整理", "todo", "tbd", "n/a"}
 
 
@@ -126,6 +111,8 @@ def main() -> int:
         keep_idx = ranked[0]
         keep_item = items[keep_idx]
         keep_rel = keep_item.get("relative_path") or keep_item.get("path") or ""
+        # 保留的那一份的所有檔案。這組底下沒有任何一個標記可以碰到它們。
+        keep_files = set(xkb_index.files_for_item(keep_item, by_source=False))
 
         for idx in ranked[1:]:
             item = items[idx]
@@ -135,13 +122,23 @@ def main() -> int:
             # 標在檔案上，不是標在索引列上。索引是衍生物：標在列上的話，
             # 下一次重建就把這個決定洗掉——實測正式索引 1680 筆裡帶 excluded
             # 的是 0 筆，這支腳本過去的成果一次都沒留下來。
-            card = _card_path(item)
-            if card is not None and xkb_frontmatter.mark_excluded(
-                    card, f"duplicate_source_url; canonical={keep_rel}",
-                    dry_run=args.dry_run):
-                changed_here = True
-            elif card is None:
+            #
+            # 而且一列代表的是一組檔案：同一份知識可能被歸進兩個分類資料夾。
+            # 只標其中一份的話，重建時去重會挑「沒有被排除」的那一份留下，
+            # 排除等於沒發生。
+            #
+            # by_source=False 是這裡的關鍵：重複組本來就共用同一個來源，用來源
+            # 去找會把「要保留的那一份」也撈進來。加上 keep_files 這道保險——
+            # 保留的那一份無論如何都不能被標，否則整組一起消失。
+            files = [p for p in xkb_index.files_for_item(item, by_source=False)
+                     if p not in keep_files]
+            if not files:
                 unmarkable.append(rel_path)
+            for path in files:
+                if xkb_frontmatter.mark_excluded(
+                        path, f"duplicate_source_url; canonical={keep_rel}",
+                        dry_run=args.dry_run):
+                    changed_here = True
 
             if changed_here:
                 changed += 1
