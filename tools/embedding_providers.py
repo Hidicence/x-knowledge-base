@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from typing import List
@@ -21,6 +22,12 @@ from urllib.parse import urlparse
 
 from pathlib import Path
 import requests
+
+# 這個模組會被兩種方式載入：`from tools.embedding_providers import ...`（tools/
+# 不在 sys.path）與 `from embedding_providers import ...`（在 path 上）。前者
+# 找不到隔壁的 runtime_config，所以這裡自己補上，跟 scripts/ 那邊同一個做法。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runtime_config import load_env_file, runtime_env  # noqa: E402
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,39 +69,24 @@ def _http_endpoint(value: str, setting: str) -> str:
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
-    """Read a dotenv-style file without mutating ``os.environ``.
+    """Read a dotenv-style env file. Thin alias over the one shared loader.
 
-    Explicit env files are an injection boundary for isolated workers.  Values
-    already present in the process always win over values from this file.
+    This used to be a second, byte-for-byte copy of runtime_config.load_env_file:
+    same dotenv rules, same "process env wins" precedence, maintained separately.
+    Two loaders means two places to fix when the precedence rule turns out to be
+    wrong — and on 2026-09-09 it did, when a scheduler's inherited LLM_* silently
+    replaced the endpoint an explicit --env-file had named. The embedding side
+    had the identical hole for EMBEDDING_* / GEMINI_API_KEY; nobody had noticed
+    because nobody had looked at it as the same rule.
+
+    One copy now. The only thing that was ever different was the wording of the
+    error, and callers only ever asserted on the shared one's.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Embedding env file not found: {path}")
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise OSError(f"Unable to read embedding env file {path}: {exc}") from exc
-    for line_no, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[7:].lstrip()
-        if "=" not in stripped:
-            raise ValueError(f"Invalid embedding env file {path} line {line_no}: expected KEY=VALUE")
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        if not key or not key.replace("_", "").isalnum():
-            raise ValueError(f"Invalid embedding env file {path} line {line_no}: invalid key")
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key] = value
-    return values
+    return load_env_file(path)
 
 
 def load_config(env_file: str | Path | None = None) -> EmbeddingConfig:
-    env_values = _load_env_file(Path(env_file)) if env_file is not None else {}
+    settings = runtime_env(env_file)
     configured = _load_xkb_config().get("embedding", {})
     defaults = {
         "provider": "gemini",
@@ -106,10 +98,10 @@ def load_config(env_file: str | Path | None = None) -> EmbeddingConfig:
         if setting in defaults and not isinstance(value, str):
             raise ValueError(f"embedding.{setting} must be a string")
     values = {
-        "provider": os.getenv("EMBEDDING_PROVIDER") or env_values.get("EMBEDDING_PROVIDER") or configured.get("provider", defaults["provider"]),
-        "model": os.getenv("EMBEDDING_MODEL") or env_values.get("EMBEDDING_MODEL") or configured.get("model", defaults["model"]),
-        "endpoint": os.getenv("EMBEDDING_ENDPOINT") or env_values.get("EMBEDDING_ENDPOINT") or configured.get("endpoint", defaults["endpoint"]),
-        "workspace_root": os.getenv("EMBEDDING_WORKSPACE_ROOT") or env_values.get("EMBEDDING_WORKSPACE_ROOT") or configured.get("workspace_root", defaults["workspace_root"]),
+        "provider": settings.get("EMBEDDING_PROVIDER") or configured.get("provider", defaults["provider"]),
+        "model": settings.get("EMBEDDING_MODEL") or configured.get("model", defaults["model"]),
+        "endpoint": settings.get("EMBEDDING_ENDPOINT") or configured.get("endpoint", defaults["endpoint"]),
+        "workspace_root": settings.get("EMBEDDING_WORKSPACE_ROOT") or configured.get("workspace_root", defaults["workspace_root"]),
     }
     for setting, value in values.items():
         if not isinstance(value, str):
@@ -273,26 +265,25 @@ def get_provider(env_file: str | Path | None = None) -> EmbeddingProvider:
     Optional:
         EMBEDDING_MODEL=<model name>  (overrides per-provider default)
     """
-    env_file = env_file or os.getenv("XKB_ENV_FILE")
-    env_values = _load_env_file(Path(env_file)) if env_file is not None else {}
+    settings = runtime_env(env_file)
     config = load_config(env_file=env_file)
     provider_name, model = config.provider, config.model
     _validate_model(provider_name, model)
 
     if provider_name == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY") or env_values.get("GEMINI_API_KEY", "")
+        api_key = settings.get("GEMINI_API_KEY", "")
         if not api_key:
             raise EnvironmentError("GEMINI_API_KEY is required for EMBEDDING_PROVIDER=gemini")
         return GeminiProvider(api_key=api_key, model=model, base_url=config.endpoint)
 
     elif provider_name == "openai":
-        api_key = os.getenv("OPENAI_API_KEY") or env_values.get("OPENAI_API_KEY", "")
+        api_key = settings.get("OPENAI_API_KEY", "")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY is required for EMBEDDING_PROVIDER=openai")
         return OpenAIProvider(api_key=api_key, model=model)
 
     elif provider_name == "ollama":
-        base_url = os.getenv("OLLAMA_BASE_URL") or env_values.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        base_url = settings.get("OLLAMA_BASE_URL") or "http://localhost:11434"
         return OllamaProvider(base_url=base_url, model=model or "nomic-embed-text")
 
     raise ValueError(f"Unknown EMBEDDING_PROVIDER: '{provider_name}'. Supported: {', '.join(PROVIDER_REGISTRY)}")

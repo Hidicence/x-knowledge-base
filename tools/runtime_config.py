@@ -35,7 +35,23 @@ def load_env_file(path: str | Path) -> dict[str, str]:
 
 
 def runtime_env(env_file: str | Path | None = None) -> dict[str, str]:
-    """Return explicit env-file values; process environment remains highest precedence."""
+    """Return explicit env-file values; process environment remains highest precedence.
+
+    One exception to "the process wins": an empty value is not a value. `FOO=`
+    in the environment is a variable someone exported without filling in, and
+    letting it beat a real value from the env file produces an empty credential
+    and an error that names neither. The file's value stands instead.
+
+    This is the only precedence rule in XKB. It used to be written twice —
+    tools/embedding_providers.py carried its own copy for EMBEDDING_* and the
+    API keys — which is how the same hole could exist in two places and only
+    ever be looked at in one.
+    """
     selected = env_file or os.getenv("XKB_ENV_FILE")
     file_values = load_env_file(selected) if selected else {}
-    return {**file_values, **os.environ}
+    merged = dict(file_values)
+    for key, value in os.environ.items():
+        if value == "" and file_values.get(key):
+            continue
+        merged[key] = value
+    return merged
