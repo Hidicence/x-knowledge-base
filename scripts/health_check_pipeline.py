@@ -526,6 +526,88 @@ def check_provenance_markers() -> dict:
     return result
 
 
+def check_pipeline_ledger() -> dict:
+    """每個階段上一次執行做了什麼——照它自己的節奏判斷，不用手調門檻。
+
+    這一項問的是別的檢查問不到的事。其他檢查看的都是現況（有幾張卡、索引裡
+    有幾筆），而現況是可以重算的，重算不出歷史。2026-09-01 到 09-09 書籤轉卡
+    每晚失敗、八天 0 產出時，所有現況的數字都還在、都「正常」，沒有任何一項
+    檢查看得到那八個晚上。
+
+    門檻用各階段自己的紀錄算：跑得多密由中位間隔決定，改排程不會變成誤報。
+    寫死成 24 小時的話，一改排程就天天紅燈，而天天紅燈等於沒有檢查。
+    """
+    result = {"name": "pipeline_ledger", "checks": []}
+
+    try:
+        import xkb_ledger
+    except Exception as err:  # noqa: BLE001
+        result["checks"].append({"ok": False, "msg": f"帳本模組載入失敗：{err}"})
+        return result
+
+    rows = xkb_ledger.read()
+    if not rows:
+        # 帳本是新的，或這台機器還沒跑過任何階段。沒有紀錄不等於故障。
+        result["checks"].append({
+            "ok": True,
+            "msg": f"帳本還沒有紀錄（{xkb_ledger.LEDGER_PATH.name}）——下一次排程執行後才會有",
+        })
+        return result
+
+    now = datetime.now(timezone.utc)
+    quiet_runs = int(os.getenv("XKB_LEDGER_QUIET_RUNS", "3"))
+
+    for stage in sorted({r.get("stage", "") for r in rows if r.get("stage")}):
+        stage_rows = [r for r in rows if r.get("stage") == stage]
+        last = stage_rows[-1]
+        last_ts = xkb_ledger._parse_ts(last)
+
+        # 1. 上一次整批失敗
+        if not last.get("ok", True):
+            result["checks"].append({
+                "ok": False,
+                "msg": f"{stage}：上一次執行整批失敗——{last.get('reason') or '沒有記下原因'}",
+            })
+            continue
+
+        # 2. 這個階段停了。快慢由它自己的紀錄決定。
+        gap = xkb_ledger.typical_gap_seconds(stage_rows)
+        if gap and last_ts:
+            silent = (now - last_ts).total_seconds()
+            if silent > gap * 3:
+                result["checks"].append({
+                    "ok": False,
+                    "msg": (f"{stage}：平常每 {gap / 3600:.0f}h 跑一次，"
+                            f"已經 {silent / 3600:.0f}h 沒有紀錄——排程可能沒在跑"),
+                })
+                continue
+
+        # 3. 連續幾次都沒有產出，而且還有東西在排隊。
+        recent = stage_rows[-quiet_runs:]
+        produced_recent = [r.get("produced") for r in recent if "produced" in r]
+        waiting = any((r.get("pending") or 0) > 0 or (r.get("failed") or 0) > 0
+                      for r in recent)
+        if (len(produced_recent) == quiet_runs
+                and all(p == 0 for p in produced_recent) and waiting):
+            reason = next((r.get("reason") for r in reversed(recent) if r.get("reason")), "")
+            result["checks"].append({
+                "ok": False,
+                "msg": (f"{stage}：連續 {quiet_runs} 次執行都沒有產出，但還有東西在排隊"
+                        + (f"——{reason}" if reason else "")),
+            })
+            continue
+
+        bits = [f"{k}={last[k]}" for k in ("intake", "produced", "failed", "pending")
+                if k in last]
+        age = f"{(now - last_ts).total_seconds() / 3600:.0f}h 前" if last_ts else "時間不明"
+        result["checks"].append({
+            "ok": True,
+            "msg": f"{stage}：{age}　" + " ".join(bits) if bits else f"{stage}：{age}",
+        })
+
+    return result
+
+
 def _newest_card() -> tuple[float | None, str]:
     """最新一張卡片的 mtime 與檔名；沒有卡片時回 (None, "")。"""
     newest_mtime: float | None = None
@@ -733,6 +815,7 @@ def main() -> int:
         check_provenance_markers(),
         check_conversation_capture(),
         check_card_production(),
+        check_pipeline_ledger(),
         check_index_freshness(),
     ]
 

@@ -73,6 +73,15 @@ print(xkb_paths.VECTOR_FILE.resolve())
 started_at=$(date +%s)
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch start"
 
+# 帳本：見 scripts/xkb_ledger.py。這一階段的「產出」是新增的語意向量筆數。
+ledger() {
+  local produced="$1" reason="$2" okflag="$3"
+  local args=(record --stage ingestion-batch --produced "$produced")
+  [[ -n "$reason" ]] && args+=(--reason "$reason")
+  [[ "$okflag" == "not-ok" ]] && args+=(--not-ok)
+  python3 scripts/xkb_ledger.py "${args[@]}" >>"$LOG_FILE" 2>&1 || true
+}
+
 log "> Syncing enriched cards into the search index..."
 run python3 scripts/sync_enriched_index.py
 
@@ -86,6 +95,7 @@ set -e
 cat "$EMBED_OUT" >>"$LOG_FILE"
 if [[ "$embed_status" -ne 0 ]]; then
   echo "XKB 攝取批次失敗：向量索引建置離開碼 $embed_status（詳見 $LOG_FILE）" >&2
+  ledger 0 "向量索引建置離開碼 $embed_status" not-ok
   exit "$embed_status"
 fi
 
@@ -95,17 +105,20 @@ fi
 pending=$(sed -n 's/.*To embed: \([0-9][0-9]*\).*/\1/p' "$EMBED_OUT" | tail -1)
 if [[ -z "$pending" ]]; then
   echo "XKB 攝取批次失敗：讀不出待轉數量，無法確認索引有沒有更新（詳見 $LOG_FILE）" >&2
+  ledger 0 "讀不出待轉數量，無法確認索引有沒有更新" not-ok
   exit 1
 fi
 
 if [[ "$pending" -gt 0 ]]; then
   if [[ ! -f "$VECTOR_FILE" ]]; then
     echo "XKB 攝取批次失敗：索引檔不存在（$VECTOR_FILE）" >&2
+    ledger 0 "索引檔不存在：$VECTOR_FILE" not-ok
     exit 1
   fi
   written_at=$(stat -c %Y "$VECTOR_FILE")
   if [[ "$written_at" -lt "$started_at" ]]; then
     echo "XKB 攝取批次失敗：有 $pending 筆待轉，但索引沒有被這次執行寫入（詳見 $LOG_FILE）" >&2
+    ledger 0 "有 $pending 筆待轉，但索引沒有被這次執行寫入" not-ok
     exit 1
   fi
 fi
@@ -114,6 +127,7 @@ log "> Pending work:"
 python3 scripts/xkb_pending_work.py >>"$LOG_FILE" 2>&1 \
   || log "  (pending-work report unavailable)"
 
+ledger "$pending" "" ok
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ingestion batch done"
 
 # Speak only when there was something to say. Counts for the day live in the

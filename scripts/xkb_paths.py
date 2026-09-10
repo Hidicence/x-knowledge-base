@@ -112,6 +112,12 @@ TOPIC_PROFILE_FILE = Path(
     os.getenv("XKB_TOPIC_PROFILE_PATH", str(XKB_DATA_DIR / "topic_profile.json"))
 )
 TELEMETRY_PATH = XKB_DATA_DIR / "recall-telemetry.jsonl"
+
+# 每次管線執行的紀錄。跟上面那份 telemetry 是同一個用途的兩半：一份記召回
+# 這條互動路徑，一份記排程這條批次路徑。兩者都是重算不出來的東西。
+PIPELINE_LEDGER = Path(
+    os.getenv("XKB_PIPELINE_LEDGER", str(XKB_DATA_DIR / "pipeline-ledger.jsonl"))
+)
 MEMORY_MD = WORKSPACE / "MEMORY.md"
 
 # The knowledge service's store: sessions, turns, cards, evidence. Two readers

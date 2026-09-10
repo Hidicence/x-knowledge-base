@@ -86,6 +86,7 @@ FAULT_LABELS = {
     "semantic_index": "語意索引",
     "topic_map": "分類對應表",
     "card_production": "書籤沒有變成知識卡",
+    "pipeline_ledger": "有階段沒在動",
     "index_freshness": "索引落後於卡片",
     "provenance_markers": "知識來源標記不一致",
     "conversation_capture": "對話沒有被記錄下來",

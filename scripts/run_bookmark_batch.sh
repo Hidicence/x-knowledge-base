@@ -70,6 +70,26 @@ log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch start (limit=$LIMIT, pendin
 OUT=$(mktemp)
 trap 'rm -f "$OUT"' EXIT
 
+# 帳本：這一次收了多少、產出多少、壞了多少、還剩多少。log 是給人追細節的,
+# 這一行是給機器問「昨晚這一階段做了什麼」的——那八天 0 產出之所以沒人發現,
+# 就是因為沒有任何地方能回答那個問題。
+ledger() {
+  local produced="$1" failed="$2" pend="$3" reason="$4" okflag="$5"
+  local args=(record --stage bookmark-batch)
+  [[ "$before" =~ ^[0-9]+$ ]] && args+=(--intake "$before")
+  args+=(--produced "$produced" --failed "$failed")
+  [[ "$pend" =~ ^[0-9]+$ ]] && args+=(--pending "$pend")
+  [[ -n "$reason" ]] && args+=(--reason "$reason")
+  [[ "$okflag" == "not-ok" ]] && args+=(--not-ok)
+  python3 scripts/xkb_ledger.py "${args[@]}" >>"$LOG_FILE" 2>&1 || true
+}
+
+# 失敗長什麼樣,一行就夠——分辨「模型設定壞了」和「這幾筆內容抓不到」靠的
+# 就是這一行,而它原本只存在於 /tmp 的 log 裡,沒進任何摘要。
+first_failure_reason() {
+  sed -n 's/.*✗ failed: //p' "$OUT" | head -1 | cut -c1-200
+}
+
 set +e
 python3 scripts/run_bookmark_worker.py --limit "$LIMIT" >"$OUT" 2>&1
 status=$?
@@ -91,6 +111,7 @@ failed_count=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
 # 是一次成功的執行。真正的整批失敗要讓它以非零收場。
 if [[ "$status" -ne 0 && -z "$done_count" ]]; then
   log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] worker 整批失敗（exit $status，沒有任何 done= 輸出）"
+  ledger 0 0 "$(pending)" "worker 整批失敗 exit $status: $(first_failure_reason)" not-ok
   exit "$status"
 fi
 
@@ -109,12 +130,14 @@ if [[ "$done_count" -gt 0 ]]; then
   if [[ "$embed_status" -ne 0 ]]; then
     echo "XKB 書籤批次：產了 $done_count 張卡，但語意索引更新失敗（離開碼 $embed_status）。" >&2
     echo "這批卡片現在關鍵字查得到、語意查不到。詳見 $LOG_FILE" >&2
+    ledger "$done_count" "$failed_count" "$(pending)" "語意索引更新失敗 exit $embed_status" not-ok
     exit "$embed_status"
   fi
 fi
 
 after=$(pending)
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch done (done=$done_count failed=$failed_count pending=$after)"
+ledger "$done_count" "$failed_count" "$after" "$( [[ "$failed_count" -gt 0 ]] && first_failure_reason )" ok
 
 if [[ "$failed_count" -gt 0 ]]; then
   echo "XKB 書籤批次：產了 $done_count 張卡，$failed_count 筆失敗，還有 $after 筆待處理。"
