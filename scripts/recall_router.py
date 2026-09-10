@@ -125,6 +125,15 @@ def _build_telemetry(
     delivery_mode: str,
     duration_ms: int,
 ) -> dict:
+    # 這一次有沒有哪一層退回了 fallback。
+    #
+    # 沒有這個欄位的時候，「這個主題確實沒有東西」和「語意後端逾時」在紀錄裡
+    # 是同一行：recalled=false, result_count=0。召回壞掉十二週沒被發現，靠的
+    # 就是這種等價——它一直有禮貌地回答「我不知道」。
+    #
+    # 各層的失敗本來就都經過 xkb_failures.note()，只是那些話寫在 stderr，而
+    # 召回跑在 MCP 伺服器裡，stderr 沒有人讀。這裡把它收進紀錄。
+    degraded = xkb_failures.taken()
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "message_preview": message[:80],
@@ -137,6 +146,10 @@ def _build_telemetry(
         "delivery_mode": delivery_mode,
         "duration_ms": duration_ms,
         "matched_rules": parsed.matched_rules[:2],
+        "degraded": degraded,
+        # 空手而回又有東西壞掉——這才是「我不知道」與「我壞了」的分界線，
+        # 而它要是一個可以直接統計的欄位，不是要人去比對兩個欄位才看得出來。
+        "empty_because_broken": bool(degraded) and result_count == 0,
     }
 
 

@@ -156,26 +156,93 @@ def check_recall_telemetry() -> dict:
         "msg": f"last recall telemetry: {age_days:.1f} days ago (threshold {stale_days:.0f}d)"
     })
 
-    # 最後一筆是不是失敗的
+    # 最後一筆是不是失敗的，以及有沒有哪一層一直在退回 fallback。
     try:
-        last = None
+        rows = []
         with path.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if line:
-                    last = line
-        if last:
-            entry = json.loads(last)
-            recalled = entry.get("recalled")
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        continue
+        if rows:
+            entry = rows[-1]
             result["checks"].append({
                 "ok": True,
-                "msg": f"last entry: recalled={recalled}, results={entry.get('result_count')}, "
-                       f"ts={entry.get('ts', '')[:19]}"
+                "msg": f"last entry: recalled={entry.get('recalled')}, "
+                       f"results={entry.get('result_count')}, ts={entry.get('ts', '')[:19]}"
             })
+            result["checks"].extend(_degraded_recall_checks(rows))
     except Exception as e:
         result["checks"].append({"ok": False, "msg": f"telemetry unreadable: {e}"})
 
     return result
+
+
+def _degraded_recall_checks(rows: list[dict]) -> list[dict]:
+    """有哪一層壞著，而不是「這個主題沒有東西」。
+
+    召回回空手有兩種原因，而它們原本在紀錄裡完全相同：recalled=false,
+    result_count=0。2026-05-04 之後召回每次都崩潰，整整十二週沒有人發現——
+    它一直有禮貌地回答「我不知道」。recall_router 現在會把這一次退回 fallback
+    的層記進 degraded 欄位，這裡讀它。
+
+    判斷用的是「持續多久」而不是「佔幾成」。語意後端偶爾逾時一次是抖動，天天
+    逾時是壞了，而比率會被使用頻率影響：一天只查三次的話，一次逾時就是 33%。
+    所以看的是同一層有沒有從幾小時前一直壞到最新這一次。
+    """
+    checks: list[dict] = []
+    persist_hours = float(os.getenv("XKB_RECALL_DEGRADED_HOURS", "6"))
+
+    # 舊紀錄沒有這個欄位。沒有欄位不等於沒壞掉，只是那時候還沒在記——
+    # 對這些列保持沉默，不要假裝它們是綠的。
+    known = [r for r in rows if "degraded" in r]
+    if not known:
+        checks.append({
+            "ok": True,
+            "msg": "recall telemetry 還沒有 degraded 欄位——下一次召回之後才判斷得出",
+        })
+        return checks
+
+    latest = known[-1]
+    now_broken = set(latest.get("degraded") or [])
+    if not now_broken:
+        blind = sum(1 for r in known if r.get("empty_because_broken"))
+        checks.append({
+            "ok": True,
+            "msg": f"最近一次召回沒有任何一層退回 fallback"
+                   f"（歷史上有 {blind} 次空手是因為壞掉，不是因為沒資料）",
+        })
+        return checks
+
+    def _ts(row: dict) -> datetime | None:
+        try:
+            value = datetime.fromisoformat(str(row.get("ts", "")))
+        except ValueError:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    latest_ts = _ts(latest)
+    for layer in sorted(now_broken):
+        earliest = None
+        for row in known:
+            if layer in (row.get("degraded") or []):
+                earliest = _ts(row)
+                break
+        if latest_ts and earliest:
+            persisted_hours = (latest_ts - earliest).total_seconds() / 3600
+        else:
+            persisted_hours = 0.0
+        checks.append({
+            "ok": persisted_hours < persist_hours,
+            "msg": (f"{layer}：最近一次退回 fallback（單次抖動，還不算故障）"
+                    if persisted_hours < persist_hours else
+                    f"{layer}：已經連續壞了 {persisted_hours:.0f}h ——"
+                    f"召回這段期間回的「查無資料」不能當成真的沒資料"),
+        })
+    return checks
 
 
 def check_semantic_index() -> dict:
