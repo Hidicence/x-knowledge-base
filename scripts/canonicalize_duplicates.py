@@ -27,6 +27,24 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_frontmatter
+
+
+def _card_path(item: dict) -> Path | None:
+    """索引列指向的那個檔案。找不到就回 None——標記不上要說得出來。"""
+    raw = (item.get("path") or "").strip()
+    if raw:
+        candidate = Path(raw)
+        if candidate.is_absolute() and candidate.exists():
+            return candidate
+    rel = (item.get("relative_path") or "").strip()
+    if not rel:
+        return None
+    for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
+        candidate = base / rel
+        if candidate.exists():
+            return candidate
+    return None
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR

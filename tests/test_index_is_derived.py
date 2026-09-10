@@ -181,5 +181,66 @@ class TheFlagSurvivesARebuild(unittest.TestCase):
         self.assertFalse(by_stem["keep"].get("excluded"))
 
 
+class TheQualityScriptsActuallyRun(unittest.TestCase):
+    """真的把它們跑一次。
+
+    2026-09-10：把 canonicalize_duplicates 改成標記檔案時，補上 _card_path
+    的那一步沒有跑到，於是它引用了一個不存在的名字。py_compile 過、既有測試
+    全綠、部署也成功——直到在 VPS 上真的執行才炸成 NameError。
+
+    當時的測試只檢查「原始碼裡有沒有那個字串」。字串在不在跟跑不跑得起來是
+    兩件事，而這個專案已經在別的地方吃過同一種虧。
+    """
+
+    def _fixture(self, root: Path) -> Path:
+        cards = root / "memory" / "cards"
+        bookmarks = root / "memory" / "bookmarks"
+        cards.mkdir(parents=True)
+        bookmarks.mkdir(parents=True)
+        for stem in ("a", "b"):
+            (cards / f"{stem}.md").write_text(
+                CARD.format(stem=stem, title="標題", summary="一句話"),
+                encoding="utf-8")
+        index = bookmarks / "search_index.json"
+        # a 與 b 指向同一個來源：canonicalize 應該挑一個留下、標記另一個。
+        index.write_text(json.dumps({"version": "1.1", "items": [
+            {"path": str(cards / "a.md"), "relative_path": "memory/cards/a.md",
+             "title": "標題", "summary": "一句話", "tags": [], "category": "99-general",
+             "source_url": "https://example.test/same", "source_type": "local",
+             "enriched": True},
+            {"path": str(cards / "b.md"), "relative_path": "memory/cards/b.md",
+             "title": "2026-09-10", "summary": "", "tags": [], "category": "99-general",
+             "source_url": "https://example.test/same", "source_type": "local",
+             "enriched": True},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        return index
+
+    def _run(self, script: str, root: Path, index: Path):
+        env = {**os.environ,
+               "XKB_DATA_DIR": str(root / "memory"),
+               "CARDS_DIR": str(root / "memory" / "cards"),
+               "BOOKMARKS_DIR": str(root / "memory" / "bookmarks"),
+               "INDEX_FILE": str(index),
+               "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        return subprocess.run([sys.executable, str(SCRIPTS / script), "--dry-run"],
+                              capture_output=True, text=True, env=env)
+
+    def test_canonicalize_duplicates_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = self._fixture(root)
+            proc = self._run("canonicalize_duplicates.py", root, index)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("duplicate groups", proc.stdout)
+
+    def test_normalize_index_quality_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = self._fixture(root)
+            proc = self._run("normalize_index_quality.py", root, index)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("總項目數", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
