@@ -103,20 +103,30 @@ if [[ "$status" -ne 0 ]]; then
   log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] worker exited $status — 仍會嘗試嵌入已產出的卡片"
 fi
 
-done_count=$(sed -n 's/.*done=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
-failed_count=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$OUT" | tail -1)
+# 這一次做了什麼，只認 worker 自己那行摘要——見 scripts/xkb_batch_summary.py。
+# 原本這裡是 sed 抓「最後一個 done=」，而佇列同步那行也有 done=，於是佇列沒
+# 事做的晚上會把佇列的累計總數當成這次的產出。實測報過「產了 1575 張卡」，
+# 而且因為 done_count > 0，還會多跑一次向量索引。
+set +e
+summary=$(python3 scripts/xkb_batch_summary.py <"$OUT" 2>>"$LOG_FILE")
+summary_status=$?
+set -e
 
-# 上面說「只有連 done 都讀不出來才算整批壞掉」，但那個判斷從來沒寫出來：
-# worker 整支崩掉（沒印出任何 done=）時，這支腳本照樣以 0 結束，排程看到的
-# 是一次成功的執行。真正的整批失敗要讓它以非零收場。
-if [[ "$status" -ne 0 && -z "$done_count" ]]; then
-  log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] worker 整批失敗（exit $status，沒有任何 done= 輸出）"
-  ledger 0 0 "$(pending)" "worker 整批失敗 exit $status: $(first_failure_reason)" not-ok
-  exit "$status"
+# 讀不出結果 ≠ 產出 0。前者是壞了，後者是沒事做，而原本的 ${done_count:-0}
+# 讓兩者長得一模一樣——正是這條管線八天沒被發現的那個毛病。
+if [[ "$summary_status" -ne 0 ]]; then
+  log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] 讀不出 worker 的執行結果（worker exit $status）"
+  ledger 0 0 "$(pending)" "讀不出 worker 的執行結果（worker exit $status）：$(first_failure_reason)" not-ok
+  echo "XKB 書籤批次：讀不出 worker 的執行結果，無法確認這次做了什麼（詳見 $LOG_FILE）" >&2
+  if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+  exit 1
 fi
 
-done_count=${done_count:-0}
-failed_count=${failed_count:-0}
+# summary 的格式是 `done=N failed=N outcome=X`，用 bash 自己的展開拆就好。
+done_count=${summary#done=}
+done_count=${done_count%% *}
+failed_count=${summary#*failed=}
+failed_count=${failed_count%% *}
 
 # 新卡片要被嵌入才召回得到。這一步失敗就是整批失敗——寫進 wiki 卻沒進索引，
 # 等於關鍵字查得到、語意查不到，那是這個系統最不該有的狀態。

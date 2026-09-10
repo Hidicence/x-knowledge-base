@@ -189,6 +189,44 @@ class HealthCheckReadsIt(_LedgerSandbox):
         self.assertTrue(all(c["ok"] for c in section["checks"]), self._msgs(section))
 
 
+class BatchSummary(unittest.TestCase):
+    """帳本接上去的第一次實跑就照出這個舊 bug。
+
+    worker 的輸出裡有兩行含 done=：佇列同步的累計總數，和這一次的結果。
+    原本的 sed 抓「最後一個 done=」，平常剛好對；佇列沒事做時 worker 不印
+    結果那行，於是這次的產出被讀成佇列總數——實測報過「產了 1575 張卡」，
+    還因此多跑了一次向量索引。
+    """
+
+    QUEUE_LINE = "✅ queue synced: /x/tiege-queue.json (1591 items, todo=0, done=1575)"
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import xkb_batch_summary
+        self.parse = xkb_batch_summary.parse
+
+    def test_the_queue_total_is_not_this_run_output(self):
+        result = self.parse(self.QUEUE_LINE + "\n✅ No todo items found\n")
+        self.assertEqual(result, (0, 0, "idle"))
+
+    def test_a_real_run_is_read_from_the_worker_summary(self):
+        text = (self.QUEUE_LINE
+                + "\n📊 done=7  skipped=0  failed=2  remaining todo=0\n")
+        self.assertEqual(self.parse(text), (7, 2, "ran"))
+
+    def test_an_unreadable_run_is_not_reported_as_zero(self):
+        """讀不出結果和「產出 0」是兩件事，混在一起就是這條管線八天沒被發現的原因。"""
+        self.assertIsNone(self.parse(self.QUEUE_LINE + "\nTraceback (most recent call last):\n"))
+        self.assertIsNone(self.parse(""))
+
+    def test_the_batch_script_treats_unreadable_as_a_fault(self):
+        text = (ROOT / "scripts" / "run_bookmark_batch.sh").read_text(encoding="utf-8")
+        self.assertIn("xkb_batch_summary.py", text)
+        self.assertIn("讀不出 worker 的執行結果", text)
+        # 舊的抓法不能留著，否則哪天有人改回去也不會有人發現。
+        self.assertNotIn('sed -n \'s/.*done=', text)
+
+
 class Wiring(unittest.TestCase):
     def test_the_check_is_registered(self):
         source = (ROOT / "scripts" / "health_check_pipeline.py").read_text(encoding="utf-8")
