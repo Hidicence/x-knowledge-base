@@ -169,5 +169,8 @@ def main() -> int:
     return install(args.url, args.token, args.source)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     raise SystemExit(main())

@@ -96,7 +96,10 @@ def overlap_score(tokens: list[str], text: str) -> float:
     return len(_units(matched)) / max(len(_units(tokens)), 1)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     import sys
 
     for arg in sys.argv[1:] or ["我想做一支產品廣告影片"]:

@@ -54,7 +54,10 @@ def is_noise(*parts: str) -> bool:
     return any(marker in blob for marker in NOISE_MARKERS)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     for sample in ("[OpenClaw heartbeat poll]", "Write a dream diary entry from these memories",
                    "Continue the OpenClaw runtime event.", "召回應該回報實際用了哪種檢索"):
         print(f"  {'雜訊' if is_noise(sample) else '真對話'}  {sample[:50]}")

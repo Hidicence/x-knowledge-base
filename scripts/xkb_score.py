@@ -271,7 +271,10 @@ def rank(results: list[dict]) -> list[dict]:
     return sorted(survivors, key=lambda r: r["unified_score"], reverse=True)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     # 示範 RRF 融合：三條腿合在一起，看排序
     demo = [
         {"title": "wiki 強命中", "score": 0.85, "score_scale": "wiki_semantic"},

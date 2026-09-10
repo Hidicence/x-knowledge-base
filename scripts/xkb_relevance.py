@@ -233,7 +233,10 @@ def filter_irrelevant(
     return kept, len(items) - len(kept), scores
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     print(f"min_similarity = {min_similarity()}")
     for sample in ("01-topic/12345", "01-topic/12345.md", "https://x.com/i/status/1", ""):
         print(f"  vector_key({sample!r}) = {vector_key(sample)!r}")

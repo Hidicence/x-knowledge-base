@@ -334,5 +334,8 @@ def main():
     sys.exit(2 if total > 0 and not args.dry_run else 0)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     main()

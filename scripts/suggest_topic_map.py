@@ -213,5 +213,8 @@ def main():
         print("   執行 sync_cards_to_wiki.py --apply 後會自動建立")
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     main()

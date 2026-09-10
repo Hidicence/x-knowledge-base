@@ -261,5 +261,8 @@ def main() -> None:
     print(f"\n📊 done={results['done']}  skipped={results['skipped']}  failed={results['failed']}  remaining={remaining}")
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     main()

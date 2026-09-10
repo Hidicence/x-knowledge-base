@@ -322,7 +322,10 @@ def call_raw(prompt: str, *, model: str | None = None, timeout: int = 120) -> st
     return call("", prompt, model=model, timeout=timeout)
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     # Quick smoke test: python3 scripts/_llm.py "Hello, reply in 5 words"
     query = " ".join(sys.argv[1:]) or "Reply with: OK"
     print(f"Model: {_load_model()}", file=sys.stderr)

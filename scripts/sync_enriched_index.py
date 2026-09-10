@@ -299,5 +299,8 @@ def main() -> None:
         print("  python3 scripts/build_vector_index.py --incremental")
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     main()

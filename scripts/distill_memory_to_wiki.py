@@ -609,5 +609,8 @@ def main() -> None:
             print(f"Run: python3 distill_memory_to_wiki.py --apply --staging-file {out}")
 
 
+import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
+
 if __name__ == "__main__":
+    xkb_usage.record(__file__)
     main()
