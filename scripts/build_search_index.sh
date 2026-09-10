@@ -70,10 +70,15 @@ def relative_for_file(f: Path, root: Path) -> str:
 
 
 def parse_record(f: Path, root: Path):
+    # frontmatter 的欄位用 [ \t]* 而不是 \s*。\s 含換行，所以一個空欄位
+    # （`source_url:` 後面什麼都沒有）會讓正則跨行，把下一行整行吞進來當值。
+    # 2026-09-10 實測：兩張卡的 source_url 因此變成 "category: 02-seo-geo"，
+    # 而品質檢查看到那個值不是網址，就要把兩張好卡片標成該排除——一個解析
+    # bug 一路走成「把知識藏起來」。
     text = f.read_text(encoding="utf-8", errors="ignore")
 
     title = ""
-    m = re.search(r'^title:\s*"?(.+?)"?\s*$', text, re.MULTILINE)
+    m = re.search(r'^title:[ \t]*"?(.+?)"?[ \t]*$', text, re.MULTILINE)
     if m:
         title = m.group(1).strip()
     if not title:
@@ -84,12 +89,12 @@ def parse_record(f: Path, root: Path):
         title = f.stem
 
     category = "general"
-    m = re.search(r'^category:\s*"?(.+?)"?\s*$', text, re.MULTILINE)
+    m = re.search(r'^category:[ \t]*"?(.+?)"?[ \t]*$', text, re.MULTILINE)
     if m:
         category = m.group(1).strip()
 
     tags = []
-    m = re.search(r'^tags:\s*\[(.*?)\]\s*$', text, re.MULTILINE)
+    m = re.search(r'^tags:[ \t]*\[(.*?)\][ \t]*$', text, re.MULTILINE)
     if m:
         tags = [t.strip().strip('"\'') for t in m.group(1).split(',') if t.strip()]
     if not tags:
@@ -127,7 +132,7 @@ def parse_record(f: Path, root: Path):
                 break
 
     source_type = ""
-    m = re.search(r'^source_type:\s*"?([^"\n]+)"?\s*$', text, re.MULTILINE)
+    m = re.search(r'^source_type:[ \t]*"?([^"\n]+)"?[ \t]*$', text, re.MULTILINE)
     if m:
         source_type = m.group(1).strip()
     if not source_type:
@@ -148,8 +153,8 @@ def parse_record(f: Path, root: Path):
     # extract source_url at index time (avoids re-reading file at recall time)
     source_url = ""
     for _pat in [
-        r'^source_url:\s*"?([^"\n]+)"?\s*$',
-        r'^original_url:\s*"?([^"\n]+)"?\s*$',
+        r'^source_url:[ \t]*"?([^"\n]+)"?[ \t]*$',
+        r'^original_url:[ \t]*"?([^"\n]+)"?[ \t]*$',
         r'\*\*原始連結\*\*：\s*(\S+)',
         r'https://x\.com/\S+',
         r'https://twitter\.com/\S+',
@@ -161,7 +166,7 @@ def parse_record(f: Path, root: Path):
 
     # fallback: derive source_url from tweet_id frontmatter
     if not source_url:
-        _tid = re.search(r'^tweet_id:\s*"?([0-9]+)"?\s*$', text, re.MULTILINE)
+        _tid = re.search(r'^tweet_id:[ \t]*"?([0-9]+)"?[ \t]*$', text, re.MULTILINE)
         if _tid:
             source_url = "https://x.com/i/status/" + _tid.group(1).strip()
 
@@ -174,11 +179,11 @@ def parse_record(f: Path, root: Path):
     # 而讀它的四個地方一直讀到 False，沒有任何錯誤。
     #
     # 值得留下來的東西要寫進卡片檔案。索引可以隨時刪掉重建，檔案不會。
-    excluded = bool(re.search(r"^excluded:\s*(?:true|yes|1)\s*$", text,
+    excluded = bool(re.search(r"^excluded:[ \t]*(?:true|yes|1)[ \t]*$", text,
                               re.MULTILINE | re.IGNORECASE))
     excluded_reason = ""
     if excluded:
-        _mx = re.search(r'^excluded_reason:\s*"?(.+?)"?\s*$', text, re.MULTILINE)
+        _mx = re.search(r'^excluded_reason:[ \t]*"?(.+?)"?[ \t]*$', text, re.MULTILINE)
         if _mx:
             excluded_reason = _mx.group(1).strip()
 

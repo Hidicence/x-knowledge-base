@@ -71,14 +71,22 @@ def is_valid_source_url(url: str) -> bool:
     return True
 
 
+# 從網路抓來的東西才該有網址。本機擷取的出處是一個檔案路徑，那不是品質問題，
+# 那就是它的出處——2026-09-10 實測，這條規則正要把兩張本機匯入的好卡片排除掉：
+# 「every-app/open-seo — Semrush/Ahrefs 開源替代方案」與那本 Obsidian 的書。
+WEB_SOURCED_TYPES = {"x-bookmark", "github_star", "github_fork", "youtube"}
+
+
 def exclusion_reasons(item: dict[str, Any]) -> list[str]:
     title = (item.get("title") or "").strip()
     summary = clean_summary(item.get("summary") or "")
     source_url = (item.get("source_url") or "").strip()
+    source_type = (item.get("source_type") or "").strip()
 
     reasons: list[str] = []
 
-    if source_url and not is_valid_source_url(source_url):
+    if (source_url and source_type in WEB_SOURCED_TYPES
+            and not is_valid_source_url(source_url)):
         reasons.append("invalid_source_url")
 
     if re.match(r"^\d{4}-\d{2}-\d{2}-", title) and summary in LOW_SIGNAL_SUMMARIES:

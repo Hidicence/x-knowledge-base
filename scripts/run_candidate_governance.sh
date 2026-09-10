@@ -108,6 +108,39 @@ if [[ "$embed_status" -ne 0 ]]; then
   exit "$embed_status"
 fi
 
+# 整理知識庫本身：同一個來源收了兩次、以及從來沒被充實過的空殼書籤。
+#
+# 這兩支原本沒有任何排程在叫，只能手動——而它們標記的旗標又寫在索引列上，
+# 每次重建就被洗掉一次。實測正式索引 1680 筆裡帶 excluded 的是 0 筆，也就是
+# 它們過去的成果一次都沒留下來。旗標改寫進卡片檔案之後，才值得排進來。
+#
+# 放在治理之後、鏡像之前：標記改的是卡片檔案，索引要重算才會反映。
+# 這一步失敗不算整批失敗——沒整理成不會讓任何知識查不到，只是雜訊還在。
+log "> Tidying the knowledge base (duplicates, empty shells)..."
+for tidy in canonicalize_duplicates normalize_index_quality; do
+  set +e
+  python3 "scripts/${tidy}.py" >>"$LOG_FILE" 2>&1
+  tidy_status=$?
+  set -e
+  if [[ "$tidy_status" -ne 0 ]]; then
+    log "  ${tidy} 離開碼 ${tidy_status}——已跳過，詳見 $LOG_FILE"
+  fi
+done
+
+# 標記寫在檔案上，索引要重算才看得到。寫索引的地方只有這一個。
+set +e
+python3 -c "
+import sys
+sys.path.insert(0, 'scripts')
+import xkb_index
+raise SystemExit(0 if xkb_index.rebuild() else 1)
+" >>"$LOG_FILE" 2>&1
+rebuild_status=$?
+set -e
+if [[ "$rebuild_status" -ne 0 ]]; then
+  log "  索引重建失敗——這一輪的標記還沒生效，詳見 $LOG_FILE"
+fi
+
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] governance done (promoted=$promoted)"
 
 # Silent on a quiet night. The 09:00 summary carries the standing counts; a job

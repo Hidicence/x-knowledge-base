@@ -242,5 +242,46 @@ class TheQualityScriptsActuallyRun(unittest.TestCase):
         self.assertIn("總項目數", proc.stdout)
 
 
+class LocalIngestsAreNotLowQuality(unittest.TestCase):
+    """本機擷取的出處是一個檔案路徑，不是網址——那不是品質問題。
+
+    2026-09-10：品質規則差一點把兩張本機匯入的好卡片排除掉，
+    「every-app/open-seo — Semrush/Ahrefs 開源替代方案」與那本 Obsidian 的書，
+    理由只是 source_url 不以 http 開頭。
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import normalize_index_quality
+        self.reasons = normalize_index_quality.exclusion_reasons
+
+    def test_a_file_path_is_valid_provenance_for_a_local_ingest(self):
+        item = {"title": "一份本機文件", "summary": "有內容的摘要",
+                "source_type": "local-paper",
+                "source_url": "memory/bookmarks/github/stars/x.md"}
+        self.assertNotIn("invalid_source_url", self.reasons(item))
+
+    def test_a_broken_url_on_a_web_source_is_still_caught(self):
+        item = {"title": "測試書籤", "summary": "摘要",
+                "source_type": "x-bookmark",
+                "source_url": "https://x.com/i/status/test"}
+        self.assertIn("invalid_source_url", self.reasons(item))
+
+    def test_an_unenriched_bookmark_is_still_caught(self):
+        item = {"title": "Tweet 2073558354233094315", "summary": "",
+                "source_type": "x-bookmark",
+                "source_url": "https://x.com/i/status/2073558354233094315"}
+        self.assertIn("tweet_numeric_low_signal", self.reasons(item))
+
+
+class GovernanceRunsTheTidyStep(unittest.TestCase):
+    def test_the_scheduled_job_calls_both_and_rebuilds(self):
+        """排上去了才會跑。原本這兩支沒有任何排程在叫。"""
+        text = (SCRIPTS / "run_candidate_governance.sh").read_text(encoding="utf-8")
+        self.assertIn("canonicalize_duplicates", text)
+        self.assertIn("normalize_index_quality", text)
+        self.assertIn("xkb_index", text)
+
+
 if __name__ == "__main__":
     unittest.main()
