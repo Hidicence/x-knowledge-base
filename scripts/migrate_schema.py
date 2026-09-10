@@ -31,6 +31,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_index
 
 CARDS_DIR = xkb_paths.CARDS_DIR
 INDEX_FILE = xkb_paths.INDEX_FILE
@@ -147,9 +148,9 @@ def migrate_index(dry_run: bool) -> dict:
             changed += 1
 
     if not dry_run and changed:
-        INDEX_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # Layer 1 補的 source_type / enriched，builder 現在會直接從檔案解析。
+        # 這裡不再自己寫索引——寫索引的地方只有一個。
+        xkb_index.rebuild()
 
     return {"total": len(items), "updated": changed}
 

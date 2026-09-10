@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_index
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -287,17 +288,16 @@ def main() -> None:
     if added:
         print(f"➕ Added {added} new index entries from orphaned cards")
 
-    if not args.dry_run and (updated > 0 or added > 0):
-        if is_dict:
-            raw["items"] = items
-        else:
-            raw = items
-        INDEX_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"💾 Saved → {INDEX_FILE}")
-        print()
-        print("Next: rebuild vector index to pick up enriched summaries")
-        print("  python3 scripts/build_vector_index.py --incremental")
-
+    # 這支腳本不再寫索引。
+    #
+    # 它做的事——把卡片的標題／摘要／標籤同步進索引列、把孤兒卡補進去——
+    # build_search_index.sh 從檔案重算時本來就全做了，而且做得更全：實測
+    # 一次乾淨重建找回三張這支腳本漏掉的卡（它只走 X 書籤 ID 那條路，
+    # github_star-* 與 legacy-* 那類卡片它掃不到）。
+    #
+    # 保留這個入口是為了不打斷既有的呼叫與習慣；真正做事的是 builder。
+    if not args.dry_run and (updated > 0 or added > 0 or not_found_ids):
+        xkb_index.rebuild()
 
 import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
 

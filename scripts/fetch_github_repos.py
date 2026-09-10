@@ -34,6 +34,7 @@ from runtime_config import runtime_env
 
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
+import xkb_index
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
@@ -115,8 +116,15 @@ def load_index() -> dict:
     return {"version": "1.1", "items": []}
 
 
-def save_index(data: dict):
-    INDEX_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_index(data: dict) -> None:
+    """索引不再由這裡修補——寫完檔案之後，讓 builder 從檔案重算。
+
+    參數保留是為了不動呼叫端：呼叫端在這之前已經把卡片寫進磁碟了，而重算的
+    結果由磁碟上的檔案決定，不是由這份記憶體中的 dict 決定。這正是重點——
+    八個寫入者各自修補，索引才會慢慢跟檔案說的不一樣。
+    """
+    del data  # 由檔案決定，不由呼叫端手上的副本決定
+    xkb_index.rebuild()
 
 
 def extract_frontmatter(card: str) -> dict:

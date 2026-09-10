@@ -101,6 +101,7 @@ def main() -> int:
     changed = 0
     excluded_dupes = 0
     examples = []
+    unmarkable: list[str] = []
 
     for source_url, idxs in duplicate_groups.items():
         ranked = sorted(idxs, key=lambda i: entry_score(items[i]), reverse=True)
@@ -113,17 +114,16 @@ def main() -> int:
             rel_path = item.get("relative_path") or item.get("path") or ""
             changed_here = False
 
-            if not item.get("excluded"):
-                item["excluded"] = True
+            # 標在檔案上，不是標在索引列上。索引是衍生物：標在列上的話，
+            # 下一次重建就把這個決定洗掉——實測正式索引 1680 筆裡帶 excluded
+            # 的是 0 筆，這支腳本過去的成果一次都沒留下來。
+            card = _card_path(item)
+            if card is not None and xkb_frontmatter.mark_excluded(
+                    card, f"duplicate_source_url; canonical={keep_rel}",
+                    dry_run=args.dry_run):
                 changed_here = True
-            reasons = set(item.get("exclude_reasons") or [])
-            if "duplicate_source_url" not in reasons:
-                reasons.add("duplicate_source_url")
-                item["exclude_reasons"] = sorted(reasons)
-                changed_here = True
-            if item.get("duplicate_of") != keep_rel:
-                item["duplicate_of"] = keep_rel
-                changed_here = True
+            elif card is None:
+                unmarkable.append(rel_path)
 
             if changed_here:
                 changed += 1
@@ -134,19 +134,23 @@ def main() -> int:
     print(f"duplicate groups: {len(duplicate_groups)}")
     print(f"duplicate entries excluded: {excluded_dupes}")
     print(f"changed: {changed}")
+    if unmarkable:
+        # 標記不上跟標記了不一樣。安靜跳過會讓這批重複永遠標不掉，而輸出
+        # 看起來一切正常——那正是這支腳本原本在犯的錯。
+        print(f"could not mark (檔案不存在或沒有 frontmatter): {len(unmarkable)}")
+        for rel in unmarkable[:5]:
+            print(f"  - {rel}")
     print("\nexamples:")
     for source_url, keep_rel, rel_path in examples:
         print(f"- source: {source_url}")
         print(f"  keep: {keep_rel}")
         print(f"  drop: {rel_path}")
 
+    # 這支腳本不再寫索引。決定寫在卡片檔案上，索引由 build_search_index.sh
+    # 從檔案重算——那是唯一寫索引的地方。
     if not args.dry_run and changed > 0:
-        if is_dict:
-            raw["items"] = items
-        else:
-            raw = items
-        INDEX_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"\n💾 Saved → {INDEX_FILE}")
+        print(f"已標記 {changed} 張卡片。索引重建後生效：")
+        print("  bash scripts/build_search_index.sh --incremental")
 
     return 0
 

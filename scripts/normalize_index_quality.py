@@ -25,6 +25,24 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_frontmatter
+
+
+def _card_path(item: dict) -> Path | None:
+    """索引列指向的那個檔案。找不到就回 None——標記不上要說得出來。"""
+    raw = (item.get("path") or "").strip()
+    if raw:
+        candidate = Path(raw)
+        if candidate.is_absolute() and candidate.exists():
+            return candidate
+    rel = (item.get("relative_path") or "").strip()
+    if not rel:
+        return None
+    for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
+        candidate = base / rel
+        if candidate.exists():
+            return candidate
+    return None
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -87,6 +105,7 @@ def main() -> int:
     changed = 0
     excluded = 0
     examples: list[tuple[str, str, list[str]]] = []
+    unmarkable: list[str] = []
 
     for item in items:
         reasons = exclusion_reasons(item)
@@ -96,9 +115,13 @@ def main() -> int:
 
         if reasons:
             merged = sorted(set(current_reasons) | set(reasons))
-            if (not current_excluded) or merged != current_reasons:
-                item["excluded"] = True
-                item["exclude_reasons"] = merged
+            # 標在檔案上，不是索引列上。索引是衍生物，重建一次就把這個決定
+            # 洗掉——實測正式索引 1680 筆裡帶 excluded 的是 0 筆。
+            card = _card_path(item)
+            if card is None:
+                unmarkable.append(rel_path)
+            elif xkb_frontmatter.mark_excluded(
+                    card, "; ".join(merged), dry_run=args.dry_run):
                 changed += 1
             excluded += 1
             if len(examples) < 20:
@@ -113,13 +136,18 @@ def main() -> int:
         print(f"  title: {title}")
         print(f"  reasons: {', '.join(reasons)}")
 
+    if unmarkable:
+        # 標記不上跟標記了不一樣。安靜跳過的話這批會永遠標不掉，而輸出
+        # 看起來一切正常。
+        print(f"標記不上（檔案不存在或沒有 frontmatter）：{len(unmarkable)}")
+        for rel in unmarkable[:5]:
+            print(f"  - {rel}")
+
+    # 這支腳本不再寫索引。決定寫在卡片檔案上，索引由 build_search_index.sh
+    # 從檔案重算——那是唯一寫索引的地方。
     if not args.dry_run and changed > 0:
-        if is_dict:
-            raw["items"] = items
-        else:
-            raw = items
-        INDEX_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"\n💾 Saved → {INDEX_FILE}")
+        print(f"已標記 {changed} 張卡片。索引重建後生效：")
+        print("  bash scripts/build_search_index.sh --incremental")
 
     return 0
 

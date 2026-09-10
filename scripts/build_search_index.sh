@@ -166,6 +166,22 @@ def parse_record(f: Path, root: Path):
             source_url = "https://x.com/i/status/" + _tid.group(1).strip()
 
 
+    # 「這一筆不要進召回」的判斷來自檔案，不是索引。
+    #
+    # normalize_index_quality 與 canonicalize_duplicates 的全部工作就是設這個
+    # 旗標，而它們設在索引列上——索引是衍生物，重建一次就沒了。2026-09-10 實測
+    # 正式索引 1680 筆裡帶 excluded 的有 0 筆，兩支腳本的成果早就被洗掉，
+    # 而讀它的四個地方一直讀到 False，沒有任何錯誤。
+    #
+    # 值得留下來的東西要寫進卡片檔案。索引可以隨時刪掉重建，檔案不會。
+    excluded = bool(re.search(r"^excluded:\s*(?:true|yes|1)\s*$", text,
+                              re.MULTILINE | re.IGNORECASE))
+    excluded_reason = ""
+    if excluded:
+        _mx = re.search(r'^excluded_reason:\s*"?(.+?)"?\s*$', text, re.MULTILINE)
+        if _mx:
+            excluded_reason = _mx.group(1).strip()
+
     searchable = "\n".join([
         title,
         category,
@@ -175,7 +191,7 @@ def parse_record(f: Path, root: Path):
     ])
 
     st = f.stat()
-    return {
+    record = {
         "path": str(f),
         "relative_path": relative_for_file(f, root),
         "title": title,
@@ -189,6 +205,11 @@ def parse_record(f: Path, root: Path):
         "mtime": int(st.st_mtime),
         "size": int(st.st_size),
     }
+    if excluded:
+        record["excluded"] = True
+        if excluded_reason:
+            record["excluded_reason"] = excluded_reason
+    return record
 
 
 def iter_markdown_files(root: Path):
