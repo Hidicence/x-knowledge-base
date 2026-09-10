@@ -113,6 +113,12 @@ TOPIC_PROFILE_FILE = Path(
 )
 TELEMETRY_PATH = XKB_DATA_DIR / "recall-telemetry.jsonl"
 
+# 書籤轉卡的工作佇列。原本只寫在 sync_tiege_queue.py 裡，而讀它的人已經有
+# 三個——同一個路徑寫三次，就是三個會各自漂走的答案。
+QUEUE_PATH = Path(
+    os.getenv("XKB_QUEUE_PATH", str(XKB_DATA_DIR / "tiege-queue.json"))
+)
+
 # 每次管線執行的紀錄。跟上面那份 telemetry 是同一個用途的兩半：一份記召回
 # 這條互動路徑，一份記排程這條批次路徑。兩者都是重算不出來的東西。
 PIPELINE_LEDGER = Path(

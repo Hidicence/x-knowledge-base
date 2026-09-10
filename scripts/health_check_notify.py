@@ -158,10 +158,16 @@ def _inventory_lines() -> list[str]:
         pass
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from xkb_pending_work import uncarded_bookmarks
-        pending = len(uncarded_bookmarks(xkb_paths.BOOKMARKS_DIR, xkb_paths.CARDS_DIR))
-        if pending:
-            lines.append(f"待消化：{pending} 筆書籤還沒變成知識")
+        from xkb_pending_work import pending_breakdown
+        counts = pending_breakdown(xkb_paths.BOOKMARKS_DIR, xkb_paths.CARDS_DIR)
+        # 「排隊中」會自己消化掉，「卡住」不會——沒有任何排程會再碰 failed。
+        # 兩者混在同一個「待消化：N」裡，等於把一件要你決定的事寫成一件會自己
+        # 好的事，而那個數字每天都在那裡，看久了就不再是訊息。
+        if counts["actionable"]:
+            lines.append(f"待消化：{counts['actionable']} 筆書籤排隊中")
+        if counts["stuck"]:
+            lines.append(f"卡住了：{counts['stuck']} 筆轉卡失敗，不會自動重試——"
+                         f"要重跑或放棄，都得你決定")
     except Exception:
         pass
 

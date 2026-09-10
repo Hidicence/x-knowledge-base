@@ -64,6 +64,20 @@ print(len(uncarded_bookmarks(xkb_paths.BOOKMARKS_DIR, xkb_paths.CARDS_DIR)))
 PY
 }
 
+# 待轉的分成「還會被處理的」與「卡住的」。混成一個數字會給出錯的建議：佇列
+# 裡只剩 failed/skipped 時，摘要照樣叫人「調高 limit」，而調高 limit 對它們
+# 完全沒有作用——它們要的是一個決定，不是更多額度。
+queued_now() {
+  python3 - <<'PYQ' 2>/dev/null || echo ""
+import sys
+sys.path.insert(0, "scripts")
+import xkb_paths
+from xkb_pending_work import pending_breakdown
+c = pending_breakdown(xkb_paths.BOOKMARKS_DIR, xkb_paths.CARDS_DIR)
+print(f"{c['actionable']} {c['stuck']}")
+PYQ
+}
+
 before=$(pending)
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch start (limit=$LIMIT, pending=$before)"
 
@@ -149,14 +163,27 @@ after=$(pending)
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch done (done=$done_count failed=$failed_count pending=$after)"
 ledger "$done_count" "$failed_count" "$after" "$( [[ "$failed_count" -gt 0 ]] && first_failure_reason )" ok
 
+read -r queued stuck <<<"$(queued_now)"
+stuck_note=""
+# 卡住的那些不會自己好，也沒有任何排程會再碰它們——sync_tiege_queue 明文寫著
+# 「由操作者自行重設」。所以它們每次都要被說出來，而且要說清楚沒有人會處理。
+if [[ "$stuck" =~ ^[0-9]+$ && "$stuck" -gt 0 ]]; then
+  stuck_note="另有 $stuck 筆卡在失敗狀態，不會自動重試——要重跑得手動重設。"
+fi
+
 if [[ "$failed_count" -gt 0 ]]; then
-  echo "XKB 書籤批次：產了 $done_count 張卡，$failed_count 筆失敗，還有 $after 筆待處理。"
+  echo "XKB 書籤批次：產了 $done_count 張卡，$failed_count 筆失敗，還有 $queued 筆排隊中。$stuck_note"
   exit 0
 fi
 
-# 佇列沒有變小才值得說。追不上是這支腳本存在的理由，所以它要看得見。
-if [[ "$before" != "?" && "$after" != "?" && "$after" -ge "$before" && "$before" -gt 0 ]]; then
-  echo "XKB 書籤批次：產了 $done_count 張卡，但待處理從 $before 變成 $after —— 進來的比消化的快，limit 需要調高。"
+# 追不上是這支腳本存在的理由，所以它要看得見——但只有「還會被處理的」那些
+# 算數。原本這裡比的是全部待轉，於是佇列裡只剩卡住的項目時，它每天都會叫人
+# 調高 limit，而那對卡住的項目毫無作用。
+if [[ "$queued" =~ ^[0-9]+$ && "$before" != "?" && "$after" != "?" \
+      && "$after" -ge "$before" && "$queued" -gt 0 ]]; then
+  echo "XKB 書籤批次：產了 $done_count 張卡，但排隊中仍有 $queued 筆 —— 進來的比消化的快，limit 需要調高。$stuck_note"
 elif [[ "$done_count" -gt 0 ]]; then
-  echo "XKB 書籤批次：產了 $done_count 張卡，還有 $after 筆待處理。"
+  echo "XKB 書籤批次：產了 $done_count 張卡，還有 $queued 筆排隊中。$stuck_note"
+elif [[ -n "$stuck_note" ]]; then
+  echo "XKB 書籤批次：這次沒有東西要處理。$stuck_note"
 fi

@@ -22,7 +22,7 @@ import xkb_paths
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 CARDS_DIR = xkb_paths.CARDS_DIR
-QUEUE_PATH = Path(os.getenv("XKB_QUEUE_PATH", str(WORKSPACE / "memory" / "x-knowledge-base" / "tiege-queue.json")))
+QUEUE_PATH = xkb_paths.QUEUE_PATH
 
 VALID_STATUSES = {"todo", "processing", "done", "failed", "skipped"}
 

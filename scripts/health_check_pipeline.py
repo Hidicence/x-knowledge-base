@@ -636,8 +636,8 @@ def check_card_production() -> dict:
     result = {"name": "card_production", "checks": []}
 
     try:
-        from xkb_pending_work import uncarded_bookmarks
-        pending = len(uncarded_bookmarks(BOOKMARKS_DIR, CARDS_DIR))
+        from xkb_pending_work import pending_breakdown
+        counts = pending_breakdown(BOOKMARKS_DIR, CARDS_DIR)
     except Exception as err:  # noqa: BLE001 — 健檢自己不能把整份報告弄掛
         result["checks"].append({
             "ok": False,
@@ -645,13 +645,26 @@ def check_card_production() -> dict:
         })
         return result
 
+    # 卡住的項目不是故障，是一件等人決定的事：沒有任何排程會再碰 failed，
+    # 所以它們既不會好轉也不會惡化，只會一直在那裡。說出來，但不要算成紅燈——
+    # 每天亮著的紅燈會把真正的紅燈一起淹掉。
+    if counts["stuck"]:
+        result["checks"].append({
+            "ok": True,
+            "msg": f"{counts['stuck']} 筆卡在失敗狀態，不會自動重試（要重跑得手動重設佇列）",
+        })
+
+    # 「還會被處理的」才是判斷管線活著與否的依據。拿全部待轉去判斷的話，
+    # 佇列裡只剩卡住的項目時，這一項會永遠紅燈。
+    pending = counts["actionable"]
+
     stall_hours = int(os.getenv("XKB_CARD_STALL_HOURS", "48"))
     newest_mtime, newest_name = _newest_card()
 
     if newest_mtime is None:
         result["checks"].append({
             "ok": pending == 0,
-            "msg": f"memory/cards/ 是空的，還有 {pending} 筆書籤待轉",
+            "msg": f"memory/cards/ 是空的，還有 {pending} 筆書籤排隊中",
         })
         return result
 
@@ -668,9 +681,9 @@ def check_card_production() -> dict:
     stalled = idle_hours > stall_hours
     result["checks"].append({
         "ok": not stalled,
-        "msg": (f"{pending} 筆書籤待轉，最後一張卡 {idle_hours:.0f}h 前產出"
+        "msg": (f"{pending} 筆書籤排隊中，最後一張卡 {idle_hours:.0f}h 前產出"
                 if not stalled else
-                f"{pending} 筆書籤待轉，但已經 {idle_hours:.0f}h 沒有任何新卡片"
+                f"{pending} 筆書籤排隊中，但已經 {idle_hours:.0f}h 沒有任何新卡片"
                 f"（超過 {stall_hours}h）——書籤轉卡可能每晚都在失敗，"
                 f"看 /tmp/xkb-bookmark-batch.log"),
     })
