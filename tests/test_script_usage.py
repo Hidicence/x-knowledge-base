@@ -45,11 +45,11 @@ class Recording(unittest.TestCase):
         """參數值可能是查詢內容或路徑。這份紀錄要回答的是「有沒有人用」，
         不是「他查了什麼」。"""
         xkb_usage.record("scripts/xkb_ask.py",
-                         ["--env-file", "/root/.config/xkb/xkb.env", "我的報價策略"],
+                         ["--env-file", "/etc/xkb/fixture.env", "我的報價策略"],
                          path=self.path)
         blob = self.path.read_text(encoding="utf-8")
         self.assertIn("--env-file", blob)
-        self.assertNotIn("/root/.config", blob)
+        self.assertNotIn("/etc/xkb", blob)
         self.assertNotIn("報價", blob)
 
     def test_an_unwritable_path_is_silent(self):
