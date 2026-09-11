@@ -74,7 +74,19 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
 # waiting on a judgement only Pan can make. Reporting them in one list, in the
 # vocabulary of the check that produced them, is why the daily message stopped
 # being read: it never answered "is this mine to deal with?"
-DECISION_SECTIONS = {"staging_backlog", "governance_actionable"}
+# 「等你決定」只放真的只有 Pan 能決定的事。
+#
+# staging_backlog 與 governance_actionable 原本在這裡，而 2026-09-12 實測：那
+# 180 筆待審裡 106 筆是 safe_promotion，治理會自動吸收，一筆都不需要人。積起來
+# 的原因是治理每晚上限 20 筆而候選進來得更快——那是吞吐量設定，不是判斷。
+#
+# 把吞吐量問題放進「等你決定」，等於每天叫人決定一件系統自己會做的事。這則訊息
+# 會被停止閱讀就是這樣來的。兩者現在都當一般紅燈處理：追不上才出聲，而且說的是
+# 「追不上，調高 LIMIT」，不是「請你審核 180 筆」。
+#
+# 真正屬於這一類的是 governance 的 proposal（要不要開新的 wiki 主題）與 overdue，
+# 那兩項由 _decision_lines 直接讀 actionable_counts，不需要整個 section 都算決定。
+DECISION_SECTIONS: set[str] = set()
 
 # Section names are internal identifiers. This is the only place they are
 # turned into something worth reading.
@@ -85,6 +97,10 @@ FAULT_LABELS = {
     "recall_telemetry": "召回沒有留下紀錄",
     "semantic_index": "語意索引",
     "topic_map": "分類對應表",
+    # 這兩個原本在 DECISION_SECTIONS 裡，所以從來不需要標籤（決定類不走
+    # FAULT_LABELS）。移出來之後缺口就露出來了：它們紅燈時會印出內部識別字。
+    "staging_backlog": "知識候選消化不完",
+    "governance_actionable": "治理吸收追不上",
     "external_dependencies": "外部相依不在位",
     "card_production": "書籤沒有變成知識卡",
     "pipeline_ledger": "有階段沒在動",
@@ -94,25 +110,44 @@ FAULT_LABELS = {
 }
 
 
-def _decision_lines(sections: list[dict]) -> list[str]:
-    """Say what is waiting and what deciding it means, not the raw counts."""
-    counts: dict[str, int] = {}
+def _governance_counts(sections: list[dict]) -> dict[str, int]:
     for section in sections:
         if section.get("name") == "governance_actionable":
-            counts = section.get("actionable_counts") or {}
+            return section.get("actionable_counts") or {}
+    return {}
+
+
+def _decision_lines(sections: list[dict]) -> list[str]:
+    """只放真的需要 Pan 做決定的事。
+
+    「等你決定」底下原本會出現「127 條治理下一輪會處理」——標題說要你決定，
+    內容自己說系統會處理。實測那 127 條裡有 126 條是 safe_promotion，治理
+    下一輪會自動吸收，一條都不需要人。
+
+    每天叫人決定一件他不需要決定的事，是這則訊息會被停止閱讀的直接原因。
+    所以這裡只留「只有你能決定」的那一類，其餘搬到現況那一段。
+    """
+    counts = _governance_counts(sections)
     lines = []
     if counts.get("proposal"):
         lines.append(f"  {counts['proposal']} 條想開新的 wiki 主題——要不要開，只有你能決定")
-    # 原本這一行寫「對應的主題頁還不存在」，但算式是 pending 減掉提案與隔離，
-    # 那是「因為任何理由被擋住的全部」。標籤跟數字對不上，會把人帶去查錯方向。
-    waiting = counts.get("pending", 0) - counts.get("proposal", 0) - counts.get("quarantine", 0)
-    if waiting > 0:
-        lines.append(f"  {waiting} 條治理下一輪會處理")
-    held = counts.get("held", 0)
-    if held > 0:
-        lines.append(f"  {held} 條看過了但證據或信心不足，留著沒丟——不用你做什麼")
     if counts.get("overdue"):
         lines.append(f"  {counts['overdue']} 條因為太舊被隔離，沒有刪除")
+    return lines
+
+
+def _governance_progress_lines(sections: list[dict]) -> list[str]:
+    """治理自己會處理的量——這是現況，不是待辦。"""
+    counts = _governance_counts(sections)
+    lines = []
+    # pending 扣掉需要人決定的（提案）與已隔離的，剩下就是治理下一輪會吸收的。
+    auto = (counts.get("pending", 0) - counts.get("proposal", 0)
+            - counts.get("quarantine", 0))
+    if auto > 0:
+        lines.append(f"消化中：{auto} 條知識候選，治理下一輪自動吸收")
+    held = counts.get("held", 0)
+    if held > 0:
+        lines.append(f"暫留：{held} 條證據或信心不足，留著沒丟——不用你做什麼")
     return lines
 
 
@@ -140,7 +175,7 @@ def build_message(sections: list[dict], failures: list[tuple[str, str]]) -> str:
     if decisions:
         lines += ["", "● 等你決定"] + decisions
 
-    inventory = _inventory_lines()
+    inventory = _inventory_lines() + _governance_progress_lines(sections)
     if inventory:
         lines += [""] + inventory
     return "\n".join(lines)

@@ -27,7 +27,16 @@ LOG_FILE="${XKB_GOVERNANCE_LOG:-/tmp/xkb-governance.log}"
 LOCK_FILE="/tmp/xkb-governance.lock"
 
 ENV_FILE="${XKB_ENV_FILE:-}"
-LIMIT=20
+# 一晚吸收幾筆。
+#
+# 20 是追不上的：2026-09-12 實測，連續三天都打在 20 這個上限上，而待審候選累積
+# 到 180 筆、最舊 42 天。追不上是設定造成的，不是壞掉——跟書籤批次當年一次五筆
+# 的那個問題是同一個形狀，而那支腳本的註解早就寫過：追不上的 worker 不是自動化，
+# 是一條慢慢漏的縫。
+#
+# 每筆候選要一次判斷，所以這個數字同時是花費決定，寫在這裡而不是埋在參數預設值裡。
+# 80 能在兩三天內清掉現有堆積，之後穩態下遠低於這個數。
+LIMIT=80
 while [[ $# -gt 0 ]]; do
   case $1 in
     --env-file) ENV_FILE="$2"; shift 2 ;;
@@ -140,6 +149,11 @@ set -e
 if [[ "$rebuild_status" -ne 0 ]]; then
   log "  索引重建失敗——這一輪的標記還沒生效，詳見 $LOG_FILE"
 fi
+
+# 帳本：健檢用它算「吸收速度追不追得上進來的速度」。沒有這一行，那個判斷只能
+# 退回看絕對量——而看絕對量會在任何補跑期間紅燈，並且把一個吞吐量問題寫成
+# 「請你審核 180 筆」。
+python3 scripts/xkb_ledger.py record --stage candidate-governance   --produced "$promoted" >>"$LOG_FILE" 2>&1 || true
 
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] governance done (promoted=$promoted)"
 

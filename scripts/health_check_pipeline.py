@@ -396,20 +396,104 @@ def check_staging_backlog() -> dict:
     dates = [c.source_date for c in outstanding if c.source_date != "unknown"]
     oldest: str | None = min(dates) if dates else None
 
-    result["checks"].append({
-        "ok": pending <= max_pending,
-        "msg": f"pending candidates: {pending} (threshold {max_pending})"
-               + ("" if pending <= max_pending else " — 用 xkb_review.py 審核"),
-    })
+    # 問的是「追不追得上」，不是「積了幾筆」。
+    #
+    # 原本這一項在 pending > 60 時紅燈，訊息寫「用 xkb_review.py 審核」，而它被
+    # 歸在「等你決定」底下。2026-09-12 實測：180 筆待審裡 106 筆是 safe_promotion
+    # ——治理會自動吸收，一筆都不需要人。積起來的原因是治理每晚上限 20 筆，而候選
+    # 進來得比 20 快，連續三天都打在上限上。
+    #
+    # 那是吞吐量設定，不是判斷。而「積了幾筆」這個問法在任何補跑期間都會紅燈，
+    # 於是它每天叫人去審核一件系統自己會做的事——這則訊息會被停止閱讀就是這樣來的。
+    #
+    # 現在拿帳本裡的實際吸收速度跟候選進來的速度比。追得上就不是故障，不管積了幾筆；
+    # 追不上才是，而且訊息會說「追不上」而不是「請你審核」。
+    absorbed_per_day, arrived_per_day = _governance_rates()
+
+    if absorbed_per_day is None or arrived_per_day is None:
+        # 帳本還沒有足夠紀錄算速度（要三次治理執行）。
+        #
+        # 這種時候不要紅燈。「積了幾筆」這個問法正是我們要淘汰的那一個——它在
+        # 補跑期間必定紅燈，而現在恰好就是補跑期間。拿一個已知會誤報的判準去填
+        # 空窗，等於把噪音留在門口。
+        #
+        # 說出狀態、但不當故障：真正的判斷等帳本有資料再做。
+        result["checks"].append({
+            "ok": True,
+            "msg": f"待審候選 {pending} 筆——還要 {3 - _governance_runs()} 次治理執行"
+                   f"才算得出吸收速度，在那之前不判斷追不追得上",
+        })
+    else:
+        keeping_up = absorbed_per_day >= arrived_per_day
+        result["checks"].append({
+            "ok": keeping_up,
+            "msg": (f"待審候選 {pending} 筆；治理每天吸收 {absorbed_per_day:.0f} 筆、"
+                    f"進來 {arrived_per_day:.0f} 筆"
+                    + ("——追得上" if keeping_up else
+                       "——追不上，調高 run_candidate_governance.sh 的 LIMIT")),
+        })
 
     if oldest:
         age_days = (datetime.now(timezone.utc).date() - datetime.strptime(oldest, "%Y-%m-%d").date()).days
+        # 年齡只在追不上的時候才有意義：追得上的話，舊的那批本來就排在前面，
+        # 會自己被吸收掉。單看年齡會讓一個正在消化的佇列每天紅燈。
+        stalled = (absorbed_per_day is not None and arrived_per_day is not None
+                   and absorbed_per_day < arrived_per_day)
         result["checks"].append({
-            "ok": age_days <= max_age_days,
-            "msg": f"oldest pending candidate: {oldest} ({age_days}d, threshold {max_age_days}d)",
+            "ok": not (stalled and age_days > max_age_days),
+            "msg": f"最舊的待審候選：{oldest}（{age_days} 天前）"
+                   + ("" if not stalled else f"，而且追不上——它不會自己消失"),
         })
 
     return result
+
+
+def _governance_runs() -> int:
+    """帳本裡有幾次治理紀錄。用來說「還要幾次才算得出速度」。"""
+    try:
+        import xkb_ledger
+        return len([r for r in xkb_ledger.read("candidate-governance")
+                    if isinstance(r.get("produced"), int)])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _governance_rates() -> tuple[float | None, float | None]:
+    """(每天吸收幾筆, 每天進來幾筆)。算不出來時回 (None, None)。
+
+    吸收速度來自管線帳本——那是實際發生過的事，不是設定值。進來的速度用待審
+    候選的日期分佈算：最舊到今天的天數除以總筆數，是平均到達率。
+
+    兩邊都算不出來時不要猜。猜一個速度然後拿它判斷，會得到一個看起來精確的錯誤。
+    """
+    try:
+        import xkb_ledger
+        rows = xkb_ledger.read("candidate-governance")
+    except Exception:  # noqa: BLE001
+        return None, None
+
+    absorbed = [r.get("produced") for r in rows if isinstance(r.get("produced"), int)]
+    if len(absorbed) < 3:
+        return None, None
+    recent = absorbed[-7:]
+    per_day = sum(recent) / len(recent)
+
+    try:
+        import xkb_review
+        promoted = xkb_review._promoted_ids(
+            xkb_review.GOVERNANCE_DIR / "candidate-registry.jsonl")
+        outstanding = [c for c in xkb_review.load_candidates(classify=False)
+                       if "/" not in c.source_file and c.status == "pending"
+                       and c.candidate_id not in promoted]
+    except Exception:  # noqa: BLE001
+        return per_day, None
+
+    dates = sorted(c.source_date for c in outstanding if c.source_date != "unknown")
+    if len(dates) < 2:
+        return per_day, 0.0
+    span = (datetime.strptime(dates[-1], "%Y-%m-%d").date()
+            - datetime.strptime(dates[0], "%Y-%m-%d").date()).days
+    return per_day, len(outstanding) / max(span, 1)
 
 
 def check_governance_actionable() -> dict:
