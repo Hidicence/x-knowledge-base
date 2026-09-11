@@ -257,8 +257,8 @@ class BatchSummary(unittest.TestCase):
 
 class Wiring(unittest.TestCase):
     def test_the_check_is_registered(self):
-        source = (ROOT / "scripts" / "health_check_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("check_pipeline_ledger(),", source)
+        # 同上：問 CHECKS，不問檔案內容。
+        self.assertIn("check_pipeline_ledger", {c.__name__ for c in hc.CHECKS})
 
     def test_the_daily_message_can_name_it(self):
         sys.path.insert(0, str(ROOT / "scripts"))

@@ -81,6 +81,20 @@ PYQ
 before=$(pending)
 log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch start (limit=$LIMIT, pending=$before)"
 
+# 先把還值得再試的失敗項目放回佇列。
+#
+# 根因修好不會讓它們自己好：worker 只挑 todo，而 sync_tiege_queue 刻意保留
+# failed。2026-09-09 那八天留下的 49 筆，是我手動重設才動起來的。
+#
+# 但重試有上限（見 xkb_requeue_failed.py）：剩下那些是被供應商擋掉內容的，
+# 無限重試等於每晚固定燒一次錢又永遠不會成功。到上限就轉成 abandoned。
+requeue_out=$(python3 scripts/xkb_requeue_failed.py 2>>"$LOG_FILE")
+requeue_status=$?
+log "  requeue: ${requeue_out:-（無輸出）}"
+if [[ "$requeue_status" -ne 0 ]]; then
+  log "  requeue 失敗——這一輪只處理原本就在佇列裡的項目"
+fi
+
 OUT=$(mktemp)
 trap 'rm -f "$OUT"' EXIT
 

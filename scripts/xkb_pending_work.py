@@ -59,7 +59,7 @@ def uncarded_bookmarks(bookmarks_dir: Path, cards_dir: Path) -> list[Path]:
 # pending，48 小時後升級成「管線停擺」，而調任何設定都清不掉。跟這個函式本來要
 # 修的是同一種錯，只是換了一個狀態。
 RETRYABLE_STATUSES = {"todo"}
-TERMINAL_STATUSES = {"failed", "skipped", "processing"}
+TERMINAL_STATUSES = {"failed", "skipped", "processing", "abandoned"}
 
 
 def pending_breakdown(bookmarks_dir: Path, cards_dir: Path,
@@ -90,14 +90,19 @@ def pending_breakdown(bookmarks_dir: Path, cards_dir: Path,
         status_by_id = {}
 
     counts = {"total": len(uncarded), "queued": 0, "stuck": 0,
-              "skipped": 0, "unqueued": 0}
+              "skipped": 0, "unqueued": 0, "abandoned": 0}
     for path in uncarded:
         status = status_by_id.get(path.stem)
         if status in RETRYABLE_STATUSES:
             counts["queued"] += 1
         elif status in {"failed", "processing"}:
             # processing 也算卡住：沒有任何排程會再碰被中斷的那些。
+            # failed 還會被 xkb_requeue_failed 放回去，所以它是「還在試」。
             counts["stuck"] += 1
+        elif status == "abandoned":
+            # 重試用盡，明確不再試了。跟 failed 分開，否則「還會再試」和
+            # 「已經不試了」在報表上長得一樣。
+            counts["abandoned"] += 1
         elif status == "skipped":
             counts["skipped"] += 1
         else:

@@ -190,8 +190,13 @@ def main() -> int:
     return 0
 
 
-import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
-
+# 這支刻意不接使用量測。
+#
+# 它是全 repo 被 import 最多的基礎模組（51 個），而 xkb_usage 需要它來決定
+# 紀錄寫在哪——接上去就形成 xkb_usage → xkb_paths → xkb_usage 的循環。Python
+# 剛好不會炸，所以 401 項測試沒有一項會發現。
+#
+# 而且量它沒有意義：`python xkb_paths.py` 只是印出解析到的路徑，那是除錯輸出，
+# 不是一個「有沒有人在用」值得追蹤的工具。批次加量測時規則套對了，套錯對象。
 if __name__ == "__main__":
-    xkb_usage.record(__file__)
     raise SystemExit(main())

@@ -52,9 +52,12 @@ BULLET = re.compile(r"^\s*-\s+\S")
 # 反而失去「結論」該有的具體性。
 CHUNK = 40
 
-# 每批最多產出幾條結論，以及「算有消化」的最低壓縮比。
+# 每批最多產出幾條結論。
+#
+# 原本這裡還有一個 MIN_COMPRESSION 門檻，低於它就拒絕併回。那個指標拿掉了：
+# 它會因為丟掉內容而變好看，所以它獎勵的正是要防的行為。現在筆記全部保留，
+# 不需要用比例去猜有沒有真的消化。
 PER_CHUNK = 8
-MIN_COMPRESSION = 2.0
 
 
 def split_page(text: str) -> tuple[str, list[str], list[str]]:
@@ -79,8 +82,19 @@ def split_page(text: str) -> tuple[str, list[str], list[str]]:
 
 CONCLUSIONS_HEADING = "## 結論（消化自累積筆記）"
 UNDIGESTED_HEADING = "## 尚未消化"
+# 消化過的原始筆記搬到這裡，不刪除。
+#
+# 2026-09-11 改的：原本 --apply 是用結論「取代」筆記，所以消化是不可逆的，而
+# 壓縮比會因為丟掉內容而變好看（實測有一次 16.2x，其實是整批不見了）。一個會
+# 因為弄壞事情而變好看的指標，不該留在會被自動執行的路徑上。
+#
+# 現在筆記全部留著。代價是頁面變長，而那個代價很小：語意召回撈的是段落，不是
+# 整頁。換來的是「消化丟掉東西」在結構上不可能發生——不必用任何數字去追它，
+# 也讓這件事終於可以安全地排程。
+DIGESTED_HEADING = "## 已消化的筆記（原文保留）"
 SOURCES_HEADING = "## 出處"
-GENERATED_HEADINGS = (CONCLUSIONS_HEADING, UNDIGESTED_HEADING, SOURCES_HEADING)
+GENERATED_HEADINGS = (CONCLUSIONS_HEADING, UNDIGESTED_HEADING,
+                      DIGESTED_HEADING, SOURCES_HEADING)
 
 
 def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
@@ -125,6 +139,20 @@ def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
     return human, conclusions, bullets_of(UNDIGESTED_HEADING), bullets_of(SOURCES_HEADING)
 
 
+def prior_digested(text: str) -> list[str]:
+    """上一輪已經消化、原文保留在頁面上的筆記。
+
+    undigested() 刻意不回傳這些（否則每次 --apply 都會把同一批重新消化一次），
+    所以併回去的時候要另外讀一次，不然它們會在這一輪被寫掉——那就又變成「消化
+    會丟東西」，只是晚一輪發生。
+    """
+    marker = DIGESTED_HEADING + "\n"
+    if marker not in text:
+        return []
+    section = text.split(marker, 1)[1].split("\n## ", 1)[0]
+    return [l.strip() for l in section.splitlines() if l.strip().startswith("- ")]
+
+
 def undigested(text: str) -> tuple[str, list[str], list[str], str]:
     """(前言, 待消化的條列, 出處, 既有結論) —— 給每個想知道「還剩多少」的人。
 
@@ -136,6 +164,8 @@ def undigested(text: str) -> tuple[str, list[str], list[str], str]:
     for line in prior_links:
         if line not in links:
             links.append(line)
+    # 已消化的筆記不在這裡面——它們留在頁面上是為了可追溯，不是為了再消化一次。
+    # 再交出去的話，每次 --apply 都會把同一批筆記重新消化，而結論會一層層疊加。
     return prose, bullets + waiting, links, conclusions
 
 
@@ -156,12 +186,42 @@ def take_bullets(markdown: str, limit: int) -> list[str]:
     return kept
 
 
+# 條列結尾的出處標記，例如 *(self-derived · memory/2026-09-10.md)* 或一個網址。
+_PROVENANCE_RE = re.compile(r"\*\(([^)]{4,200})\)\*\s*$")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def provenance_of(bullet: str) -> str:
+    """一條筆記的出處字串；沒有就回空字串。
+
+    用來對帳「這條筆記有沒有被某條結論代表」。比對的是出處而不是內容，因為
+    結論本來就會改寫措辭——改寫之後比字串只會得到「全都沒消化」。
+    """
+    match = _PROVENANCE_RE.search((bullet or "").rstrip())
+    if match:
+        return match.group(1).strip()
+    url = _URL_RE.search(bullet or "")
+    return url.group(0).rstrip(").,") if url else ""
+
+
+def _is_covered(bullet: str, conclusions: str) -> bool:
+    source = provenance_of(bullet)
+    if not source:
+        # 本來就沒有出處的筆記無法對帳。保守起見當成沒消化——留著比丟掉安全，
+        # 而且它會在頁面上顯示出來，讓「這條沒有出處」這件事被看見。
+        return False
+    return source in conclusions
+
+
 def synthesise(topic: str, prose: str, bullets: list[str],
                per_chunk: int) -> tuple[str, list[str]]:
     """回傳 (結論, 沒能消化的原始條列)。
 
-    第二個值幾乎總是空的。不是空的時候，代表模型對那一批沒有給出任何可用
-    的條列——那些筆記不能就這樣算了，因為 --apply 會用結論取代它們。
+    第二個值是「這一輪沒能消化的」：整批沒產出，或出處沒有被任何結論引用到。
+    它們留在「尚未消化」區，下一次再試。
+
+    --apply 不會刪掉任何筆記（見 DIGESTED_HEADING），所以這個值的意義是
+    「下次要不要再試」，不再是「會不會消失」。
     """
     from _llm import call as llm_call
 
@@ -186,6 +246,9 @@ def synthesise(topic: str, prose: str, bullets: list[str],
             f"4. 用 Markdown 條列，**最多 {per_chunk} 條**。超過的部分會被直接截掉，\n"
             "   所以請自己挑最重要的，不要把每條筆記都改寫一遍\n"
             "5. 沒有把握的地方標註『（待查證）』，不要編\n"
+            "6. **每一條結論的結尾，要把它合併到的那幾條筆記的出處標記原樣抄上**\n"
+            "   （每條筆記結尾那個 *(…)* 的部分，多條就並排寫）。\n"
+            "   出處沒有被抄到的筆記會被當成沒有消化，原樣留在頁面上。\n"
             "只輸出條列本身，不要開場白。"
         )
         # 一次重試。空回應多半是暫時的；連兩次都空，才算這一批真的消化不出來。
@@ -200,6 +263,16 @@ def synthesise(topic: str, prose: str, bullets: list[str],
                 print(f"    第 {start // CHUNK + 1} 批沒有產出結論，重試一次", flush=True)
         if kept:
             out.append("\n".join(kept))
+            # 沒有被任何一條結論引用到出處的筆記，算沒有消化，原樣留著。
+            #
+            # 提示詞本身就在要求丟東西（「最多 N 條，不要把每條筆記都改寫一遍」），
+            # 而 lost 原本只接住「整批都沒產出」。30 條進去、8 條出來的時候，另外
+            # 22 條是無聲消失的——壓縮比好看正是因為內容被丟掉。
+            #
+            # 現在改成由出處對帳。模型不配合抄出處的話，結果是「什麼都沒消化」
+            # 而不是「安靜丟掉一批」——失敗的方向是安全的那一邊。
+            covered = "\n".join(kept)
+            lost.extend(b for b in batch if not _is_covered(b, covered))
         else:
             lost.extend(batch)
         print(f"    已消化 {min(start + CHUNK, len(bullets))}/{len(bullets)} 條", flush=True)
@@ -326,31 +399,21 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
         print("模型沒有產出內容，未寫入任何檔案。", file=sys.stderr)
         return 2
 
-    # 壓縮比是「有沒有真的消化」最直接的指標。
-    # 實測 ai-video-workflows 是 2.4x（真的收斂成結論），
-    # openclaw-agent-workflows 只有 1.4x——那一頁是 catch-all 分類的產物，
-    # 內容彼此不相關，本來就沒有共同主題可以收斂。
-    # 不連貫的頁面該先拆開，硬消化只會得到換句話說的同一批東西。
+    # 壓縮比這個指標拿掉了。
+    #
+    # 它是「有沒有真的消化」的直接指標，但它同時是丟掉內容的誘因：把 30 條筆記
+    # 換成 8 條結論、另外 22 條不見，壓縮比會很好看。實測 16.2x 那次就是整批不
+    # 見了。一個會因為弄壞事情而變好看的指標，不該留在會被自動執行的路徑上。
+    #
+    # 取而代之的保證是結構性的：--apply 不再取代筆記。結論是附加上去的，原始
+    # 條列搬到「已消化的筆記」區留著。所以「消化丟掉東西」在結構上不可能發生，
+    # 不需要用一個數字去追它。
     produced = len([b for b in synthesis.splitlines() if b.strip().startswith("- ")])
-    # 分子只算真的被消化的那些。把消化不出結論的條列也算進去，會讓壓縮比
-    # 看起來比實際好——那正是這一連串修正要消滅的那種數字。
-    digested = len(bullets) - len(lost)
-    ratio = digested / max(produced, 1)
-    print(f"  壓縮比：{ratio:.1f}x（{digested} → {produced}）")
+    print(f"  產出 {produced} 條結論（{len(bullets)} 條筆記全部保留）")
 
-    # 併回去是取代，不是附加。丟掉的那幾條會就此消失，而且壓縮比會因此
-    # 好看得不像話——16.2x 看起來像消化得很好，其實是有整批不見了。
     if lost:
-        print(f"  另有 {len(lost)} 條消化不出結論（已重試一次），"
-              f"會原封不動留在頁面上，下次再試。")
-    if ratio < MIN_COMPRESSION:
-        print(f"  警告：低於 {MIN_COMPRESSION}x，代表這一頁的內容彼此不相關，")
-        print("        消化不出共同結論。建議先把它拆成幾個主題，而不是硬消化。")
-        if apply:
-            # 另外兩條拒絕路徑分別回 3 與 4；這裡原本印個警告就回 0，
-            # 於是呼叫端分不出「併好了」與「拒絕併」。
-            print("  已停止：不會把沒有消化過的內容併回主題頁。", file=sys.stderr)
-            return 6
+        print(f"  其中 {len(lost)} 條沒有產出結論（已重試一次），"
+              f"留在「尚未消化」區，下次再試。")
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     review.write_text(render(topic, synthesis, links, bullets, lost),
@@ -361,18 +424,36 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
         print("  確認後再加 --apply 併回主題頁。")
         return 0
 
-    # 併回去之前先備份。消化是不可逆的——原本那些條列會被結論取代，
-    # 弄錯了沒有備份就回不來。
+    # 備份還是留著。現在消化不會刪掉筆記，但它仍然會重排整頁，而「重排一頁
+    # 我手寫的東西」值得有一份退路。
     backup = path.with_suffix(f".md.before-synthesis-{datetime.now().strftime('%Y%m%d-%H%M')}")
     shutil.copy2(path, backup)
+
+    # 這次併回去的是「結論 + 原始筆記」，不是「結論取代原始筆記」。
+    #
+    # 原本是取代，所以任何沒被寫進結論的筆記就此消失——而提示詞本身就在要求
+    # 模型挑重點不要全改寫。結果是消化會安靜丟掉內容，而壓縮比會因此好看。
+    #
+    # 筆記搬到 DIGESTED_HEADING 之下：頁面上看得到、召回查得到、下一次不會被
+    # 當成素材再消化一次。唯一的代價是頁面變長。
+    digested = [b for b in bullets if b not in lost]
+    for line in prior_digested(text):
+        if line not in digested:
+            digested.append(line)
+
     conclusions = f"{existing}\n\n{synthesis}" if existing else synthesis
     merged = prose.rstrip() + "\n\n" + CONCLUSIONS_HEADING + "\n\n" + conclusions
     if lost:
         merged += ("\n\n" + UNDIGESTED_HEADING + "\n\n"
                    + "\n".join(lost))
+    if digested:
+        merged += ("\n\n" + DIGESTED_HEADING + "\n\n"
+                   + "\n".join(digested))
     merged += "\n\n" + SOURCES_HEADING + "\n\n" + "\n".join(links) + "\n"
     path.write_text(merged, encoding="utf-8")
-    print(f"  已併回 {path.name}（備份：{backup.name}）")
+    kept = len(digested)
+    print(f"  已併回 {path.name}：{produced} 條結論，"
+          f"{kept} 條筆記原文保留（備份：{backup.name}）")
     return 0
 
 

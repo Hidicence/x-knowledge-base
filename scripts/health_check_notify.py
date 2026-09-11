@@ -85,6 +85,7 @@ FAULT_LABELS = {
     "recall_telemetry": "召回沒有留下紀錄",
     "semantic_index": "語意索引",
     "topic_map": "分類對應表",
+    "external_dependencies": "外部相依不在位",
     "card_production": "書籤沒有變成知識卡",
     "pipeline_ledger": "有階段沒在動",
     "index_freshness": "索引落後於卡片",
@@ -166,8 +167,13 @@ def _inventory_lines() -> list[str]:
         if counts["actionable"]:
             lines.append(f"待消化：{counts['actionable']} 筆書籤排隊中")
         if counts["stuck"]:
-            lines.append(f"卡住了：{counts['stuck']} 筆轉卡失敗或中斷，不會自動重試——"
-                         f"要重跑或放棄，都得你決定")
+            lines.append(f"重試中：{counts['stuck']} 筆轉卡失敗，排程會再試"
+                         f"（最多三次）")
+        # 已放棄跟還在重試要分開。混在一起的話，「系統還在努力」和「系統已經
+        # 不管了」在報表上長得一樣——而只有後者需要你做決定。
+        if counts.get("abandoned"):
+            lines.append(f"已放棄：{counts['abandoned']} 筆重試用盡，不會再試——"
+                         f"要再給一次機會：xkb_requeue_failed.py --reset-abandoned")
         # 刻意跳過的也要出現。原本它既不算 actionable 也不算 stuck，於是從每一份
         # 報告裡消失——而「看不見」跟「處理掉了」在報表上長得一樣。
         if counts["skipped"]:
@@ -245,20 +251,12 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="只印出訊息，不實際發送")
     args = parser.parse_args()
 
-    sections = [
-        hc.check_wiki_canonical(),
-        hc.check_recall_wiki_source(),
-        hc.check_recall_live(),
-        hc.check_recall_telemetry(),
-        hc.check_semantic_index(),
-        hc.check_topic_map(),
-        hc.check_staging_backlog(),
-        hc.check_governance_actionable(),
-        hc.check_provenance_markers(),
-        hc.check_conversation_capture(),
-        hc.check_external_dependencies(),
-        hc.check_index_freshness(),
-    ]
+    # 清單在 health_check_pipeline.CHECKS，不在這裡。
+    #
+    # 原本這裡自己列了一份，而那份跟 pipeline 那份不一樣：少了 card_production
+    # 與 pipeline_ledger（所以那兩項在每日訊息裡從來沒出現過），多了
+    # external_dependencies（所以手動跑 pipeline 時它不被檢查）。
+    sections = hc.run_all()
     failures = [
         (section["name"], check["msg"])
         for section in sections

@@ -886,26 +886,44 @@ def fmt_checks(section: dict) -> str:
     return "\n".join(lines)
 
 
+# 健檢包含哪些項目——唯一的定義。
+#
+# 原本這份清單有兩份：這支腳本一份，health_check_notify（排程每天跑的那支）
+# 自己再寫一份。2026-09-11 的後果是：我在這裡加了 card_production 與
+# pipeline_ledger，寫了測試確認「有註冊」，然後那兩項在每日訊息裡一次都沒出現
+# 過——因為每天跑的是另一份清單。反過來 external_dependencies 只在 notify 那份
+# 裡，所以手動跑這支時它不會被檢查。
+#
+# 兩份清單就是兩個會各自漂走的答案。新增檢查時只改這裡。
+CHECKS = (
+    check_wiki_canonical,
+    check_recall_wiki_source,
+    check_recall_live,
+    check_recall_telemetry,
+    check_semantic_index,
+    check_topic_map,
+    check_staging_backlog,
+    check_governance_actionable,
+    check_provenance_markers,
+    check_conversation_capture,
+    check_external_dependencies,
+    check_card_production,
+    check_pipeline_ledger,
+    check_index_freshness,
+)
+
+
+def run_all() -> list[dict]:
+    """跑完整份健檢。呼叫端不要自己列清單。"""
+    return [check() for check in CHECKS]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    sections = [
-        check_wiki_canonical(),
-        check_recall_wiki_source(),
-        check_recall_live(),
-        check_recall_telemetry(),
-        check_semantic_index(),
-        check_topic_map(),
-        check_staging_backlog(),
-        check_governance_actionable(),
-        check_provenance_markers(),
-        check_conversation_capture(),
-        check_card_production(),
-        check_pipeline_ledger(),
-        check_index_freshness(),
-    ]
+    sections = run_all()
 
     if args.json:
         print(json.dumps(sections, ensure_ascii=False, indent=2))

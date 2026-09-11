@@ -24,7 +24,10 @@ BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 CARDS_DIR = xkb_paths.CARDS_DIR
 QUEUE_PATH = xkb_paths.QUEUE_PATH
 
-VALID_STATUSES = {"todo", "processing", "done", "failed", "skipped"}
+# abandoned 是重試用盡之後的終點（見 xkb_requeue_failed.py）。不列進來的話，
+# 下面那個「不認得就重設成 todo」會讓已經放棄的項目每次同步都回到佇列，
+# 於是「放棄」變成一個什麼都不代表的狀態。
+VALID_STATUSES = {"todo", "processing", "done", "failed", "skipped", "abandoned"}
 
 
 def now_iso() -> str:
@@ -137,7 +140,7 @@ def main() -> int:
             worker = worker or "reconcile"
             finished_at = finished_at or ts
             error = ""
-        elif status in {"failed", "skipped"}:
+        elif status in {"failed", "skipped", "abandoned"}:
             # Preserve explicit failed/skipped states; operator can reset if needed.
             pass
         elif status == "processing":

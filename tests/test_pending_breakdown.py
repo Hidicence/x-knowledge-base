@@ -135,7 +135,10 @@ class TheMessageUsesIt(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "scripts"))
         source = (ROOT / "scripts" / "health_check_notify.py").read_text(encoding="utf-8")
         self.assertIn("pending_breakdown", source)
-        self.assertIn("卡住了", source)
+        # 用字會改（「卡住了」後來拆成「重試中」與「已放棄」），所以守的是
+        # 那個區分存在，不是某一個標籤。
+        self.assertIn("重試中", source)
+        self.assertIn("已放棄", source)
 
 
 if __name__ == "__main__":

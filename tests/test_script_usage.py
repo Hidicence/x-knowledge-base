@@ -74,10 +74,25 @@ class Recording(unittest.TestCase):
         self.assertNotIn("notrunnable", data)
 
 
+# 刻意不量測的，附上理由。
+#
+# 這不是「忘了接」的白名單——每一項都要說得出為什麼，否則這個例外清單會變成
+# 讓缺口合法化的地方。
+NOT_MEASURED = {
+    # xkb_usage 需要 xkb_paths 決定紀錄寫在哪，接上去就形成
+    # xkb_usage → xkb_paths → xkb_usage 的循環（2026-09-12 圖譜抓到）。
+    # 而且它的 __main__ 只是印出解析到的路徑，那是除錯輸出，不是一個
+    # 「有沒有人在用」值得追蹤的工具。
+    "xkb_paths.py",
+}
+
+
 class EveryEntryPointIsMeasured(unittest.TestCase):
     def test_every_runnable_script_records_itself(self):
         missing = []
         for path in sorted(SCRIPTS.glob("*.py")):
+            if path.name in NOT_MEASURED:
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             if '__name__ == "__main__"' not in text:
                 continue
@@ -87,6 +102,16 @@ class EveryEntryPointIsMeasured(unittest.TestCase):
             missing, [],
             "這些可執行腳本沒有被量到，之後判斷「沒人用」時會少算：\n  "
             + "\n  ".join(missing))
+
+    def test_the_exception_list_stays_honest(self):
+        """例外只能是「刻意不量」，不能是「已經刪掉的檔案」留在清單裡。
+
+        一個指向不存在檔案的例外，會讓這個清單看起來有理由、實際上什麼都沒擋。
+        """
+        for name in NOT_MEASURED:
+            with self.subTest(script=name):
+                self.assertTrue((SCRIPTS / name).exists(),
+                                f"{name} 不存在了，例外清單該清掉這一行")
 
     def test_importing_a_script_does_not_count_as_running_it(self):
         """被 import 的次數不代表被使用——record 只在當主程式跑時呼叫。"""
