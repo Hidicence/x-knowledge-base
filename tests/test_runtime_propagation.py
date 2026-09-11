@@ -50,7 +50,7 @@ class RuntimePropagationTests(unittest.TestCase):
                     [sys.executable, str(child)],
                     cwd=root,
                     env=settings,
-                    capture_output=True, text=True, check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 )
             self.assertEqual(proc.returncode, 0)
             self.assertIn("child.provider=process-provider", proc.stdout)

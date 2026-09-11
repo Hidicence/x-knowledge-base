@@ -297,8 +297,14 @@ def main():
             }
             index_data["items"].append(new_item)
             existing_items_list.append(new_item)  # keep related context fresh
-            save_index(index_data)
             processed += 1
+
+    # 索引重建搬到迴圈外面。save_index 現在不是寫一份 JSON，而是叫起
+    # build_search_index.sh 整份重算——留在迴圈裡的話，50 支影片的播放清單
+    # 會做 50 次全目錄掃描與 50 次索引重寫。local_ingest 與 fetch_github_repos
+    # 都是跑完才呼叫一次，這裡漏了。
+    if processed > 0:
+        save_index(index_data)
 
     print(f"\n✅ 完成：新增 {processed} 張 YouTube 知識卡片")
     if processed > 0:

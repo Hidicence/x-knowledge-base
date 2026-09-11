@@ -64,7 +64,7 @@ class SetupXbrainContractTests(unittest.TestCase):
             env["GEMINI_API_KEY"] = process_key
         command = ["bash", str(SCRIPT), "--dir", str(gbrain)]
         command.extend(args or [])
-        return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+        return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
 
     def test_active_source_has_no_private_config_fallback(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")

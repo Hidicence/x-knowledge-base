@@ -92,7 +92,7 @@ class EmptyFieldsDoNotSwallowTheNextLine(unittest.TestCase):
                    "INDEX_FILE": str(index),
                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
             proc = subprocess.run([bash, str(BUILDER)], env=env,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
             self.assertEqual(proc.returncode, 0, proc.stderr)
             rows = json.loads(index.read_text(encoding="utf-8"))["items"]
         self.assertEqual(len(rows), 1)

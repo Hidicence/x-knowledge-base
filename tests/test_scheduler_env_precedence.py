@@ -71,7 +71,7 @@ class SchedulerEnvPrecedence(unittest.TestCase):
                 "SOME_OTHER_VAR": "kept",
             })
             out = subprocess.run(
-                [bash, "-c", script], env=env, capture_output=True, text=True, check=True
+                [bash, "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
             ).stdout
 
         # 檔案提到的鍵：環境裡那份被清掉，讓 runtime_env() 讀得到檔案的值。
@@ -90,7 +90,7 @@ class SchedulerEnvPrecedence(unittest.TestCase):
         )
         env = dict(os.environ, LLM_API_URL="http://localhost:8080/v1")
         out = subprocess.run(
-            [bash, "-c", script], env=env, capture_output=True, text=True, check=True
+            [bash, "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
         ).stdout
         self.assertIn("url=http://localhost:8080/v1", out)
 

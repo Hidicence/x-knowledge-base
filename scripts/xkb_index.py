@@ -119,16 +119,23 @@ def files_for_item(item: dict, *, by_source: bool = True) -> list[Path]:
     raw = (item.get("path") or "").strip()
     if raw and Path(raw).is_absolute():
         _add(Path(raw))
+    # 這一列自己的檔案。relative_path 的基準歷來有三種寫法，全部試過。
     rel = (item.get("relative_path") or "").strip()
     if rel:
-        for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR):
+        for base in (xkb_paths.WORKSPACE, xkb_paths.BOOKMARKS_DIR,
+                     xkb_paths.CARDS_DIR):
             _add(base / rel)
 
-    stem = Path(rel or raw).stem
-    for found in by_stem.get(stem, []):
-        _add(found)
-
+    # 以下是「擴散到同一份知識的其他副本」，只在整組模式下做。
+    #
+    # 原本這段靠檔名的擴散在 by_source 判斷之外，於是 by_source=False 仍然會
+    # 跨目錄擴散：normalize_index_quality 標一筆原始書籤時，會連 cards/ 裡同名
+    # 的那張充實過的卡片一起標掉。去重那邊沒事只是因為它另外算了 keep_files，
+    # 品質排除沒有那道保險。
     if by_source:
+        stem = Path(rel or raw).stem
+        for found in by_stem.get(stem, []):
+            _add(found)
         url = (item.get("source_url") or "").strip()
         if url.startswith(("http://", "https://")):
             for found in by_url.get(url, []):

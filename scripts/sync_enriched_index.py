@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_index
+import xkb_frontmatter
 
 WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
@@ -191,6 +192,7 @@ def main() -> None:
     print(f"📁 {len(card_files)} enriched cards  |  {len(id_to_idx)} indexed items")
 
     updated = 0
+    unexcluded = 0
     not_found_ids: list[str] = []
 
     for card_path in card_files:
@@ -226,11 +228,22 @@ def main() -> None:
             changes["category"] = category
         if not item.get("enriched"):
             changes["enriched"] = True
-        # Clear stale excluded flag if item now has proper title and summary
+        # 充實之後要把過期的排除標記撤掉——而且要撤在檔案上。
+        #
+        # 這一段原本只改索引列。索引現在是衍生物，所以那是死碼：下一次重建會
+        # 從卡片檔案把 excluded: true 原封不動讀回來。結果是排除變成單行道——
+        # 一張被誤排除的卡（例如被那個「空欄位吞掉下一行」的解析 bug 害到的那
+        # 兩張），即使後來補上了標題與摘要，也沒有任何管線步驟能把它救回來，
+        # 只能手動改檔案。原本反而是安全的：那時候下一次重建就洗掉了。
+        #
+        # 只撤品質類的理由。duplicate_source_url 不是品質問題，撤掉它會把一份
+        # 重複的副本放回召回裡。
         if item.get("excluded") and title and summary and not title.startswith("Tweet "):
-            changes["excluded"] = False
-            changes.pop("exclude_reasons", None)
-            item.pop("exclude_reasons", None)
+            reason = str(item.get("excluded_reason") or "")
+            if "duplicate_source_url" not in reason:
+                for path in xkb_index.files_for_item(item):
+                    if xkb_frontmatter.unmark_excluded(path, dry_run=args.dry_run):
+                        unexcluded += 1
 
         if changes:
             if not args.dry_run:
@@ -240,6 +253,8 @@ def main() -> None:
                 print(f"  [dry-run] {raw_card_id}: {list(changes.keys())}")
 
     print(f"✅ Updated: {updated}  |  Not in index: {len(not_found_ids)}")
+    if unexcluded:
+        print(f"↩️  撤掉 {unexcluded} 個過期的排除標記（卡片已補上標題與摘要）")
     if not_found_ids:
         print(f"   (first 5 not found: {not_found_ids[:5]})")
 

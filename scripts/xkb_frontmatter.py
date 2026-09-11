@@ -59,7 +59,14 @@ def set_field(text: str, key: str, value: str) -> str:
     line = f"{key}: {value}"
     pattern = re.compile(rf"^{re.escape(key)}:.*$", re.MULTILINE)
     if pattern.search(block):
-        new_block = pattern.sub(line, block, count=1)
+        # 用 lambda 當替換，不要把 line 交給 re.sub 當模板。
+        #
+        # `pattern.sub(line, ...)` 會把 line 裡的反斜線當跳脫序列解讀，而寫進
+        # 來的值常常含路徑：canonicalize 的理由是
+        # "duplicate_source_url; canonical={relative_path}"，那個 relative_path
+        # 在 Windows 上是 memory\cards\abc.md —— `\c` 直接拋 re.error，`\a` 更
+        # 糟，會安靜變成控制字元。而它炸的時機是在已經改寫了一部分卡片之後。
+        new_block = pattern.sub(lambda _m: line, block, count=1)
     else:
         new_block = block + "\n" + line
     return text[:match.start(1)] + new_block + text[match.end(1):]

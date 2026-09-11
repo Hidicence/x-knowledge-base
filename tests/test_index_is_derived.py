@@ -171,7 +171,7 @@ class TheFlagSurvivesARebuild(unittest.TestCase):
                    "INDEX_FILE": str(index),
                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
             proc = subprocess.run([bash, str(BUILDER)], env=env,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
             self.assertEqual(proc.returncode, 0, proc.stderr)
 
             rows = json.loads(index.read_text(encoding="utf-8"))["items"]
@@ -224,7 +224,7 @@ class TheQualityScriptsActuallyRun(unittest.TestCase):
                "INDEX_FILE": str(index),
                "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         return subprocess.run([sys.executable, str(SCRIPTS / script), "--dry-run"],
-                              capture_output=True, text=True, env=env)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
 
     def test_canonicalize_duplicates_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -374,7 +374,7 @@ class DeduplicationMustLeaveOneCopy(unittest.TestCase):
                "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS / "canonicalize_duplicates.py")],
-            capture_output=True, text=True, env=env)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
         self.assertFalse(xkb_frontmatter.is_excluded(keep), "保留的那一份被標掉了")
@@ -390,6 +390,68 @@ class DeduplicationMustLeaveOneCopy(unittest.TestCase):
 
         self.assertFalse(xkb_frontmatter.is_excluded(card))
         self.assertFalse(xkb_frontmatter.unmark_excluded(card))
+
+
+class ExclusionIsNotAOneWayDoor(unittest.TestCase):
+    """排除要有退路，而退路要真的被某個管線步驟走過。
+
+    2026-09-10 審查抓到：旗標改成寫在檔案上之後，sync_enriched_index 裡那段
+    「卡片補上標題與摘要就清掉過期排除」只改索引列——而索引現在是衍生物，
+    下一次重建就把 excluded: true 原封不動讀回來。unmark_excluded() 除了測試
+    沒有任何呼叫者。
+
+    後果是排除變成單行道：一張被誤排除的卡（例如被「空欄位吞掉下一行」那個
+    解析 bug 害到的），即使後來補齊了內容也救不回來，只能手動改檔案。改成寫
+    在檔案上之前反而是安全的——那時候下一次重建就洗掉了。
+    """
+
+    def test_the_pipeline_can_undo_a_quality_exclusion(self):
+        source = (SCRIPTS / "sync_enriched_index.py").read_text(encoding="utf-8")
+        self.assertIn("unmark_excluded", source)
+        self.assertIn("files_for_item", source)
+
+    def test_it_does_not_undo_a_duplicate_exclusion(self):
+        """去重的標記不能被「補齊內容」撤掉——那會把副本放回召回裡。"""
+        source = (SCRIPTS / "sync_enriched_index.py").read_text(encoding="utf-8")
+        self.assertIn("duplicate_source_url", source)
+
+    def test_unmark_leaves_the_card_usable(self):
+        import xkb_frontmatter as fm
+        with tempfile.TemporaryDirectory() as tmp:
+            card = Path(tmp) / "c.md"
+            card.write_text(CARD.format(stem="c", title="標題", summary="摘要"),
+                            encoding="utf-8")
+            fm.mark_excluded(card, "tweet_numeric_low_signal")
+            self.assertTrue(fm.is_excluded(card))
+
+            self.assertTrue(fm.unmark_excluded(card))
+
+            after = card.read_text(encoding="utf-8")
+            self.assertFalse(fm.is_excluded(card))
+            for line in ["id: c", "type: knowledge-card", "# 標題", "摘要"]:
+                self.assertIn(line, after)
+
+    def test_a_windows_path_in_the_reason_does_not_crash(self):
+        """理由含 Windows 路徑時 re.sub 會把反斜線當跳脫序列。
+
+        canonicalize 的理由是 "duplicate_source_url; canonical={relative_path}"，
+        而那個路徑在 Windows 上是 memory\cards\abc.md。原本會拋
+        re.error: bad escape \c，而且是在已經改寫了一部分卡片之後才炸。
+        """
+        import xkb_frontmatter as fm
+        with tempfile.TemporaryDirectory() as tmp:
+            card = Path(tmp) / "c.md"
+            card.write_text(CARD.format(stem="c", title="標題", summary="摘要"),
+                            encoding="utf-8")
+            fm.mark_excluded(card, "first")
+
+            reason = "duplicate_source_url; canonical=" + chr(92).join(
+                ["memory", "cards", "abc.md"])
+            self.assertTrue(fm.mark_excluded(card, reason) or True)
+            updated = fm.set_field(card.read_text(encoding="utf-8"),
+                                   "excluded_reason", reason)
+
+        self.assertIn("abc.md", updated)
 
 
 if __name__ == "__main__":

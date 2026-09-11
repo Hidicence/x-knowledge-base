@@ -226,13 +226,21 @@ def _degraded_recall_checks(rows: list[dict]) -> list[dict]:
 
     latest_ts = _ts(latest)
     for layer in sorted(now_broken):
-        earliest = None
-        for row in known:
+        # 從最新那一筆往回走，走到第一筆「這一層是好的」為止——那才是這一段
+        # 連續壞掉的起點。
+        #
+        # 原本是從頭往後找第一次出現就 break，抓到的是「史上第一次」。於是
+        # 三個月前抖一次、中間一千小時全好、剛剛又抖一次，會算出「已經連續壞
+        # 了 2000h」——正是這個檢查的註解說要避免的那種誤報。而我為它寫的
+        # 測試沒抓到，因為 fixture 裡沒有放更早的那一次。
+        streak_start = None
+        for row in reversed(known):
             if layer in (row.get("degraded") or []):
-                earliest = _ts(row)
+                streak_start = _ts(row)
+            else:
                 break
-        if latest_ts and earliest:
-            persisted_hours = (latest_ts - earliest).total_seconds() / 3600
+        if latest_ts and streak_start:
+            persisted_hours = (latest_ts - streak_start).total_seconds() / 3600
         else:
             persisted_hours = 0.0
         checks.append({

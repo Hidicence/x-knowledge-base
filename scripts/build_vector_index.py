@@ -30,6 +30,11 @@ from pathlib import Path
 # Allow running from scripts/ directory or skill root
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+import xkb_console
+
+# 這支腳本的輸出有 emoji，而它會被人在 Windows 主控台直接叫起來。
+# 不轉的話，工作做完了卻死在回報那一行的 print。
+xkb_console.use_utf8()
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_SKILL_DIR))

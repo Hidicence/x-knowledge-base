@@ -50,8 +50,16 @@ def uncarded_bookmarks(bookmarks_dir: Path, cards_dir: Path) -> list[Path]:
 # worker 只會處理 todo/processing。failed 與 skipped 是終點：
 # sync_tiege_queue 明文「保留 failed/skipped 狀態，由操作者自行重設」，
 # 也就是沒有任何排程會再碰它們。
-RETRYABLE_STATUSES = {"todo", "processing"}
-TERMINAL_STATUSES = {"failed", "skipped"}
+# 原本 processing 也算 retryable，但 worker 只挑 status == "todo"，而
+# sync_tiege_queue 刻意不碰 processing（「避免覆蓋進行中的工作」）。所以一個被
+# 中斷的 worker 留下的 processing 項目，沒有任何東西會再處理它——它跟 failed
+# 一樣是終點，只是看起來像在進行中。
+#
+# 算成「排隊中」的後果：那種孤兒會永遠被報成待處理，card_production 也把它算進
+# pending，48 小時後升級成「管線停擺」，而調任何設定都清不掉。跟這個函式本來要
+# 修的是同一種錯，只是換了一個狀態。
+RETRYABLE_STATUSES = {"todo"}
+TERMINAL_STATUSES = {"failed", "skipped", "processing"}
 
 
 def pending_breakdown(bookmarks_dir: Path, cards_dir: Path,
@@ -87,7 +95,8 @@ def pending_breakdown(bookmarks_dir: Path, cards_dir: Path,
         status = status_by_id.get(path.stem)
         if status in RETRYABLE_STATUSES:
             counts["queued"] += 1
-        elif status == "failed":
+        elif status in {"failed", "processing"}:
+            # processing 也算卡住：沒有任何排程會再碰被中斷的那些。
             counts["stuck"] += 1
         elif status == "skipped":
             counts["skipped"] += 1

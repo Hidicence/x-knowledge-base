@@ -64,7 +64,7 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
         command = [sys.executable, str(SCRIPT), "fixture query", "--json"]
         if explicit_env_file is not None:
             command.extend(["--env-file", str(explicit_env_file)])
-        return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+        return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
 
     @needs_posix_exec
     def test_process_environment_takes_precedence_over_xkb_env_file(self) -> None:

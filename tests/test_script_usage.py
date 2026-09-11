@@ -106,7 +106,7 @@ class TheReportRuns(unittest.TestCase):
             import os
             proc = subprocess.run(
                 [sys.executable, str(SCRIPTS / "xkb_usage.py"), "report", "--json"],
-                capture_output=True, text=True, env={**os.environ, **env})
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env={**os.environ, **env})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         json.loads(proc.stdout)
 

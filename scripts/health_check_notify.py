@@ -166,8 +166,12 @@ def _inventory_lines() -> list[str]:
         if counts["actionable"]:
             lines.append(f"待消化：{counts['actionable']} 筆書籤排隊中")
         if counts["stuck"]:
-            lines.append(f"卡住了：{counts['stuck']} 筆轉卡失敗，不會自動重試——"
+            lines.append(f"卡住了：{counts['stuck']} 筆轉卡失敗或中斷，不會自動重試——"
                          f"要重跑或放棄，都得你決定")
+        # 刻意跳過的也要出現。原本它既不算 actionable 也不算 stuck，於是從每一份
+        # 報告裡消失——而「看不見」跟「處理掉了」在報表上長得一樣。
+        if counts["skipped"]:
+            lines.append(f"已跳過：{counts['skipped']} 筆你決定不收的，留著沒刪")
     except Exception:
         pass
 

@@ -68,7 +68,7 @@ PY
 # 裡只剩 failed/skipped 時，摘要照樣叫人「調高 limit」，而調高 limit 對它們
 # 完全沒有作用——它們要的是一個決定，不是更多額度。
 queued_now() {
-  python3 - <<'PYQ' 2>/dev/null || echo ""
+  python3 - <<'PYQ' 2>/dev/null || echo "? ?"
 import sys
 sys.path.insert(0, "scripts")
 import xkb_paths
@@ -164,6 +164,8 @@ log "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] bookmark batch done (done=$done_count fail
 ledger "$done_count" "$failed_count" "$after" "$( [[ "$failed_count" -gt 0 ]] && first_failure_reason )" ok
 
 read -r queued stuck <<<"$(queued_now)"
+# 讀不出來時這兩個是 "?"，不是空字串。空字串會讓下面印出「還有  筆排隊中」
+# ——把一個未知數印成一個數字。
 stuck_note=""
 # 卡住的那些不會自己好，也沒有任何排程會再碰它們——sync_tiege_queue 明文寫著
 # 「由操作者自行重設」。所以它們每次都要被說出來，而且要說清楚沒有人會處理。
@@ -173,6 +175,7 @@ fi
 
 if [[ "$failed_count" -gt 0 ]]; then
   echo "XKB 書籤批次：產了 $done_count 張卡，$failed_count 筆失敗，還有 $queued 筆排隊中。$stuck_note"
+  [[ "$queued" == "?" ]] && echo "（排隊數讀不出來，詳見 $LOG_FILE）"
   exit 0
 fi
 

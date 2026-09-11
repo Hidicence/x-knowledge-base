@@ -87,10 +87,25 @@ class Breakdown(unittest.TestCase):
         self.assertEqual(counts["actionable"], 1)
         self.assertEqual(counts["stuck"], 0)
 
-    def test_processing_counts_as_queued(self):
+    def test_an_orphaned_processing_item_counts_as_stuck_not_queued(self):
+        """`processing` 看起來像在進行中，實際上沒有任何東西會再碰它。
+
+        worker 只挑 status == "todo"，而 sync_tiege_queue 刻意不動 processing
+        （「避免覆蓋進行中的工作」）。所以一個被中斷的 worker 留下的 processing
+        項目是終點，不是佇列。
+
+        這個測試原本斷言的是相反的事——我昨天寫的，斷言「processing 算排隊中」。
+        後果是那種孤兒會永遠被報成待處理，48 小時後升級成「管線停擺」，而調任何
+        設定都清不掉：跟 pending_breakdown 本來要修的是同一種錯。
+        """
         self.bookmark("inflight")
         self.write_queue({"inflight": "processing"})
-        self.assertEqual(self.counts()["queued"], 1)
+
+        counts = self.counts()
+
+        self.assertEqual(counts["queued"], 0)
+        self.assertEqual(counts["stuck"], 1)
+        self.assertEqual(counts["actionable"], 0)
 
     def test_carded_bookmarks_are_not_pending_at_all(self):
         self.bookmark("done1")

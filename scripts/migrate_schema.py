@@ -147,10 +147,10 @@ def migrate_index(dry_run: bool) -> dict:
         if item_changed:
             changed += 1
 
-    if not dry_run and changed:
-        # Layer 1 補的 source_type / enriched，builder 現在會直接從檔案解析。
-        # 這裡不再自己寫索引——寫索引的地方只有一個。
-        xkb_index.rebuild()
+    # Layer 1 原本補的 source_type / enriched，builder 現在直接從檔案解析，
+    # 所以這裡不需要也不應該自己寫索引。重建交給 main() 在修完卡片之後做一次：
+    # migrate_index 只動記憶體、不碰檔案，而增量重建只重解析 mtime 變過的檔案
+    # ——在這裡呼叫 rebuild() 是個什麼都不會發生的動作，而輸出照樣印 updated: N。
 
     return {"total": len(items), "updated": changed}
 
@@ -182,12 +182,26 @@ def main():
 
     if args.dry_run:
         print("\n[dry-run] Nothing was written. Run without --dry-run to apply.")
-    else:
-        print("\nDone. Run build_vector_index.py --incremental to refresh embeddings.")
+        return 0
+
+    # 修完卡片才重建，而且要整份重建。
+    #
+    # 遷移改的是 frontmatter，而增量重建靠 mtime/size 判斷要不要重新解析——
+    # 照理說改過的檔案會被認出來，但 Layer 1 完全沒碰檔案，所以原本在
+    # migrate_index 裡呼叫的那次增量重建是個什麼都不會發生的動作，而輸出
+    # 照樣印 updated: N。順序也是錯的：那次重建發生在卡片被修好之前。
+    if card_result["fixed"] or idx_result.get("updated"):
+        print("\nRebuilding the search index from the migrated files...")
+        if not xkb_index.rebuild(incremental=False):
+            print("  ⚠️  索引重建失敗——遷移已寫進卡片，但索引還是舊的。")
+            return 1
+
+    print("\nDone. Run build_vector_index.py --incremental to refresh embeddings.")
+    return 0
 
 
 import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
 
 if __name__ == "__main__":
     xkb_usage.record(__file__)
-    main()
+    raise SystemExit(main())
