@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import xkb_eviction as ev  # noqa: E402
 import xkb_score  # noqa: E402
-from xkb_memory_service import KnowledgeCatalog, Store  # noqa: E402
+from xkb_memory_service import KnowledgeCatalog, Store, tag_demoted  # noqa: E402
 
 
 class StoredForLaterSurvives(unittest.TestCase):
@@ -92,6 +92,49 @@ class DemotionIsNotRemoval(unittest.TestCase):
         ])
         self.assertEqual(results[0]["title"], "被降權但這次命中")
         self.assertGreater(results[0]["unified_score"], 0)
+
+
+class TheExemptionIsSemanticRelevanceNotLegType(unittest.TestCase):
+    """2026-09-12 在 VPS 上用真實查詢驗證時抓到的第二個問題。
+
+    標記確實掛上了（demoted=True），名次卻一動也沒動。原因是第一版的豁免條件
+    寫成 `not _above_floor`，而非語意腿（關鍵字／BM25／wiki 關鍵字）一律被標成
+    上地板——餘弦地板對它們的尺度不適用。那是「地板不適用」，不是「證明相關」。
+
+    結果是所有關鍵字命中都永久免疫降權，機制只剩語意腿的弱命中會被壓。豁免條件
+    必須是「這次在語意上過了地板」。
+    """
+
+    def test_a_keyword_only_hit_can_be_demoted(self):
+        """關鍵字命中沒有語意相關的證據，不該因此豁免。"""
+        results = xkb_score.rank([
+            {"title": "關鍵字命中但從來沒用上", "score": 9.0,
+             "score_scale": "card_keyword", "demoted": True},
+            {"title": "普通關鍵字命中", "score": 1.0, "score_scale": "card_keyword"},
+        ])
+        self.assertEqual([r["title"] for r in results],
+                         ["普通關鍵字命中", "關鍵字命中但從來沒用上"],
+                         "關鍵字腿的高分不該讓它躲過降權")
+        self.assertLess(results[-1]["unified_score"], 0)
+
+    def test_semantic_relevance_this_time_still_exempts_it(self):
+        """真的過了語意地板就豁免——那是復活訊號，不能壓。"""
+        results = xkb_score.rank([
+            {"title": "被降權但這次語意命中", "score": 0.88,
+             "score_scale": "card_semantic", "demoted": True},
+            {"title": "普通關鍵字命中", "score": 1.0, "score_scale": "card_keyword"},
+        ])
+        self.assertEqual(results[0]["title"], "被降權但這次語意命中")
+        self.assertGreater(results[0]["unified_score"], 0)
+
+    def test_a_weak_semantic_hit_does_not_exempt_it(self):
+        """語意腿撈到但沒過地板，一樣不算證明相關。"""
+        results = xkb_score.rank([
+            {"title": "語意弱命中且從來沒用上", "score": 0.05,
+             "score_scale": "card_semantic", "demoted": True},
+            {"title": "語意弱命中", "score": 0.06, "score_scale": "card_semantic"},
+        ])
+        self.assertEqual(results[-1]["title"], "語意弱命中且從來沒用上")
 
 
 class RevivalNeedsNoIntervention(unittest.TestCase):
@@ -181,12 +224,13 @@ class ItMustNotDependOnWhichLegFoundIt(unittest.TestCase):
         """標記只能在合併點發生。多一處就多一條可以不一致的路。"""
         import inspect
         from xkb_memory_service import KnowledgeCatalog as KC, Store as St
-        per_leg = (KC._semantic_search, KC._wiki_search, KC._drop_irrelevant)
+        per_leg = (KC._semantic_search, KC._wiki_search, KC._drop_irrelevant,
+                   KC.search)
         for fn in per_leg:
             with self.subTest(fn=fn.__name__):
-                self.assertNotIn("_tag_demoted", inspect.getsource(fn),
+                self.assertNotIn("tag_demoted", inspect.getsource(fn),
                                  "降權不要掛在單一條腿上")
-        self.assertIn("_tag_demoted", inspect.getsource(St.knowledge_recall),
+        self.assertIn("tag_demoted", inspect.getsource(St.knowledge_recall),
                       "合併點沒有標記，降權就完全不會發生")
 
 
@@ -194,29 +238,28 @@ class LosingTheStatsMustNotBreakRecall(unittest.TestCase):
     """降權是最佳化，不是正確性。"""
 
     def test_no_sink_tags_nothing(self):
-        catalog = KnowledgeCatalog()
         records = [{"id": "cards/a.md"}]
-        catalog._tag_demoted(records)
+        tag_demoted(records, None)
         self.assertNotIn("demoted", records[0])
 
     def test_a_failing_sink_is_swallowed(self):
-        catalog = KnowledgeCatalog()
-
         def boom():
             raise RuntimeError("統計表不見了")
 
-        catalog.demoted_sink = boom
         records = [{"id": "cards/a.md"}]
-        catalog._tag_demoted(records)  # 不可以炸
+        tag_demoted(records, boom)  # 不可以炸
         self.assertNotIn("demoted", records[0])
 
     def test_it_tags_only_the_matching_record(self):
-        catalog = KnowledgeCatalog()
-        catalog.demoted_sink = lambda: {"cards/noise.md"}
         records = [{"id": "cards/noise.md"}, {"id": "cards/good.md"}]
-        catalog._tag_demoted(records)
+        tag_demoted(records, lambda: {"cards/noise.md"})
         self.assertTrue(records[0].get("demoted"))
         self.assertNotIn("demoted", records[1])
+
+    def test_the_catalog_does_not_need_to_know_about_demotion(self):
+        """降權跟「去哪裡找知識」無關——catalog 替身不該為它多長一個方法。"""
+        self.assertFalse(hasattr(KnowledgeCatalog(), "_tag_demoted"))
+        self.assertFalse(hasattr(KnowledgeCatalog(), "demoted_sink"))
 
 
 if __name__ == "__main__":
