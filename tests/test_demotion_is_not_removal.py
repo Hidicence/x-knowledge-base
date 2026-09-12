@@ -136,6 +136,60 @@ class RevivalNeedsNoIntervention(unittest.TestCase):
             self.store.demoted_ids.__defaults__, (ev.DEMOTE_AFTER_CONSIDERED,))
 
 
+class ItMustNotDependOnWhichLegFoundIt(unittest.TestCase):
+    """第一版掛在語意腿尾端，真實資料一驗就破。
+
+    每條召回腿都自己新建 dict（語意、關鍵字、wiki 各有一份欄位清單），所以掛在
+    其中一條上的標記會被其他腿繞過。那張被撈出 8 次、從來沒用上的卡片，在日文
+    查詢下是**關鍵字腿**撈到的——標記完全沒掛上，而單元測試全綠。
+
+    這是記憶 xkb-many-writers-one-reader 的同一個形狀：保護要放在讀的那一端。
+    這裡用關鍵字腿的欄位形狀（line 666 那一長串，沒有經過 _drop_irrelevant）
+    來證明標記與腿無關。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Store(Path(self.tmp.name) / "memory.sqlite")
+        for _ in range(ev.DEMOTE_AFTER_CONSIDERED):
+            self.store.record_usage([("02-seo-geo/999", 0.54, False)])
+
+    def _keyword_leg_record(self, record_id: str, score: float) -> dict:
+        """關鍵字腿產出的形狀。它不經過 _drop_irrelevant。"""
+        return {"record_type": "knowledge_card", "id": record_id,
+                "title": record_id, "summary": "", "source_file": f"cards/{record_id}.md",
+                "source_type": "card", "score_scale": "card_keyword", "score": score,
+                "retrieval": "keyword"}
+
+    def test_a_keyword_leg_hit_is_still_demoted(self):
+        demoted_id = "02-seo-geo/999"
+        records = [self._keyword_leg_record(demoted_id, 3.0),
+                   self._keyword_leg_record("01-good/111", 1.0)]
+        self.store.catalog.search = lambda *a, **k: {
+            "records": records, "filtered_counts": {"by_layer": {}}}
+        self.store.recall = lambda *a, **k: {"memories": []}
+
+        out = self.store.knowledge_recall("ヘアメイク プロンプト", limit=10)
+
+        got = {r["id"]: r for r in out["records"]}
+        self.assertTrue(got[demoted_id].get("demoted"),
+                        "關鍵字腿撈到的也要被降權——不然換一條腿就繞過了")
+        self.assertFalse(got["01-good/111"].get("demoted"))
+
+    def test_no_leg_tags_on_its_own(self):
+        """標記只能在合併點發生。多一處就多一條可以不一致的路。"""
+        import inspect
+        from xkb_memory_service import KnowledgeCatalog as KC, Store as St
+        per_leg = (KC._semantic_search, KC._wiki_search, KC._drop_irrelevant)
+        for fn in per_leg:
+            with self.subTest(fn=fn.__name__):
+                self.assertNotIn("_tag_demoted", inspect.getsource(fn),
+                                 "降權不要掛在單一條腿上")
+        self.assertIn("_tag_demoted", inspect.getsource(St.knowledge_recall),
+                      "合併點沒有標記，降權就完全不會發生")
+
+
 class LosingTheStatsMustNotBreakRecall(unittest.TestCase):
     """降權是最佳化，不是正確性。"""
 

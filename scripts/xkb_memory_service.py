@@ -585,15 +585,20 @@ class KnowledgeCatalog:
                 ])
             except Exception:
                 pass  # usage accounting must never break recall
-        self._tag_demoted(kept)
         return kept, dropped
 
     def _tag_demoted(self, records: list[dict[str, Any]]) -> None:
         """標記「反覆被端上來、從來沒被用上」的知識，讓 xkb_score 把它排到最後。
 
-        標記而不是丟掉，而且標在 kept 上——它照樣通過相關度過濾、照樣被
-        record_usage 量測。所以它哪天真的過了一次地板，injected_count 變 1，
-        下一次查詢這個標記就不會再出現，降權自動解除（見 xkb_eviction.is_demoted）。
+        **必須在合併點呼叫，不能掛在任何一條召回腿裡。** 每條腿都自己新建 dict
+        （語意腿、關鍵字腿、wiki 腿各有一份欄位清單），所以掛在其中一條上的標記
+        會被其他腿靜默繞過。第一版掛在語意腿尾端，真實資料驗證時就抓到：那張被
+        撈出 8 次的卡片這次是關鍵字腿撈到的，標記完全沒掛上。這是這個專案記錄
+        在案的「多寫入者一讀取者」——保護要放在讀的那一端。
+
+        標記而不是丟掉，而且標在通過過濾的記錄上——它照樣被 record_usage 量測。
+        所以它哪天真的過了一次地板，injected_count 變 1，下一次查詢這個標記就
+        不會再出現，降權自動解除（見 xkb_eviction.is_demoted）。
 
         取不到統計時什麼都不做：降權是最佳化，不是正確性。讀不到使用統計而讓
         召回失敗，會比多排幾筆弱命中糟得多。
@@ -1314,6 +1319,10 @@ class Store:
         # 相似度的項目壓到哪一段，都會撞上另一層的尺度。壓高一點壓過 wiki 的
         # 真餘弦，壓低一點掉到對話軌跡之下——後者會讓索引壞掉長得像
         # 「知識庫裡沒東西」，而這個模組的說明明講那是不能發生的事。
+        # 降權要標在這裡——xkb_score.rank 是唯一的跨層比較點，也是唯一一處
+        # 三條腿的記錄同時存在。標在任何一條腿裡都會被其他腿繞過（見
+        # _tag_demoted 的說明）。
+        self.catalog._tag_demoted(records)
         records = xkb_score.rank(records)
         # Conversation recall filters by namespace in SQL, so nothing is
         # dropped after the fact and its layer count is structurally zero.
