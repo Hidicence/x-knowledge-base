@@ -10,6 +10,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import xkb_frontmatter
 import xkb_paths
 from _llm import call as _llm_call
 
@@ -144,12 +145,29 @@ def classify_content(content: str, *, source_type: str = "", current_category: s
 
 
 def apply_category(card_content: str, category: str) -> str:
-    """Replace only the YAML frontmatter category field."""
+    """Replace only the YAML frontmatter category field.
+
+    寫入交給 xkb_frontmatter.set_field，不要自己再寫一次 regex。原本這裡是
+    `^category:\s*.*$`，而 `\s` 會跨行：遇到空的 `category:` 欄位時，`\s*` 吃掉
+    換行、`.*$` 吃掉下一行，於是下一個欄位被替換掉。實測
+
+        ---
+category:
+title: 重要標題
+...
+
+    會變成 `category: 99-general` 接著直接是 source_url——title 整行消失，而
+    sync_cards_to_wiki 的 make_card 沒有 title 就回 None，那張卡從此不進任何
+    topic。索引裡有 4 筆 category 是空的，所以這不是假想的情況。
+
+    這是這個專案第 N 次的 `\s` 跨行 bug（build_search_index.sh 的八個 regex 為
+    同一個原因改成 `[ 	]*`）。set_field 已經處理過它，也處理過值裡含反斜線時
+    re.sub 把它當跳脫序列的問題。
+    """
     if not category:
         return card_content
-    if re.search(r"^category:\s*.*$", card_content, re.MULTILINE):
-        return re.sub(r"^category:\s*.*$", f"category: {category}", card_content,
-                      count=1, flags=re.MULTILINE)
+    if xkb_frontmatter.has_frontmatter(card_content):
+        return xkb_frontmatter.set_field(card_content, "category", category)
     # 只有在檔案真的以 frontmatter 開頭時才插入。原本是找「第一個 ---」，
     # 而卡片模板本身充滿分隔線，所以模型沒寫 YAML 區塊時，category 會被插進
     # 正文中間，卡片反而完全沒有分類欄位。
