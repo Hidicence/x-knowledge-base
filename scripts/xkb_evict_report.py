@@ -33,10 +33,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import xkb_console
 import xkb_eviction as ev
+import xkb_frontmatter
 import xkb_paths
 import xkb_relevance
 
 xkb_console.use_utf8()
+
+
+def describe(record_id: str) -> tuple[str, str]:
+    """record_id 的標題與**真正的**分類。
+
+    record_id 的前綴是檔案放在哪個 bookmarks 資料夾（`02-seo-geo/2032...`），而那
+    不是這張卡的分類——1,754 筆書籤裡有 650 筆的 frontmatter `category` 跟所在目錄
+    不一致，而召回、wiki 路由、健檢讀的全都是 frontmatter。目錄只是位址。
+
+    2026-09-12 我自己就被這個前綴騙過：看到 `02-seo-geo/` 就推論那張卡「被歸錯類
+    所以被 SEO 問題撈出來」。它其實是日文的 AI 生圖 prompt 合集，frontmatter 寫
+    04-ai-tools-agents，而它被撈出來是內容嵌入弱相關，跟資料夾毫無關係。報告印出
+    前綴卻不印真正的分類，就是在邀請這個推論。
+    """
+    stem = record_id.rsplit("/", 1)[-1]
+    card = xkb_paths.CARDS_DIR / f"{stem}.md"
+    if not card.is_file():
+        return "", ""
+    try:
+        text = card.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "", ""
+    title = ""
+    for line in text.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+    return title, (xkb_frontmatter.get(text, "category") or "")
 
 
 def load_rows(after: int = ev.DEMOTE_AFTER_CONSIDERED) -> list[dict]:
@@ -121,10 +150,13 @@ def main() -> int:
     print("  它們被降權：還在索引裡、還會被量測，只是排在所有相關命中之後。")
     print()
     if demoted:
-        print(f"    {'撈出':>5} {'最高相似度':>10}  知識")
+        print(f"    {'撈出':>5} {'最高相似度':>10}  分類 / 標題")
         for r in sorted(demoted, key=lambda x: -x["considered"])[:args.limit]:
-            print(f"    {r['considered']:>5} {r['best_similarity']:>10.3f}"
-                  f"  {r['record_id']}")
+            title, category = describe(r["record_id"])
+            label = f"[{category or '?'}] {title}" if title else r["record_id"]
+            print(f"    {r['considered']:>5} {r['best_similarity']:>10.3f}  {label}")
+            # 前綴是檔案位址，不是分類——兩者常常不一樣，見 describe()。
+            print(f"    {'':>5} {'':>10}  存放於 {r['record_id']}")
         print()
     if odd:
         print(f"  ⚠ {len(odd)} 筆曾經算出 ≥{floor} 的相似度卻從來沒被注入——")
