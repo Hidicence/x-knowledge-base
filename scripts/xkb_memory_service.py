@@ -293,6 +293,16 @@ def tag_demoted(records: list[dict[str, Any]], sink: Any) -> None:
     它哪天真的過了一次地板，injected_count 變 1，下一次查詢這個標記就不會再出現，
     降權自動解除（見 xkb_eviction.is_demoted）。
 
+    豁免條件是「這次的語意相似度過了 xkb_relevance.min_similarity()」——也就是
+    **定義「有沒有被用上」的那同一把尺**。那一次就是它的復活訊號，壓掉它等於在它
+    唯一有用的那次把它藏起來。
+
+    豁免條件放在這裡而不是 xkb_score，是因為那個模組裡的 RELEVANCE_FLOOR 是壓縮
+    後的腿內尺度（0.35），跟餘弦地板（0.55）不是同一把尺。2026-09-12 我先後拿
+    _above_floor 和「語意腿過了 RELEVANCE_FLOOR」當豁免條件，兩次都讓機制完全不會
+    動：真實資料上那些從來沒被用上的卡片 relevance 都在 0.50 左右，對 0.35 是過的、
+    對 0.55 是不過的。這是本專案記錄在案的尺度混用第四次。
+
     取不到統計時什麼都不做：降權是最佳化，不是正確性。讀不到使用統計而讓召回失敗，
     會比多排幾筆弱命中糟得多。
     """
@@ -304,8 +314,18 @@ def tag_demoted(records: list[dict[str, Any]], sink: Any) -> None:
         return
     if not demoted:
         return
+    floor = xkb_relevance.min_similarity()
+    # 先收集「這次在語意上過了地板」的 id，再套用——同一筆知識在 rank 之前會以
+    # 每條腿一份的樣子出現，只看當下這個 dict 的話，結果會取決於哪條腿排在前面。
+    cleared = {
+        str(item.get("id") or "")
+        for item in records
+        if str(item.get("score_scale") or "").endswith("_semantic")
+        and float(item.get("score") or 0.0) >= floor
+    }
     for item in records:
-        if str(item.get("id") or "") in demoted:
+        record_id = str(item.get("id") or "")
+        if record_id in demoted and record_id not in cleared:
             item["demoted"] = True
 
 

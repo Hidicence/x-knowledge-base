@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import xkb_eviction as ev  # noqa: E402
+import xkb_relevance  # noqa: E402
 import xkb_score  # noqa: E402
 from xkb_memory_service import KnowledgeCatalog, Store, tag_demoted  # noqa: E402
 
@@ -78,63 +79,80 @@ class DemotionIsNotRemoval(unittest.TestCase):
         ])
         self.assertEqual([r["title"] for r in results], ["這次弱", "從來沒用過"])
 
-    def test_demotion_cannot_sink_a_hit_that_cleared_the_floor(self):
-        """這一次真的相關的話，降權不准動它。
+    def test_rank_only_obeys_the_flag_it_does_not_decide(self):
+        """排序不判斷該不該降權，只照旗標排。
 
-        那一次正是它的復活訊號。把它壓到最後，等於在它唯一有用的那一次把它
-        藏起來——而且下一輪統計才會更新，誤差會固定下來。
+        判斷在 tag_demoted，因為那要比的是餘弦地板（0.55），而這個模組裡的
+        RELEVANCE_FLOOR 是壓縮後的腿內尺度（0.35）。兩把尺混用的後果見
+        TheExemptionUsesTheSameFloorAsInjected。
         """
+        import inspect
+        src = inspect.getsource(xkb_score.rank)
+        self.assertNotIn("RELEVANCE_FLOOR) and", src)
         results = xkb_score.rank([
-            {"title": "被降權但這次命中", "score": 0.88,
+            {"title": "高分但被降權", "score": 0.88,
              "score_scale": "card_semantic", "demoted": True},
-            {"title": "沒被降權但這次很弱", "score": 0.05,
+            {"title": "低分沒被降權", "score": 0.60,
              "score_scale": "card_semantic"},
         ])
-        self.assertEqual(results[0]["title"], "被降權但這次命中")
-        self.assertGreater(results[0]["unified_score"], 0)
+        self.assertEqual(results[-1]["title"], "高分但被降權")
 
 
-class TheExemptionIsSemanticRelevanceNotLegType(unittest.TestCase):
-    """2026-09-12 在 VPS 上用真實查詢驗證時抓到的第二個問題。
+class TheExemptionUsesTheSameFloorAsInjected(unittest.TestCase):
+    """2026-09-12 在 VPS 上用真實查詢驗證，同一處錯了兩次。
 
-    標記確實掛上了（demoted=True），名次卻一動也沒動。原因是第一版的豁免條件
-    寫成 `not _above_floor`，而非語意腿（關鍵字／BM25／wiki 關鍵字）一律被標成
-    上地板——餘弦地板對它們的尺度不適用。那是「地板不適用」，不是「證明相關」。
+    兩次都是標記掛上了（demoted=True）、名次一動也沒動：
 
-    結果是所有關鍵字命中都永久免疫降權，機制只剩語意腿的弱命中會被壓。豁免條件
-    必須是「這次在語意上過了地板」。
+      第一次  豁免條件寫成 `not _above_floor`
+              非語意腿（關鍵字／BM25／wiki 關鍵字）一律被標成上地板，因為餘弦
+              地板對它們的尺度不適用。那是「地板不適用」，不是「證明相關」。
+              結果所有關鍵字命中永久免疫降權。
+
+      第二次  豁免條件改成「語意腿過了 xkb_score.RELEVANCE_FLOOR」
+              那是 0.35，壓縮後的腿內尺度；而決定「有沒有被用上」的是餘弦 0.55。
+              真實資料上那些從來沒被用上的卡片 relevance 都在 0.50 左右——對 0.35
+              是過的、對 0.55 是不過的，於是機制還是完全不會動。
+
+    這是本專案記錄在案的尺度混用第四次（記憶 xkb-scale-mixing-bug-class：
+    共同點是隨資料量才浮現）。豁免必須用**定義 injected 的那同一把尺**。
     """
 
-    def test_a_keyword_only_hit_can_be_demoted(self):
-        """關鍵字命中沒有語意相關的證據，不該因此豁免。"""
-        results = xkb_score.rank([
-            {"title": "關鍵字命中但從來沒用上", "score": 9.0,
-             "score_scale": "card_keyword", "demoted": True},
-            {"title": "普通關鍵字命中", "score": 1.0, "score_scale": "card_keyword"},
-        ])
-        self.assertEqual([r["title"] for r in results],
-                         ["普通關鍵字命中", "關鍵字命中但從來沒用上"],
-                         "關鍵字腿的高分不該讓它躲過降權")
-        self.assertLess(results[-1]["unified_score"], 0)
+    def setUp(self):
+        self.floor = xkb_relevance.min_similarity()
+        self.sink = lambda: {"cards/noise.md"}
 
-    def test_semantic_relevance_this_time_still_exempts_it(self):
-        """真的過了語意地板就豁免——那是復活訊號，不能壓。"""
-        results = xkb_score.rank([
-            {"title": "被降權但這次語意命中", "score": 0.88,
-             "score_scale": "card_semantic", "demoted": True},
-            {"title": "普通關鍵字命中", "score": 1.0, "score_scale": "card_keyword"},
-        ])
-        self.assertEqual(results[0]["title"], "被降權但這次語意命中")
-        self.assertGreater(results[0]["unified_score"], 0)
+    def _tag(self, score: float, scale: str) -> bool:
+        records = [{"id": "cards/noise.md", "score": score, "score_scale": scale}]
+        tag_demoted(records, self.sink)
+        return bool(records[0].get("demoted"))
 
-    def test_a_weak_semantic_hit_does_not_exempt_it(self):
-        """語意腿撈到但沒過地板，一樣不算證明相關。"""
-        results = xkb_score.rank([
-            {"title": "語意弱命中且從來沒用上", "score": 0.05,
-             "score_scale": "card_semantic", "demoted": True},
-            {"title": "語意弱命中", "score": 0.06, "score_scale": "card_semantic"},
-        ])
-        self.assertEqual(results[-1]["title"], "語意弱命中且從來沒用上")
+    def test_a_hit_between_the_two_floors_is_still_demoted(self):
+        """真實資料的那一段：0.50 對 0.35 是過的，對 0.55 不是。"""
+        between = 0.50
+        self.assertLess(between, self.floor)
+        self.assertTrue(self._tag(between, "card_semantic"),
+                        "用腿內尺度當豁免條件的話，這一筆永遠不會被降權")
+
+    def test_clearing_the_injection_floor_exempts_it(self):
+        self.assertFalse(self._tag(self.floor, "card_semantic"))
+        self.assertFalse(self._tag(self.floor + 0.2, "card_semantic"))
+
+    def test_a_keyword_hit_never_exempts_it(self):
+        """關鍵字腿的分數不是餘弦，再高也不是相關的證據。"""
+        self.assertTrue(self._tag(9.0, "card_keyword"))
+
+    def test_the_exemption_looks_across_every_leg_for_that_record(self):
+        """同一筆在 rank 之前每條腿各一份，不能只看手上這個 dict。
+
+        否則結果會取決於哪條腿排在前面——語意那份排後面就白豁免了。
+        """
+        records = [
+            {"id": "cards/noise.md", "score": 9.0, "score_scale": "card_keyword"},
+            {"id": "cards/noise.md", "score": self.floor + 0.1,
+             "score_scale": "card_semantic"},
+        ]
+        tag_demoted(records, self.sink)
+        self.assertFalse(any(r.get("demoted") for r in records))
 
 
 class RevivalNeedsNoIntervention(unittest.TestCase):
