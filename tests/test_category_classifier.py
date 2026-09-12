@@ -50,10 +50,14 @@ class ClassifyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.object(cc, "RUNTIME_TAXONOMY_PATH",
-                                    Path(self.tmp.name) / "category-taxonomy.json")
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # 兩個檔都要隔離。只隔離 taxonomy 的話，提案會寫進真實資料目錄——
+        # 跑過幾次之後真的在 memory/x-knowledge-base/ 留下一筆 count=5 的 07-esg，
+        # 而且票數跨測試累積，測試結果開始取決於它之前跑過幾次。
+        for name, attr in (("category-taxonomy.json", "RUNTIME_TAXONOMY_PATH"),
+                           ("category-proposals.json", "PROPOSALS_PATH")):
+            patcher = mock.patch.object(cc, attr, Path(self.tmp.name) / name)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _llm(self, payload: dict):
         return mock.patch.object(cc, "_llm_call", return_value=json.dumps(payload, ensure_ascii=False))
@@ -80,10 +84,26 @@ class ClassifyTests(unittest.TestCase):
         self.assertNotEqual(result["category"], "07-esg")
         self.assertNotIn("07-esg", cc.taxonomy())
 
-    def test_high_confidence_new_category_is_registered_once(self) -> None:
+    def test_high_confidence_new_category_is_only_a_proposal(self) -> None:
+        """一票不開。規則是同一個名字累積到門檻才開。
+
+        這個測試原本釘的是相反的行為（一筆高信心就 register 成永久分類）。而
+        wiki topic 那一層早就是「被提議到門檻才值得開一頁」，分類這一層不該不一樣
+        ——門檻機制與完整理由見 tests/test_new_categories_wait_for_a_quorum.py。
+        """
         with self._llm({"category": "NEW_CATEGORY", "new_category": "07-esg",
                         "confidence": "high", "reason": "碳盤查", "tags": []}):
             result = cc.classify_content("碳盤查報告")
+        self.assertNotEqual(result["category"], "07-esg")
+        self.assertIn(result["category"], cc.taxonomy())
+        self.assertEqual(result["proposed_category"], "07-esg")
+        self.assertNotIn("07-esg", cc.taxonomy())
+
+    def test_the_quorum_opens_it_exactly_once(self) -> None:
+        with self._llm({"category": "NEW_CATEGORY", "new_category": "07-esg",
+                        "confidence": "high", "reason": "碳盤查", "tags": []}):
+            for _ in range(cc.PROMOTE_AFTER):
+                result = cc.classify_content("碳盤查報告")
         self.assertEqual(result["category"], "07-esg")
         self.assertEqual(cc.taxonomy().count("07-esg"), 1)
 

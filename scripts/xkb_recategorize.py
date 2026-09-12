@@ -16,6 +16,12 @@
 搬那 650 個檔會改掉 relative_path，而那是向量索引與 knowledge_usage 的鍵——會
 把使用統計變成孤兒，換不到任何東西。
 
+**新分類走候診，不是禁止。** 分類器看到真的沒有現成分類可用的內容時會提議一個新
+名字，但一票不開：同一個名字累積到 category_classifier.PROMOTE_AFTER 才真的開（跟
+wiki topic 那一層同一個數字）。沒達門檻的卡片先歸到既有分類，身上留著
+`proposed_category`；門檻到了 gather_promoted() 會把它們搬過去。報告會列出候診中的
+提案與票數，所以「差幾票」看得見。
+
 **壞掉的卡片不在這支的守備範圍。** 有幾筆的 frontmatter 寫著 `<category or empty>`、
 標題是 `<clean title>`——那是 LLM 的模板原樣漏進檔案，是內容壞了，不是分類錯了。
 幫它分類只會讓一張壞卡片看起來正常。這支把它們單獨列出來，不動它們。
@@ -86,35 +92,41 @@ def broken_reason(text: str) -> str | None:
     return None
 
 
-def decide(item: dict, text: str) -> tuple[str, str]:
-    """這筆該歸到哪一類，以及理由。
+def decide(item: dict, text: str) -> tuple[str, str, str]:
+    """這筆該歸到哪一類、理由，以及（如果有）它提議的新分類名。
 
     交給既有的 category_classifier——它是 LLM 判斷、帶關鍵字 fallback、而且認得
     同一份 taxonomy。這支不自己做判斷：多一份判斷就多一份會跟它不一致的東西。
 
-    `allow_new=False`：classify_content 預設允許模型開新分類，而且會**寫進執行期
-    的分類檔**。擴充使用者的知識結構是一件需要有人決定的事，不該是一支清理腳本
-    的副作用。
+    **新分類走候診，不是禁止。** 規則是「同一個名字被提議到門檻才開」
+    （category_classifier.PROMOTE_AFTER，跟 wiki topic 那一層同一個數字），所以這裡
+    不傳 allow_new=False。我一度那樣寫，那會把提案整個丟掉——跟「一票就開」是相反
+    方向的同一種錯。沒達門檻時 classifier 回既有分類外加 proposed_category，由這支
+    寫到卡片上，門檻到了才撈得回來。
 
-    回傳的理由裡一定說明 LLM 有沒有真的跑。classify_content 在 LLM 失敗時會安靜
-    地退回關鍵字，只把 `llm: False` 放在結果裡——不把它印出來的話，68 筆全是關鍵字
-    猜的也會被當成「分類器判斷」。這個專案把「壞了」跟「沒事做」寫成同一件事的
-    次數已經夠多了。
+    回傳的理由裡一定說明 LLM 有沒有真的跑。classify_content 在 LLM 失敗時會安靜地
+    退回關鍵字，只把 `llm: False` 放在結果裡——不把它印出來的話，整批都是關鍵字猜的
+    也會被當成「分類器判斷」。
     """
     current = (item.get("category") or "").strip()
+    record_id = str(item.get("relative_path") or item.get("path") or "")
     result = category_classifier.classify_content(
         text, source_type=str(item.get("source_type") or ""),
-        current_category=current, allow_new=False)
+        current_category=current, record_id=record_id)
     category = str(result.get("category") or "").strip()
     confidence = str(result.get("confidence") or "?")
+    proposed = str(result.get("proposed_category") or "")
     how = "LLM" if result.get("llm") else "關鍵字 fallback"
     why = f"{how}·信心 {confidence}"
+    if proposed:
+        why += (f"·提議新分類 {proposed}"
+                f"（第 {result.get('proposal_count')}/{category_classifier.PROMOTE_AFTER} 票）")
     if category not in set(category_classifier.taxonomy()):
-        return "99-general", f"{why}·回了清單外的 {category!r}，退回預設"
-    return category, why
+        return "99-general", f"{why}·回了清單外的 {category!r}，退回預設", proposed
+    return category, why, proposed
 
 
-def apply_to(files: list[Path], category: str) -> list[Path]:
+def apply_to(files: list[Path], category: str, proposed: str = "") -> list[Path]:
     """把分類寫進這一組的每一個檔。
 
     要寫整組，不是只寫索引那一列指向的檔：索引會依 source_url 去重，同一份知識
@@ -130,10 +142,40 @@ def apply_to(files: list[Path], category: str) -> list[Path]:
         if not xkb_frontmatter.has_frontmatter(text):
             continue
         updated = xkb_frontmatter.set_field(text, "category", category)
+        if proposed:
+            # 把提議的名字留在卡片上。門檻到了之後 gather_promoted() 靠它撈回來——
+            # 少了這一步，提案達標也沒有任何卡片會跟著搬過去。
+            updated = xkb_frontmatter.set_field(updated, "proposed_category", proposed)
         if updated != text:
             path.write_text(updated, encoding="utf-8")
             written.append(path)
     return written
+
+
+def gather_promoted(items: list[dict]) -> list[tuple[str, list[Path]]]:
+    """提案達標、分類已經開了之後，把在候診的卡片搬過去。
+
+    這是整條規則的最後一段，也是最容易漏的一段：提案累積、門檻、開分類都做了，
+    但沒有人回頭處理那些先被歸到既有分類、身上帶著 proposed_category 的卡片。
+    漏掉它的話，門檻到了也只是多一個空分類。
+
+    wiki topic 那邊是同一件事——導向 general 的條目保留 proposed_topic，就是為了
+    日後撈得回來。
+    """
+    valid = set(category_classifier.taxonomy())
+    out = []
+    for item in items:
+        files = xkb_index.files_for_item(item)
+        if not files:
+            continue
+        try:
+            text = files[0].read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        proposed = (xkb_frontmatter.get(text, "proposed_category") or "").strip()
+        if proposed and proposed in valid and (item.get("category") or "") != proposed:
+            out.append((proposed, files))
+    return out
 
 
 def main() -> int:
@@ -171,14 +213,33 @@ def main() -> int:
         if reason:
             broken.append((item, reason))
             continue
-        category, why = decide(item, text)
-        planned.append((item, files, category, why))
+        category, why, proposed = decide(item, text)
+        planned.append((item, files, category, why, proposed))
 
     if planned:
         print(f"  要重新分類 {len(planned)} 筆：")
-        for item, files, category, why in planned:
+        for item, files, category, why, _proposed in planned:
             print(f"    {(item.get('category') or '空'):>22} -> {category:<22}"
                   f" {(item.get('title') or '')[:32]}  （{len(files)} 個檔·{why}）")
+        print()
+
+    waiting = category_classifier.proposals()
+    if waiting:
+        print(f"  候診中的新分類提案（{category_classifier.PROMOTE_AFTER} 票才開）：")
+        for slug, entry in sorted(waiting.items(),
+                                  key=lambda kv: -int(kv[1].get("count") or 0)):
+            count = int(entry.get("count") or 0)
+            state = "已達門檻" if count >= category_classifier.PROMOTE_AFTER else "等票"
+            print(f"    {slug:<26} {count:>2}/{category_classifier.PROMOTE_AFTER}"
+                  f"  {state}  {str(entry.get('reason') or '')[:40]}")
+        print("    沒達門檻的卡片先歸到既有分類，身上留著提議的名字——門檻到了會被撈回來。")
+        print()
+
+    promoted = gather_promoted(items)
+    if promoted:
+        print(f"  提案已達門檻、要把 {len(promoted)} 筆候診的卡片搬過去：")
+        for slug, files in promoted:
+            print(f"    -> {slug:<26} {len(files)} 個檔")
         print()
     if broken:
         print(f"  ⚠ {len(broken)} 筆是內容壞了，不是分類錯了——沒有動它們：")
@@ -197,8 +258,20 @@ def main() -> int:
         return 0
 
     touched = 0
-    for _item, files, category, _why in planned:
-        touched += len(apply_to(files, category))
+    for _item, files, category, _why, proposed in planned:
+        touched += len(apply_to(files, category, proposed))
+    for slug, files in promoted:
+        # 搬過去之後清掉提議欄位——它的用途已經結束，留著會讓下一輪再搬一次。
+        touched += len(apply_to(files, slug))
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if xkb_frontmatter.get(text, "proposed_category"):
+                path.write_text(
+                    xkb_frontmatter.set_field(text, "proposed_category", ""),
+                    encoding="utf-8")
     print(f"  已寫入 {touched} 個檔。重建索引……")
     # 索引是衍生物，只有這一個寫入者；改了 frontmatter 一定要整建，
     # 增量重建不會重讀沒動到 mtime 判斷的那些列。

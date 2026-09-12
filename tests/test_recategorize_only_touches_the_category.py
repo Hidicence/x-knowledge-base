@@ -63,7 +63,7 @@ class TheTaxonomyHasOneDefinition(unittest.TestCase):
         with mock.patch.object(category_classifier, "classify_content",
                                return_value={"category": "我自己發明的分類",
                                              "confidence": "high", "llm": True}):
-            category, why = rc.decide({"category": "tech"}, "內容")
+            category, why, _proposed = rc.decide({"category": "tech"}, "內容")
         self.assertEqual(category, "99-general")
         self.assertIn("清單外", why)
 
@@ -71,23 +71,38 @@ class TheTaxonomyHasOneDefinition(unittest.TestCase):
         with mock.patch.object(category_classifier, "classify_content",
                                return_value={"category": "03-video-prompts",
                                              "confidence": "high", "llm": True}):
-            category, _why = rc.decide({"category": "tech"}, "內容")
+            category, _why, _proposed = rc.decide({"category": "tech"}, "內容")
         self.assertEqual(category, "03-video-prompts")
 
-    def test_it_never_lets_the_classifier_register_a_new_category(self):
-        """classify_content 預設會把新分類寫進執行期分類檔。
+    def test_it_does_not_forbid_new_categories(self):
+        """規則不是「不能開新分類」，是「不能馬上開」。
 
-        擴充使用者的知識結構要有人決定，不是清理腳本的副作用。
+        我一度傳 allow_new=False，那會把提案整個丟掉——跟「一票就開」是相反方向
+        的同一種錯。新分類要走候診：同一個名字累積到門檻才開。
         """
         seen = {}
 
         def spy(content, **kwargs):
             seen.update(kwargs)
-            return {"category": "99-general", "confidence": "low", "llm": True}
+            return {"category": "99-general", "confidence": "low", "llm": True,
+                    "proposed_category": "", "proposal_count": 0}
 
         with mock.patch.object(category_classifier, "classify_content", spy):
             rc.decide({"category": "tech"}, "內容")
-        self.assertIs(seen.get("allow_new"), False)
+        self.assertNotIn("allow_new", seen,
+                         "不要關掉提案——提案是門檻機制的輸入")
+
+    def test_a_proposal_is_carried_back_to_the_caller(self):
+        """沒達門檻時，提議的名字要回到呼叫端，好寫在卡片上。"""
+        with mock.patch.object(category_classifier, "classify_content",
+                               return_value={"category": "99-general",
+                                             "confidence": "high", "llm": True,
+                                             "proposed_category": "07-carbon",
+                                             "proposal_count": 2}):
+            category, why, proposed = rc.decide({"category": "tech"}, "內容")
+        self.assertEqual(category, "99-general")
+        self.assertEqual(proposed, "07-carbon")
+        self.assertIn("2/5", why, "票數要講出來，不然看不出它在等什麼")
 
     def test_a_keyword_fallback_is_not_reported_as_llm_judgement(self):
         """LLM 掛掉時 classify_content 安靜退回關鍵字，只留 llm: False。
@@ -97,7 +112,7 @@ class TheTaxonomyHasOneDefinition(unittest.TestCase):
         with mock.patch.object(category_classifier, "classify_content",
                                return_value={"category": "99-general",
                                              "confidence": "low", "llm": False}):
-            _category, why = rc.decide({"category": "tech"}, "內容")
+            _category, why, _proposed = rc.decide({"category": "tech"}, "內容")
         self.assertIn("關鍵字", why)
         self.assertNotIn("LLM", why)
 

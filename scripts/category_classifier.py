@@ -18,6 +18,19 @@ RULES_PATH = xkb_paths.SKILL_DIR / "config" / "category-rules.json"
 # 新分類寫進資料區，不寫進 skill 程式碼——分類是使用者的知識結構，
 # 不是這個工具的一部分。路徑一律走 xkb_paths，不要自己再推一次。
 RUNTIME_TAXONOMY_PATH = xkb_paths.XKB_DATA_DIR / "category-taxonomy.json"
+# 被提議過但還沒達到門檻的新分類。提案留著，因為「這個名字被提了幾次」才是
+# 該不該開一個分類的依據。
+PROPOSALS_PATH = xkb_paths.XKB_DATA_DIR / "category-proposals.json"
+
+# 新分類不是看到一筆就開。wiki topic 那一層早就有這條規則（xkb_review.PROMOTE_AFTER
+# 的註解：「一個名字被提議過幾次，才算『重複出現』而值得開一頁。五次是刻意保守的：
+# 開一頁很便宜，但一頁只放一條就是把佇列的問題搬進 wiki 裡」），而分類這一層原本
+# 沒有——register_category 單一筆高信心就立刻開。
+#
+# 刻意用同一個數字，並由 tests/test_new_categories_wait_for_a_quorum.py 釘住兩邊
+# 一致。不直接 import xkb_review 是因為那是一支帶 main 的大模組，為一個常數把它
+# 拉進攝取路徑不划算。
+PROMOTE_AFTER = 5
 DEFAULT_CATEGORIES = [
     "01-openclaw-workflows", "02-seo-geo", "03-video-prompts",
     "04-ai-tools-agents", "05-startup-business", "06-visual-ai-prompts",
@@ -48,6 +61,57 @@ def taxonomy() -> list[str]:
     except (OSError, json.JSONDecodeError):
         pass
     return list(dict.fromkeys(str(c).strip() for c in cats if str(c).strip()))
+
+
+def proposals() -> dict[str, Any]:
+    """還在候診的新分類提案：slug -> {count, first_at, last_at, reason, examples}。"""
+    try:
+        data = json.loads(PROPOSALS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    items = data.get("proposals")
+    return items if isinstance(items, dict) else {}
+
+
+def propose_category(category: str, *, reason: str = "",
+                     record_id: str = "") -> tuple[int, bool]:
+    """記下一筆新分類提案，回傳（這個名字累積幾次, 是否已達門檻並開了）。
+
+    達到門檻才呼叫 register_category。在那之前這個名字只是被記著——卡片會先歸到
+    既有分類，但把提議的名字留在自己身上（呼叫端負責寫 proposed_category），所以
+    門檻到了之後撈得回來。這是 wiki topic 那邊 general 候診室的同一個形狀。
+
+    寫不進檔案時回 (0, False)：提案記不下來就不該放行，不然會變成「每次都差一票、
+    永遠不會開」之外更糟的情況——悄悄開了一個沒人知道為什麼存在的分類。
+    """
+    category = _slug(category)
+    if not category or category in taxonomy():
+        return 0, False
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        PROPOSALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(PROPOSALS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {"version": 1, "proposals": {}}
+        items = data.setdefault("proposals", {})
+        entry = items.setdefault(category, {"count": 0, "first_at": now,
+                                            "reason": reason[:200], "examples": []})
+        entry["count"] = int(entry.get("count") or 0) + 1
+        entry["last_at"] = now
+        if reason and not entry.get("reason"):
+            entry["reason"] = reason[:200]
+        if record_id and record_id not in entry.get("examples", []):
+            entry.setdefault("examples", []).append(record_id)
+            entry["examples"] = entry["examples"][:10]
+        PROPOSALS_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + chr(10), encoding="utf-8")
+    except OSError:
+        return 0, False
+    count = int(entry["count"])
+    if count < PROMOTE_AFTER:
+        return count, False
+    return count, register_category(category, reason=entry.get("reason", ""))
 
 
 def register_category(category: str, *, reason: str = "") -> bool:
@@ -87,12 +151,21 @@ def _fallback(text: str) -> str:
 
 
 def classify_content(content: str, *, source_type: str = "", current_category: str = "",
-                     allow_new: bool = True) -> dict[str, Any]:
+                     allow_new: bool = True, record_id: str = "") -> dict[str, Any]:
     """回傳分類結果；LLM 不可用時退回關鍵字，不會擋住攝取。
 
-    新分類要三個條件同時成立才接受：模型明講 NEW_CATEGORY、slug 合法、
-    信心是 high。成立時會**寫進執行期的分類檔**（連同時間與理由），
-    下次就成為既有分類。
+    新分類要三個條件同時成立才**算一票**：模型明講 NEW_CATEGORY、slug 合法、
+    信心是 high。成立時不是立刻開一個分類，而是記一筆提案；同一個名字累積到
+    PROMOTE_AFTER 才真的開。
+
+    原本這裡是一票就開。那跟 wiki topic 那一層的規則不一致——那邊早就是「同一個
+    名字被提議到門檻才算重複出現而值得開一頁」，不到門檻的先導向 general 但保留
+    提議的名字。分類這一層沒有候診室，於是一筆高信心的零星內容就能長出一個永久
+    分類；而另一個極端（完全不准開）會把提案整個丟掉，兩個都不是規則說的。
+
+    還沒達門檻時回傳的 category 是既有分類（關鍵字 fallback），另外附
+    `proposed_category` 與 `proposal_count`。呼叫端要把 proposed_category 寫到卡片
+    上，門檻到了才撈得回來——這是 general 候診室保留 proposed_topic 的同一件事。
 
     這是唯一一處允許「自動長出新東西」的地方，而它擴充的是分類名稱，
     不是知識本身——卡片內容仍然只是被貼標籤，沒有任何東西被升級。
@@ -122,12 +195,29 @@ def classify_content(content: str, *, source_type: str = "", current_category: s
         category = str(result.get("category", "")).strip()
         confidence = str(result.get("confidence", "low")).lower()
         new_category = _slug(str(result.get("new_category", "")))
+        proposed = ""
+        proposal_count = 0
         if category in cats:
             chosen = category
         elif category == "NEW_CATEGORY" and allow_new and new_category and confidence == "high":
-            chosen = new_category
-            result["new_category"] = new_category
-            register_category(chosen, reason=str(result.get("reason", "")))
+            if new_category in cats:
+                # 這個名字之前就提議過、而且已經達門檻開了。再走一次提案的話
+                # propose_category 會回「不用了」（既有分類不再累積），而把那個回答
+                # 當成「還在等」就會把卡片丟回 99-general——門檻機制反而讓第一批
+                # 之後的同類卡片全部落在 general。
+                chosen = new_category
+                proposal_count = PROMOTE_AFTER
+            else:
+                proposal_count, opened = propose_category(
+                    new_category, reason=str(result.get("reason", "")),
+                    record_id=record_id)
+                if opened:
+                    chosen = new_category
+                else:
+                    # 還在候診：先歸到既有分類，但把提議的名字帶回去給呼叫端留在
+                    # 卡片上。
+                    chosen = _fallback(content)
+                    proposed = new_category
         else:
             chosen = _fallback(content)
             confidence = "low" if confidence not in {"high", "medium"} else confidence
@@ -137,11 +227,13 @@ def classify_content(content: str, *, source_type: str = "", current_category: s
         return {"category": chosen, "confidence": confidence,
                 "reason": str(result.get("reason", ""))[:300],
                 "tags": [str(t).strip() for t in tags[:5] if str(t).strip()],
-                "llm": True, "new_category": chosen not in cats}
+                "llm": True, "new_category": chosen not in cats,
+                "proposed_category": proposed, "proposal_count": proposal_count}
     except Exception as exc:
         return {"category": _fallback(content), "confidence": "low",
                 "reason": f"LLM 分類失敗，使用關鍵字 fallback：{type(exc).__name__}",
-                "tags": [], "llm": False, "new_category": False}
+                "tags": [], "llm": False, "new_category": False,
+                "proposed_category": "", "proposal_count": 0}
 
 
 def apply_category(card_content: str, category: str) -> str:

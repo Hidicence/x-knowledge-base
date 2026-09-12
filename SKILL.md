@@ -455,7 +455,7 @@ with no caller is indistinguishable from one that was forgotten.
 | `setup_xbrain.sh` | Once per machine, to install the hybrid search runtime. |
 | `full_sync_v2.py` | To rebuild a workspace from its sources. |
 | `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
-| `xkb_recategorize.py` | When the daily report says knowledge is sitting outside the taxonomy. Reclassifies those items with the existing LLM classifier and rebuilds the index; previews by default, `--apply` writes. Cards whose content is broken (an LLM template leaked into the file, a failed fetch) are listed separately and left alone — classifying one only makes a broken card look fine. |
+| `xkb_recategorize.py` | When the daily report says knowledge is sitting outside the taxonomy. Reclassifies those items with the existing LLM classifier and rebuilds the index; previews by default, `--apply` writes. A genuinely new category is not opened on one card: the classifier's proposal is counted, and the category opens only once the same name has been proposed `PROMOTE_AFTER` times — the same rule the wiki topic layer already uses. Cards waiting on a proposal keep the proposed name and get gathered when it opens. Cards whose content is broken (an LLM template leaked into the file, a failed fetch) are listed separately and left alone — classifying one only makes a broken card look fine. |
 | `xkb_evict_report.py` | To see which knowledge is currently demoted — retrieved repeatedly, never once relevant. Reports only; the demotion itself is automatic and lifts itself the moment an item clears the floor once. Read it to check the mechanism is not demoting anything good, not to approve anything. |
 
 ## Maintenance Verification
