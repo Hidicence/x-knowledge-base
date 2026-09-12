@@ -442,7 +442,7 @@ they do not carry pipelines.
 
 
 Everything else in `scripts/` is either on a schedule or called by something
-that is. These six are neither, and that is correct — they answer a question
+that is. The ones below are neither, and that is correct — they answer a question
 or set something up, on demand. They are listed because an unlisted script
 with no caller is indistinguishable from one that was forgotten.
 
@@ -455,6 +455,7 @@ with no caller is indistinguishable from one that was forgotten.
 | `setup_xbrain.sh` | Once per machine, to install the hybrid search runtime. |
 | `full_sync_v2.py` | To rebuild a workspace from its sources. |
 | `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
+| `xkb_evict_report.py` | To see which knowledge is currently demoted — retrieved repeatedly, never once relevant. Reports only; the demotion itself is automatic and lifts itself the moment an item clears the floor once. Read it to check the mechanism is not demoting anything good, not to approve anything. |
 
 ## Maintenance Verification
 

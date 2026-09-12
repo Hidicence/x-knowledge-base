@@ -164,3 +164,44 @@ def evaluate(key: str, *, with_obs: list[Observation],
     return status_after_gain(current_status,
                              support=len(with_obs) if support is None else support,
                              gain=gain), gain
+
+
+# ── 第二條規則：反覆被端上來、從來沒被用上 ───────────────────────────────
+#
+# 上面那套 gain 需要「這一筆 vs 對照組」的兩側觀測，而 XKB 湊不出誠實的對照組
+# （三次嘗試都失敗，理由寫在 xkb_evict_report.observations_for 的註解裡）。這
+# 條規則不需要對照組：它只問一個可以直接觀測的事實。
+#
+#     被撈出來 N 次以上，而且一次都沒有通過相關度地板。
+#
+# 2026-09-12 在 1,677 張卡片上量的分布：
+#
+#     N=1  26 筆    N=5  5 筆    N=8  1 筆    N=10  0 筆
+#
+# 而那些「從來沒被用上」的最高相似度全部落在 0.48~0.55，地板是 0.55。也就是
+# 它們不是「還沒輪到用」，是每一次都差一點——被錯的問題撈出來的雜訊。
+#
+# **這條規則在定義上碰不到「存起來很久以後才用」的東西。** 那種卡片的特徵是
+# considered_count 低（根本沒被撈出來過），而這條規則要求 considered_count 高。
+# 久沒被使用不是退場理由，一直佔名額卻從來沒貢獻才是。
+#
+# 門檻取 5 而不是 8：8 只抓到 1 筆，等於機制存在但不運作；5 抓到 5 筆，夠小到
+# 出錯也看得出來，又真的會動。這個數字跟 cold_knowledge() 的預設一致——那支
+# 查詢 2026-08-30 就寫好了，只是從來沒有呼叫端。
+DEMOTE_AFTER_CONSIDERED = 5
+
+
+def is_demoted(considered: int, injected: int,
+               *, after: int = DEMOTE_AFTER_CONSIDERED) -> bool:
+    """這一筆該不該被降權。
+
+    降權不是移除。被降權的知識還在索引裡、還會被撈出來、還會被量測——只是排
+    在所有正常命中之後，不再擠掉更好的候選。
+
+    這個差別決定了它能不能復活。如果降權是「從索引拿掉」，它就再也不會被
+    considered，injected_count 永遠停在 0，於是永遠回不來——那又是一條偽裝過的
+    單行道（excluded 旗標 2026-09-11 才剛付過這個代價）。因為它繼續被量測，
+    哪天真的有一次通過地板，injected_count 變 1，這個函式就回 False，降權自動
+    解除。不需要人介入，也沒有狀態要存。
+    """
+    return injected <= 0 and considered >= max(1, after)

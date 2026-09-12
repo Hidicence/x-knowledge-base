@@ -35,6 +35,7 @@ try:
 except ImportError:  # pragma: no cover - semantic backend is optional
     xbrain_query = None
 
+import xkb_eviction
 import xkb_failures
 import xkb_relevance
 import xkb_text
@@ -297,6 +298,9 @@ class KnowledgeCatalog:
         # Set by Store so usage can be persisted; the catalog itself stays
         # read-only over the knowledge plane.
         self.usage_sink: Any = None
+        # 同樣由 Store 接上：哪些知識反覆被端上來卻從來沒被用上。
+        # 降權不改索引、不改檔案，只改「一堆雜訊裡誰先被 limit 切掉」。
+        self.demoted_sink: Any = None
 
     def _index(self) -> list[dict[str, Any]]:
         try:
@@ -581,7 +585,30 @@ class KnowledgeCatalog:
                 ])
             except Exception:
                 pass  # usage accounting must never break recall
+        self._tag_demoted(kept)
         return kept, dropped
+
+    def _tag_demoted(self, records: list[dict[str, Any]]) -> None:
+        """標記「反覆被端上來、從來沒被用上」的知識，讓 xkb_score 把它排到最後。
+
+        標記而不是丟掉，而且標在 kept 上——它照樣通過相關度過濾、照樣被
+        record_usage 量測。所以它哪天真的過了一次地板，injected_count 變 1，
+        下一次查詢這個標記就不會再出現，降權自動解除（見 xkb_eviction.is_demoted）。
+
+        取不到統計時什麼都不做：降權是最佳化，不是正確性。讀不到使用統計而讓
+        召回失敗，會比多排幾筆弱命中糟得多。
+        """
+        if self.demoted_sink is None or not records:
+            return
+        try:
+            demoted = self.demoted_sink()
+        except Exception:  # noqa: BLE001
+            return
+        if not demoted:
+            return
+        for item in records:
+            if str(item.get("id") or "") in demoted:
+                item["demoted"] = True
 
     @staticmethod
     def _acl_policy(namespace: str) -> dict[str, Any]:
@@ -807,6 +834,7 @@ class Store:
         self.path = path
         self.catalog = KnowledgeCatalog()
         self.catalog.usage_sink = self.record_usage
+        self.catalog.demoted_sink = self.demoted_ids
         self.lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -932,6 +960,25 @@ class Store:
                     (record_id, 1 if injected else 0, float(similarity or 0.0),
                      timestamp, timestamp, timestamp if injected else None),
                 )
+
+    def demoted_ids(self, after: int = xkb_eviction.DEMOTE_AFTER_CONSIDERED) -> set[str]:
+        """被撈出來 after 次以上、一次都沒通過地板的 record_id。
+
+        規則跟門檻都在 xkb_eviction 裡，這邊只負責把它翻成 SQL——判斷不要有
+        第二份定義。knowledge_usage_cold 索引就是為這個 where 子句建的。
+        """
+        try:
+            with self.lock, self.connect() as db:
+                rows = db.execute(
+                    "SELECT record_id, considered_count, injected_count"
+                    "  FROM knowledge_usage WHERE injected_count = 0 AND considered_count >= ?",
+                    (max(1, int(after)),),
+                ).fetchall()
+        except sqlite3.Error:
+            return set()
+        return {r["record_id"] for r in rows
+                if xkb_eviction.is_demoted(r["considered_count"], r["injected_count"],
+                                           after=after)}
 
     def cold_knowledge(self, min_considered: int = 5, limit: int = 100) -> dict[str, Any]:
         """Records repeatedly retrieved that never once cleared the relevance floor.

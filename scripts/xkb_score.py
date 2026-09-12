@@ -266,8 +266,15 @@ def rank(results: list[dict]) -> list[dict]:
         surv.pop("_legs", None)
         # 下地板的減 1.0——_rrf 都在 0.01~0.02，減完必為負，穩定墊在所有上地板
         # 之下。這樣「照 unified_score 由大到小排」就等於回傳順序。
+        above_floor = surv.pop("_above_floor", False)
+        # 再減 1.0 給「反覆被端上來、從來沒被用上」的（見 xkb_eviction.is_demoted）。
+        # 只減在下地板那一層：如果這一筆這次真的過了地板，那就是它的復活訊號，
+        # 把它壓到最後等於在它唯一有用的那一次把它藏起來。所以降權在結構上
+        # 不可能傷到相關的結果——它只決定一堆雜訊裡誰先被 limit 切掉。
+        demoted = bool(surv.get("demoted")) and not above_floor
         surv["unified_score"] = round(surv.pop("_rrf", 0.0)
-                                      - (0.0 if surv.pop("_above_floor", False) else 1.0), 6)
+                                      - (0.0 if above_floor else 1.0)
+                                      - (1.0 if demoted else 0.0), 6)
     return sorted(survivors, key=lambda r: r["unified_score"], reverse=True)
 
 
