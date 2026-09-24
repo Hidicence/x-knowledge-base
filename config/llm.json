@@ -6,5 +6,7 @@
     "sub2api_claude_sonnet": "sub2api-claude/claude-sonnet-4-6",
     "sub2api_claude_haiku": "claude-haiku-4-5-20251001"
   },
-  "_note": "先前的範例列了 sub2api-gpt/gpt-5.5 與 gpt-5.4，那兩個在這台機器上已經回 server_error——範例會被照抄，所以只列活的。"
+  "_note": "先前的範例列了 sub2api-gpt/gpt-5.5 與 gpt-5.4，那兩個在這台機器上已經回 server_error——範例會被照抄，所以只列活的。",
+  "judge_model": "jev-1.13",
+  "_judge_note": "判斷模型走 /systemone，不是 /chat/completions，所以不能把上面的 model 改成 jev——那會讓所有生成腳本一起壞掉。見 scripts/xkb_jev.py。"
 }

@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - semantic backend is optional
 
 import xkb_eviction
 import xkb_failures
+import xkb_jev
 import xkb_relevance
 import xkb_text
 import xkb_score
@@ -351,6 +352,8 @@ class KnowledgeCatalog:
         # Set by Store so usage can be persisted; the catalog itself stays
         # read-only over the knowledge plane.
         self.usage_sink: Any = None
+        # 影子比對的出口。由 Store 接上，跟 usage_sink 同一個形狀。
+        self.shadow_sink: Any = None
 
     def _index(self) -> list[dict[str, Any]]:
         try:
@@ -635,7 +638,69 @@ class KnowledgeCatalog:
                 ])
             except Exception:
                 pass  # usage accounting must never break recall
+        self._shadow_compare(query, records, scores, keys, kept)
         return kept, dropped
+
+    def _shadow_compare(self, query: str, records: list[dict[str, Any]],
+                        scores: dict[str, float], keys: dict[str, str],
+                        kept: list[dict[str, Any]]) -> None:
+        """在背景問 jev 同一批候選，把它的判斷跟餘弦的決定一起存起來。
+
+        **影子模式：什麼都不改變。** 餘弦照常決定要丟掉誰，jev 的答案只是被記下來。
+        門檻要從真實分布校準，而不是我挑一個數字——這個專案在手調門檻上犯過的錯
+        有紀錄在案（xkb_score 的錨點繞了六輪）。
+
+        **丟到背景執行緒，因為它不該讓任何人多等。** jev 實測 1.85 秒；掛在召回
+        路徑上等於每一次對話都多等快兩秒，而影子模式下沒有任何東西依賴它的答案。
+        等到真的要讓 jev 決定的時候它才會變成同步的——那時候我們已經知道這 1.85 秒
+        換到了什麼。
+
+        整段包在 try 裡：比對失敗不可以影響召回，這是純觀測。
+        """
+        if self.shadow_sink is None or not records:
+            return
+        # 這個檔其餘的旗標都走 os.getenv（見 XKB_SERVICE_LOG），跟著它。
+        if os.getenv("XKB_JEV_SHADOW", "1") == "0":
+            return
+        if not xkb_jev.available():
+            return
+        floor = xkb_relevance.min_similarity()
+        kept_ids = {str(item.get("id") or "") for item in kept}
+        # 候選在主執行緒先抓成不可變的資料。背景執行緒去讀 records 的話，
+        # 讀到的可能是下一次請求改過的內容。
+        candidates: list[tuple[str, str]] = []
+        cosines: dict[str, float | None] = {}
+        for item in records:
+            record_id = str(item.get("id") or "")
+            if not record_id:
+                continue
+            text = " ".join(str(item.get(field) or "")
+                            for field in ("title", "summary")).strip()
+            if not text:
+                continue
+            candidates.append((record_id, text))
+            key = keys.get(record_id) or ""
+            cosines[record_id] = scores.get(key) if key else None
+        if not candidates:
+            return
+
+        def run() -> None:
+            try:
+                verdicts = xkb_jev.relevance(query, candidates)
+                if verdicts is None:
+                    # jev 沒跑成。不要寫一整批 jev=NULL 的列——那會在分析時
+                    # 長得像「jev 覺得每一筆都不相關」。
+                    return
+                self.shadow_sink(
+                    query,
+                    [(record_id, cosines.get(record_id), verdicts.get(record_id),
+                      record_id in kept_ids) for record_id, _text in candidates],
+                    floor)
+            except Exception:  # noqa: BLE001
+                pass  # 純觀測，不可以影響召回
+
+        threading.Thread(target=run, daemon=True,
+                         name="jev-shadow").start()
 
     @staticmethod
     def _acl_policy(namespace: str) -> dict[str, Any]:
@@ -861,6 +926,7 @@ class Store:
         self.path = path
         self.catalog = KnowledgeCatalog()
         self.catalog.usage_sink = self.record_usage
+        self.catalog.shadow_sink = self.record_shadow
         self.lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -942,6 +1008,21 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS knowledge_usage_cold
                   ON knowledge_usage(injected_count, considered_count);
+                -- 影子模式：餘弦照常決定，jev 的判斷存在這裡供比對。
+                -- 兩個分數都留著，因為要回答的問題是「它們在哪裡不一致」，
+                -- 而不是「jev 說了什麼」。kept 是餘弦當下的決定。
+                CREATE TABLE IF NOT EXISTS relevance_shadow (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  at TEXT NOT NULL,
+                  query TEXT NOT NULL,
+                  record_id TEXT NOT NULL,
+                  cosine REAL,
+                  jev REAL,
+                  kept INTEGER NOT NULL,
+                  floor REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS relevance_shadow_at
+                  ON relevance_shadow(at);
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(turns)").fetchall()}
@@ -986,6 +1067,26 @@ class Store:
                     (record_id, 1 if injected else 0, float(similarity or 0.0),
                      timestamp, timestamp, timestamp if injected else None),
                 )
+
+    def record_shadow(self, query: str, rows: list[tuple[str, float | None, float | None, bool]],
+                      floor: float) -> None:
+        """存一次餘弦與 jev 的對照。純觀測，不影響任何決定。
+
+        存 query 是因為門檻要從真實分布校準，而「同一個問題下兩邊怎麼排」才是
+        有意義的單位——只存分數的話，看不出 jev 是在哪一類問題上跟餘弦分岔。
+        """
+        if not rows:
+            return
+        timestamp = now()
+        try:
+            with self.lock, self.connect() as db:
+                db.executemany(
+                    "INSERT INTO relevance_shadow(at, query, record_id, cosine, jev, kept, floor)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    [(timestamp, query[:500], record_id, cosine, jev, 1 if kept else 0, floor)
+                     for record_id, cosine, jev, kept in rows])
+        except sqlite3.Error as err:
+            xkb_failures.note("relevance shadow", err)
 
     def demoted_ids(self, after: int = xkb_eviction.DEMOTE_AFTER_CONSIDERED) -> set[str]:
         """被撈出來 after 次以上、一次都沒通過地板的 record_id。

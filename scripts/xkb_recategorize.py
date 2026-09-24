@@ -198,7 +198,7 @@ def main() -> int:
     if args.limit:
         targets = targets[: args.limit]
 
-    broken, planned, unreadable = [], [], []
+    broken, planned, unreadable, unwritable = [], [], [], []
     for item in targets:
         files = xkb_index.files_for_item(item)
         if not files:
@@ -212,6 +212,13 @@ def main() -> int:
         reason = broken_reason(text)
         if reason:
             broken.append((item, reason))
+            continue
+        if not any(xkb_frontmatter.has_frontmatter(
+                f.read_text(encoding="utf-8", errors="replace")) for f in files):
+            # 一組裡沒有一個檔有 YAML frontmatter，就沒有地方寫分類。
+            # 照樣排進計畫的話，報告會每次都說「要重新分類」然後什麼都沒發生——
+            # 這個專案把「做不到」寫成「待辦」的次數已經夠多了。
+            unwritable.append((item, files))
             continue
         category, why, proposed = decide(item, text)
         planned.append((item, files, category, why, proposed))
@@ -246,6 +253,14 @@ def main() -> int:
         for item, reason in broken:
             print(f"    {reason!r}  {(item.get('title') or '')[:40]}")
         print("    這些要修的是卡片本身（重新產生或排除），分類只是症狀。")
+        print()
+    if unwritable:
+        print(f"  ⚠ {len(unwritable)} 筆的檔案沒有 YAML frontmatter，分類無處可寫：")
+        for item, files in unwritable:
+            print(f"    {(item.get('title') or '(無標題)')[:34]}"
+                  f"  {str(files[0])[-44:]}")
+        print("    索引因此套用預設值。要先讓這些檔有 frontmatter（重新產生卡片，")
+        print("    或讓寫出它們的攝取腳本補上），才談得上分類。")
         print()
     if unreadable:
         print(f"  ⚠ {len(unreadable)} 筆在磁碟上找不到檔案，沒有動：")
