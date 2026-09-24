@@ -81,10 +81,13 @@ $ curl -s localhost:18972/v1/recall -H "Authorization: Bearer $TOKEN" \
   "retrieval_mode": "xbrain_hybrid",       // it really ran vector search
   "count": 5,
   "dropped_as_irrelevant": 5,              // and threw away half as not relevant
+  "judge": { "status": "judged", "floor": 0.1,
+             "considered": 15, "kept": 9, "dropped": 6 },
   "records": [
     { "record_type": "knowledge_chunk",
       "score": 0.604,                      // measured cosine, not a rank score
       "rank_score": 0.888,                 // what the backend ranked on
+      "judge": 0.88,                       // did it answer the question?
       "source_url": "https://…" }
   ],
   "warnings": ["5 semantic results dropped below the relevance floor"]
@@ -126,7 +129,11 @@ Absorb gate
        │
        ▼
 Recall
-  four layers, measured relevance, answers carry their sources
+  four layers gather candidates; a decision-only model judges each one
+       │
+       ▼
+Relevance judge
+  "does this answer the question?" — cards, wiki and conversation alike
        │
        ▼
 Knowledge service
@@ -170,9 +177,15 @@ The contrarian layer exists because a knowledge base that only ever agrees with 
 
 ## Why the results are different
 
-### Relevance is measured, not assumed
+### Relevance is judged, not scored
 
-Hybrid search returns a **rank** score: it says *this came first*, not *this is relevant*. On a real library the top hit sits near `0.88` whether or not anything on the subject exists — measured here, an off-topic question scored `0.863` against an on-topic one at `0.862`. XKB recomputes the true query/document cosine and drops what falls below the floor, so an unrelated question returns nothing and costs nothing.
+Hybrid search returns a **rank** score: it says *this came first*, not *this is relevant*. On a real library the top hit sits near `0.88` whether or not anything on the subject exists — measured here, an off-topic question scored `0.863` against an on-topic one at `0.862`.
+
+Recomputing the true query/document cosine fixes half of that, and for a long time XKB did only this. Measured against twelve real questions, it is not enough: **cosine cannot tell "about the same topic" from "answers this question."** Asked whether agent memory should be an internal service, it rated a contentless tweet `0.724` — above a passage that answered the question almost verbatim.
+
+So the last call belongs to a model that only makes decisions. Every candidate — cards, wiki sections and conversation traces alike — is asked one question: *does this answer what was asked?* On the same candidates, real answers scored `0.17–0.92` and noise `0.01–0.07`. What the floor kept but nobody could use is now dropped before it reaches your context.
+
+If that judge is unreachable, everything is kept and recall behaves as it did before. A knowledge base that silently returns nothing is a worse failure than one that returns too much.
 
 ### Distillation is gated, in both directions
 
@@ -180,7 +193,17 @@ Cards are evidence; wiki topics are understanding. Nothing crosses that line by 
 
 ### Knowledge is allowed to age out
 
-Retrieval records whether each item, once surfaced, was ever relevant enough to use. Anything repeatedly retrieved that never clears the floor is reported as a retirement candidate — reported only. Provenance is the product; nothing is deleted to keep things tidy.
+Retrieval records whether each item, once surfaced, was ever relevant enough to use. Anything repeatedly retrieved that never earns its place is **demoted, not deleted**: it stays in the index, stays searchable, and keeps being measured. The moment it is relevant once, the demotion lifts itself — nobody decides.
+
+Age is never the reason. Something saved for two years from now has never been retrieved, so the rule cannot reach it by construction; what it catches is knowledge that keeps taking a slot and never earns it. Provenance is the product; nothing is deleted to keep things tidy.
+
+### What is not a turn does not become knowledge
+
+Agents produce text that looks like conversation but is not: task notifications, runtime context, system reminders. Measured over a thousand turns, those were **13.5% of everything recall was asked about** — and they cleared the cosine floor easily, because they share vocabulary with the notes. They are no longer recorded as turns and no longer searched. Anything you paste stays yours: the rule matches known machine markers at the start of a message, nothing broader.
+
+### A new category needs a quorum
+
+When the classifier meets something no existing category fits, it does not open one. The name is recorded as a proposal, and the category opens only once the same name has been proposed five times — the rule the wiki topic layer already used. Cards waiting on a proposal keep the proposed name and are gathered when it opens.
 
 ---
 
@@ -205,6 +228,8 @@ export LLM_MODEL="your-model"
 ```
 
 > Credentials are runtime state, never repository content. XKB is provider-agnostic; local models work.
+
+The relevance judge is a second model, named separately in `config/llm.json` as `judge_model`, and it reuses the URL and key above — so there is no extra credential to manage. That assumes one provider serves both the chat endpoint and the judge endpoint. If yours does not, recall keeps everything rather than dropping it, which is the safe direction but not the useful one.
 
 **3 · Ingest, index, ask**
 
@@ -305,9 +330,9 @@ Recall degrades in that order and always tells you which one ran.
 Being explicit is cheaper than disappointment:
 
 - **Not a hosted product.** It runs on your machine, against your files.
-- **Not automatic.** Nothing is promoted into the wiki, and nothing is retired from it, without you.
+- **Not automatic.** Nothing is promoted into the wiki without you. Demotion is automatic, but it only reorders what you see — nothing is deleted, and a single relevant hit undoes it.
 - **Not an agent framework.** It stores and returns knowledge; your agent does the thinking.
-- **Early in places.** The knowledge service, cross-agent hooks and retirement signal are new. Those interfaces will move; the card and wiki layers are older and steadier.
+- **Early in places.** The knowledge service, cross-agent hooks, the demotion signal and the relevance judge are new — the judge newest of all, and its threshold comes from one measured sample. Those interfaces will move; the card and wiki layers are older and steadier.
 
 Cloud embeddings mean queries leave your machine; set `EMBEDDING_PROVIDER=ollama` to keep everything local. See [`docs/data-flow.md`](./docs/data-flow.md) for exactly what is sent where.
 
@@ -318,7 +343,7 @@ Cloud embeddings mean queries leave your machine; set `EMBEDDING_PROVIDER=ollama
 | Document | Contents |
 | --- | --- |
 | [`SKILL.md`](./SKILL.md) | Full command surface |
-| [`docs/xkb-memory-service.md`](./docs/xkb-memory-service.md) | Service API, auth, agent hooks, relevance floor |
+| [`docs/xkb-memory-service.md`](./docs/xkb-memory-service.md) | Service API, auth, agent hooks, relevance floor and judge |
 | [`docs/data-flow.md`](./docs/data-flow.md) | What leaves your machine, and how to stop it |
 | [`docs/RUNTIME_PATHS.md`](./docs/RUNTIME_PATHS.md) | Where code ends and your data begins |
 | [`wiki/WIKI-SCHEMA.md`](./wiki/WIKI-SCHEMA.md) | Wiki topic contract |
