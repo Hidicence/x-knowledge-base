@@ -227,8 +227,36 @@ def is_noise(text: str) -> bool:
     return bool(noise_kind(text))
 
 
+# 由 harness 產生、不是人打的文字。這些不是「一個不值得查的問題」——它們
+# 根本不是一輪對話。
+#
+# 2026-09-24 在 1,020 次召回裡量到 137 次（13.5%）的查詢其實是這種東西，最大宗
+# 是背景任務完成的通知。它們剛好跟 openclaw 類的卡片用字重疊，所以餘弦給 0.57~0.62、
+# 高過 0.55 的地板，整批被注入進 context——實測同一批候選 jev 給 0.03~0.10。
+#
+# **只認明確的標記，而且要錨定在開頭。** 137 筆全部是開頭就帶標記，沒有夾在中間的。
+# 用「以 < 開頭」這種寬鬆規則會誤殺 `<pasted_content id="...">`——那是 Pan 貼進來的
+# 真實內容，資料裡有 5 筆，擋掉它等於把他貼的東西變成看不見。
+HARNESS_MARKERS = (
+    "<task-notification>",
+    "<system-reminder>",
+    "<<<begin_openclaw_internal_context>>>",
+    "[system notification",
+)
+
+
+def is_harness_text(text: str) -> bool:
+    """這段文字是 harness 產生的，不是人打的。"""
+    head = (text or "").lstrip().lower()
+    return head.startswith(HARNESS_MARKERS)
+
+
 def noise_kind(text: str) -> str:
     """Which kind of not-a-question this is, or "" if it may be one."""
+    if is_harness_text(text):
+        # 跟 greeting／acknowledgement 分開回報，因為它們要修的東西不一樣：
+        # 問候是判斷問題，這個是接線問題——這種文字根本不該抵達召回。
+        return "harness_text"
     stripped = text.strip().lower()
     if len(stripped) <= 4 and stripped in SUPPRESS_EXACT:
         return "acknowledgement"

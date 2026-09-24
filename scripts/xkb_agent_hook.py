@@ -29,6 +29,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from conversation_state_parser import is_harness_text
+
 DEFAULT_URL = "http://127.0.0.1:18972"
 TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_TIMEOUT", "6"))
 STATE_DIR = Path(os.getenv("XKB_HOOK_STATE", str(Path.home() / ".xkb-runtime" / "hook-state")))
@@ -170,6 +174,18 @@ def last_assistant_message(transcript: str) -> str:
 def on_prompt(event: dict, cfg: dict) -> None:
     prompt = str(event.get("prompt") or event.get("user_prompt") or "").strip()
     if not prompt:
+        return
+    if is_harness_text(prompt):
+        # harness 產生的文字不是一輪對話，所以這裡連 turn 都不開——不是「開了
+        # 但不召回」。2026-09-24 的資料裡 1,020 個 turn 有 137 個是這種東西，
+        # 它們同時污染了 turns 表、對話軌跡與召回。
+        #
+        # 判斷共用 conversation_state_parser 的定義，不在這裡另寫一份：召回那端
+        # 讀的是同一個函式，兩邊各寫一份就會各自漂移（這個專案的「多寫入者一
+        # 讀取者」記錄在案）。
+        #
+        # 不開 turn 對 Stop 是安全的：on_stop 讀不到 turn_id 就安靜返回，而
+        # ordinal 留在檔案裡不受影響。
         return
     key = session_key(event)
     session = call("/v1/sessions/open", {
