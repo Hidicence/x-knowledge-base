@@ -163,3 +163,56 @@ class OneDefinitionForBothEnds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheOldRowsStillCrowdTheRecallWindow(unittest.TestCase):
+    """在 hook 端擋掉之前累積的那些列，還躺在資料庫裡。
+
+    對話召回只看**最近 500 筆** turn。2026-09-24 的資料庫裡有 137 筆 turn 的 query
+    是背景任務通知——也就是視窗的 27% 被佔掉，真正的對話歷史被擠出去。在 Python 端
+    過濾救不了這件事：它們已經佔掉名額了，所以排除要發生在 SQL 裡。
+
+    刻意不刪那些列：它們的 answer 是真實的回答內容。代價是那些答案從此不會被對話
+    召回撈到——真有知識價值的內容，它的家是卡片或 wiki，不是一個問句是系統通知的
+    對話軌跡。
+    """
+
+    def setUp(self):
+        from xkb_memory_service import Store
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Store(Path(self.tmp.name) / "memory.sqlite")
+        # 用真正的 API 建資料，不要自己寫 INSERT——第一版我猜了 sessions 的欄位，
+        # 猜錯了。走公開路徑的話，schema 改了測試會跟著壞，那是對的。
+        session = self.store.open_session({
+            "source": "test", "agent_id": "test",
+            "session_key": "k", "namespace": "private"})
+        rows = [
+            ("t1", "食品展的客戶通常怎麼找", "展前拿名單、展中面對面、展後跟催"),
+            ("t2", REAL_TASK_NOTIFICATION, "食品展的客戶開發我剛做完了"),
+            ("t3", REAL_OPENCLAW_CONTEXT, "食品展相關的內部通知"),
+        ]
+        for turn_id, query, answer in rows:
+            self.store.start_turn({"session_id": session["session_id"],
+                                   "turn_id": turn_id, "query": query})
+            self.store.complete_turn(turn_id, {
+                "session_id": session["session_id"],
+                "query": query, "answer": answer})
+
+    def test_harness_turns_never_enter_the_window(self):
+        result = self.store.recall("食品展的客戶通常怎麼找", limit=10,
+                                   namespace="private")
+        queries = [m["query"] for m in result["memories"]]
+
+        self.assertEqual(queries, ["食品展的客戶通常怎麼找"],
+                         "harness 產生的列不該佔用最近 500 筆的名額")
+
+    def test_a_real_turn_is_still_recalled(self):
+        result = self.store.recall("展前拿名單", limit=10, namespace="private")
+        self.assertEqual(len(result["memories"]), 1)
+
+    def test_the_rows_are_not_deleted(self):
+        """排除的是召回，不是資料。那些 answer 是真實的回答內容。"""
+        with self.store.connect() as db:
+            count = db.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+        self.assertEqual(count, 3)

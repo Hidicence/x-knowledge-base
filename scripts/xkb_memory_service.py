@@ -46,6 +46,7 @@ import xkb_score
 # router and this service cannot disagree about it. They used to: the copy
 # here was a subset that never gained the compound acknowledgement pattern,
 # and "ok 收到" retrieved ten records into a conversation that asked nothing.
+from conversation_state_parser import HARNESS_MARKERS
 from conversation_state_parser import noise_kind as _noise_kind
 
 SCHEMA = "xkb-knowledge-service.v1"
@@ -275,6 +276,73 @@ def filter_stats(*, card: int = 0, wiki: int = 0, semantic: int = 0, conversatio
         "semantic": semantic,
         "keyword": card + wiki,
     }
+
+
+# jev 判斷的門檻。2026-09-24 用 12 個 Pan 真的問過的問題、走完整召回路徑量到的
+# 分布：確實回答問題的落在 0.17~0.92、邊緣但有關的 0.11~0.13、純雜訊 0.01~0.07。
+# 0.07 到 0.11 之間是乾淨的空隙，所以取 0.10——砍掉全部雜訊，留下邊緣的那些。
+#
+# 這個數字是資料定的，不是挑的。改它之前先重跑那份量測。
+JUDGE_FLOOR = 0.10
+
+
+def judgeable_text(item: dict[str, Any]) -> str:
+    """一筆記錄可以拿去判斷的文字。
+
+    **每一種記錄的內容在不同欄位。** 卡片與 wiki 在 title/summary，對話軌跡在
+    query/answer。只讀 title/summary 的話，對話軌跡會拿不到文字——而拿不到文字
+    在下游就等於「判斷為不相關」，於是「你之前說過什麼」那一整層會被無條件丟掉。
+
+    那一層混著金礦和垃圾：問「食品展的客戶通常怎麼找」時，注入的三筆軌跡裡有
+    一筆是完整的正確答案（展前拿名單、展中面對面、展後跟催），另外兩筆是
+    harness 通知留下的殘骸。所以它需要被判斷，不是被略過、也不是被全丟。
+    """
+    for fields in (("title", "summary"), ("query", "answer")):
+        text = " ".join(str(item.get(f) or "") for f in fields).strip()
+        if text:
+            return text
+    return ""
+
+
+def judge_relevance(query: str, records: list[dict[str, Any]], *,
+                    floor: float = JUDGE_FLOOR
+                    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """讓 jev 決定哪些記錄真的回答了這個問題。回 (保留的, 說明)。
+
+    **判斷放在合併點，不是塞在某一條腿裡。** 三條腿加對話軌跡只在這裡同時存在；
+    放在語意腿裡的話，對話軌跡與關鍵字命中會整批繞過判斷——2026-09-24 的模擬就
+    是這樣：碳盤查那一題注入的四筆軌跡全是 harness 殘骸，而它們從來沒被任何一層
+    判斷過。
+
+    **判斷不出來就全部保留。** jev 回 None 代表沒跑（憑證沒設、端點不通、逾時），
+    那時候的正確行為是退回今天的樣子，而不是清空召回。這個專案為「靜默關閉知識庫」
+    付過 12 週。
+
+    說明會回給呼叫端放進回應裡，所以「被砍掉幾筆、為什麼」看得見——不是靜靜消失。
+    """
+    if not records:
+        return records, {"status": "no_records"}
+    candidates = [(str(id(item)), judgeable_text(item)) for item in records]
+    candidates = [(key, text) for key, text in candidates if text]
+    if not candidates:
+        return records, {"status": "no_text"}
+    verdicts = xkb_jev.relevance(query, candidates)
+    if verdicts is None:
+        return records, {"status": "unavailable", "kept": len(records)}
+    kept = []
+    for item in records:
+        score = verdicts.get(str(id(item)))
+        if score is None:
+            # 沒有拿到這一筆的判斷，保留它。缺答案不是否定的答案。
+            item["judge"] = None
+            kept.append(item)
+            continue
+        item["judge"] = round(float(score), 3)
+        if score >= floor:
+            kept.append(item)
+    return kept, {"status": "judged", "floor": floor,
+                  "considered": len(records), "kept": len(kept),
+                  "dropped": len(records) - len(kept)}
 
 
 def tag_demoted(records: list[dict[str, Any]], sink: Any) -> None:
@@ -661,6 +729,11 @@ class KnowledgeCatalog:
             return
         # 這個檔其餘的旗標都走 os.getenv（見 XKB_SERVICE_LOG），跟著它。
         if os.getenv("XKB_JEV_SHADOW", "1") == "0":
+            return
+        # jev 已經在合併點做決定時，影子比對就是第二次呼叫同一個模型，而它要比對的
+        # 「餘弦的決定」也已經不是最後的決定了。預設關掉；要重新量餘弦與 jev 的差異
+        # 時再開（XKB_JEV_SHADOW=1 搭配 XKB_JEV_DECIDE=0）。
+        if os.getenv("XKB_JEV_DECIDE", "1") != "0":
             return
         if not xkb_jev.available():
             return
@@ -1314,12 +1387,30 @@ class Store:
         # 每一筆命中它的軌跡都剛好拿到折扣上限 0.65——那個「區間」其實
         # 只有一個值，難怪怎麼調錨點都不對。
         terms = query_terms(query)
+        # harness 產生的「對話」要排除在視窗之外，而不是排除在評分之外。
+        #
+        # 這個查詢只看最近 500 筆。2026-09-24 的資料庫裡有 137 筆 turn 的 query 其實
+        # 是背景任務通知（在 hook 端擋掉之前累積的），也就是**視窗的 27% 被佔掉**，
+        # 真正的對話歷史被擠出去。在 Python 端過濾救不了這件事：它們已經佔掉名額了。
+        #
+        # 刻意不刪那些列：它們的 answer 是真實的回答內容，而這個專案的價值有一部分
+        # 是 provenance。代價要講清楚——那些答案從此不會被對話召回撈到。真的有知識
+        # 價值的內容，它的家是卡片或 wiki，不是一個問句是系統通知的對話軌跡。
+        #
+        # 標記清單取自 conversation_state_parser，不在這裡再寫一份 SQL 字面值。
+        blanks = " " + chr(10) + chr(13) + chr(9)
+        marker_clause = " ".join(
+            "AND lower(ltrim(turns.query, ?)) NOT LIKE ?"
+            for _ in HARNESS_MARKERS)
+        marker_params = [value for marker in HARNESS_MARKERS
+                         for value in (blanks, marker + "%")]
         with self.lock, self.connect() as db:
             rows = db.execute(
                 "SELECT turns.* FROM turns JOIN sessions ON sessions.session_id=turns.session_id "
                 "WHERE turns.status!='cancelled' AND turns.answer IS NOT NULL AND sessions.namespace=? "
+                f"{marker_clause} "
                 "ORDER BY turns.completed_at DESC LIMIT 500",
-                (namespace,),
+                (namespace, *marker_params),
             ).fetchall()
         # 命中詞數不是相關度。
         #
@@ -1445,6 +1536,15 @@ class Store:
         # 三條腿的記錄同時存在。標在任何一條腿裡都會被其他腿繞過（見
         # tag_demoted 的說明）。
         tag_demoted(records, self.demoted_ids)
+        # jev 判斷接在這裡，排序之前：排序只需要處理真的相關的那些。
+        # 一個旗標就能退回餘弦——XKB_JEV_DECIDE=0。
+        judge_note: dict[str, Any] = {"status": "off"}
+        if os.getenv("XKB_JEV_DECIDE", "1") != "0":
+            try:
+                records, judge_note = judge_relevance(query, records)
+            except Exception as err:  # noqa: BLE001
+                xkb_failures.note("jev judge", err)
+                judge_note = {"status": "error"}
         records = xkb_score.rank(records)
         # Conversation recall filters by namespace in SQL, so nothing is
         # dropped after the fact and its layer count is structurally zero.
@@ -1475,6 +1575,9 @@ class Store:
             "unfiltered_count": len(records),
             "filtered_counts": filtered_counts,
             "dropped_as_irrelevant": knowledge.get("dropped_as_irrelevant", 0),
+            # 被 jev 砍掉幾筆、門檻多少、有沒有真的跑成，都要出現在回應裡。
+            # 這個專案吃過最大的虧就是「什麼都沒有」跟「壞了」長得一樣。
+            "judge": judge_note,
             "context": context,
             "retrieval_mode": knowledge.get("retrieval_mode", "keyword_fallback"),
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),

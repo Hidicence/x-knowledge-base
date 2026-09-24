@@ -145,7 +145,10 @@ class ShadowModeDecidesNothing(unittest.TestCase):
     def _drop(self, *, jev_result):
         """跑一次過濾，jev 回 jev_result。回傳 (kept, dropped, 寫進去的列)。"""
         catalog = self.store.catalog
-        with mock.patch.object(xkb_jev, "available", return_value=True), \
+        # 影子模式只在 jev 還沒接管決定時存在。接管之後它就是第二次呼叫同一個
+        # 模型，所以預設關掉——要測影子模式就得明確說「現在不是 jev 在決定」。
+        with mock.patch.dict("os.environ", {"XKB_JEV_DECIDE": "0"}), \
+             mock.patch.object(xkb_jev, "available", return_value=True), \
              mock.patch.object(xkb_jev, "relevance", return_value=jev_result), \
              mock.patch("xkb_memory_service.threading.Thread", _Inline), \
              mock.patch("xkb_memory_service.xkb_relevance.filter_irrelevant",
@@ -190,7 +193,8 @@ class ShadowModeDecidesNothing(unittest.TestCase):
         self.assertEqual(rows, [], "沒跑成就不要留下會被誤讀的紀錄")
 
     def test_a_crash_inside_the_shadow_never_breaks_recall(self):
-        with mock.patch.object(xkb_jev, "available", return_value=True), \
+        with mock.patch.dict("os.environ", {"XKB_JEV_DECIDE": "0"}), \
+             mock.patch.object(xkb_jev, "available", return_value=True), \
              mock.patch.object(xkb_jev, "relevance",
                                side_effect=RuntimeError("炸了")), \
              mock.patch("xkb_memory_service.threading.Thread", _Inline), \
@@ -207,7 +211,8 @@ class ShadowModeDecidesNothing(unittest.TestCase):
         self.assertEqual(dropped, 1)
 
     def test_it_can_be_turned_off(self):
-        with mock.patch.dict("os.environ", {"XKB_JEV_SHADOW": "0"}), \
+        with mock.patch.dict("os.environ", {"XKB_JEV_SHADOW": "0",
+                                            "XKB_JEV_DECIDE": "0"}), \
              mock.patch.object(xkb_jev, "available", return_value=True), \
              mock.patch.object(xkb_jev, "relevance") as spy, \
              mock.patch("xkb_memory_service.threading.Thread", _Inline), \

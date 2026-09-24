@@ -150,6 +150,39 @@ def relevance(query: str, candidates: list[tuple[str, str]],
     return out or None
 
 
+def needs_recall(query: str, *, timeout: int = TIMEOUT_SECONDS) -> float | None:
+    """這句話需不需要去查知識庫。回 0~1；判斷不出來回 None。
+
+    問的是「需不需要查」，不是「這是不是問題」。「推上去吧」「好 繼續吧」是完整
+    的指令，只是答案不在知識庫裡；而「碳盤查的計算方式」只有八個字，卻正是這個
+    知識庫存在的理由。長度、句型、有沒有問號都分不出這兩者——現在那十來條正則就是
+    在用這些特徵，而它的補丁裡有一條是把一整句話寫死。
+
+    **這一題判錯的代價不對稱。** 該查卻沒查，整個召回不會跑，而回應看起來完全正常
+    ——這個專案為這種靜默失敗付過 12 週。該省卻查了，只是多花幾秒。所以呼叫端的
+    門檻要偏向放行，而不是取中間值。
+    """
+    if not query:
+        return None
+    answers = judge(
+        f"使用者對 AI 助理說：{_trim(query, 1200)}",
+        {"needs": {
+            "type": "noul",
+            "instructions": ("回答這句話需不需要查使用者的個人知識庫（裡面有他的"
+                             "工作筆記、報價、拍片流程、AI 工具心得、客戶資料）。"
+                             "純粹的指令、確認、閒聊不需要；問到事實、做法、"
+                             "過去怎麼處理的就需要。"),
+        }},
+        timeout=timeout)
+    if answers is None:
+        return None
+    answer = answers.get("needs")
+    if not isinstance(answer, dict):
+        return None
+    value = answer.get("noul")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def _trim(text: str, limit: int = 900) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[:limit] + "…"
