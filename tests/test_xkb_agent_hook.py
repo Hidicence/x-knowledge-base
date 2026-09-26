@@ -81,6 +81,20 @@ class TranscriptTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def test_prompt_event_injects_conversation_evidence_and_provenance(self) -> None:
+        record = {"record_type": "conversation_trace", "trace_id": "trace:fixture",
+                  "query": "角色參考圖如何分工？", "answer": "人物、場景、構圖使用各自的參考圖。"}
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(hook, "STATE_DIR", Path(tmp)), \
+             mock.patch.object(hook, "call", side_effect=[
+                 {"session_id": "session-fixture"}, {"retrieval": {"records": [record]}}]), \
+             mock.patch.object(hook, "emit") as emit:
+            hook.on_prompt({"session_id": "session-fixture", "prompt": "角色參考圖如何分工？"}, {"source": "test"})
+        output = emit.call_args.args[0]["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "UserPromptSubmit")
+        for text in (record["query"], record["answer"], record["trace_id"], "可能已經過時"):
+            self.assertIn(text, output["additionalContext"])
+
     def test_recalled_knowledge_is_labelled_as_history(self) -> None:
         rendered = hook.render([{"record_type": "knowledge_card", "title": "T", "summary": "S", "source_url": "u"}])
         self.assertIn("xkb_recalled_knowledge", rendered)

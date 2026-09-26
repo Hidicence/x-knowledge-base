@@ -89,6 +89,16 @@ but three cases return extra keyword matches, and `好，收到` is not classifi
 an acknowledgement. Those are visible failures, not relabelled successes. Keep
 the labels intact when improving these behaviors.
 
+After fixing punctuation in compound acknowledgements, the same unchanged cases
+score 21/24: `好，收到` is now skipped, while the three extra-keyword-match cases
+remain failures. `evals/recall-baseline.json` preserves the initial measurement.
+
+The agent hook renders conversation evidence from `query`/`answer`, preserving
+`trace_id` as provenance, as well as cards and wiki records from `title`/`summary`.
+MCP availability alone does not establish automatic recall: verify that the
+agent's actual `UserPromptSubmit` event invokes the XKB hook. The current
+installer targets Claude Code settings; it does not install a Codex/Orca hook.
+
 For a real-library quality evaluation, create labels from reviewed evidence:
 
 ```json

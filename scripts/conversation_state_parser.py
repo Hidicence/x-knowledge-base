@@ -48,7 +48,7 @@ NOISE_PATTERNS: dict[str, list[str]] = {
         # Compound acknowledgements are still acknowledgements; the short
         # message length check alone misses them once CJK is weighted as
         # three characters.
-        r"^(?:ok|okay|好|好的)\s*(?:收到|了解|知道了|got it)?[。！!，,。 ]*$",
+        r"^(?:ok|okay|好|好的)[\s，,]*(?:收到|了解|知道了|got it)?[。！!，,。 ]*$",
     ],
     "off_topic": [
         # A customer-specific pricing question, not a request to recall XKB

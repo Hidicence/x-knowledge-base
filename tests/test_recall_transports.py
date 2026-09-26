@@ -121,6 +121,15 @@ class RecallTransports(unittest.TestCase):
         packet = probe("--help", env=self.env)
         self.assertEqual(packet["query"], "--help")
 
+    def test_punctuated_acknowledgement_skips_local_and_remote_mcp(self):
+        with mock.patch.object(self.store.catalog, "search", side_effect=AssertionError("ack searched")):
+            for env in (self.env, {**self.env, "XKB_MEMORY_SERVICE_URL": self.url}):
+                packet = probe("好，收到", env=env)
+                self.assertEqual(packet["retrieval_mode"], "skipped")
+                self.assertEqual(packet["skip_reason"], "acknowledgement")
+                self.assertEqual(packet["records"], [])
+                self.assertFalse(packet["semantic_retrieval_attempted"])
+
     def test_invalid_remote_packet_is_an_error(self):
         with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}):
             with self.assertRaisesRegex(RuntimeError, "not an XKB"):

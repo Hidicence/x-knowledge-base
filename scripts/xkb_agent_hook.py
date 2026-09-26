@@ -133,9 +133,9 @@ def render(records: list[dict]) -> str:
         "",
     ]
     for item in records:
-        title = str(item.get("title") or item.get("id") or "").strip()
-        summary = " ".join(str(item.get("summary") or "").split())[:600]
-        source = str(item.get("source_url") or "").strip()
+        title = str(item.get("title") or item.get("query") or item.get("id") or item.get("trace_id") or "").strip()
+        summary = " ".join(str(item.get("summary") or item.get("answer") or "").split())[:600]
+        source = str(item.get("source_url") or item.get("trace_id") or "").strip()
         lines.append(f"- [{item.get('record_type', 'knowledge')}] {title}")
         if summary:
             lines.append(f"  {summary}")

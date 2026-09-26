@@ -16,7 +16,7 @@ import conversation_state_parser as parser  # noqa: E402
 
 class NoiseListTests(unittest.TestCase):
     def test_acknowledgements_are_noise(self) -> None:
-        for text in ("ok", "好的", "收到", "ok 收到", "好的收到", "謝謝"):
+        for text in ("ok", "好的", "收到", "ok 收到", "好的收到", "謝謝", "好，收到", "好的, 了解", "OK, got it!"):
             self.assertTrue(parser.is_noise(text), text)
 
     def test_compound_acknowledgement(self) -> None:
@@ -30,7 +30,7 @@ class NoiseListTests(unittest.TestCase):
             self.assertTrue(parser.is_noise(text), text)
 
     def test_real_questions_are_not_noise(self) -> None:
-        for text in ("XKB 的召回架構是什麼", "碳盤查的計算方式", "我們之前怎麼處理報價"):
+        for text in ("XKB 的召回架構是什麼", "碳盤查的計算方式", "我們之前怎麼處理報價", "好，收到，Seedance 的角色如何保持一致？", "好，幫我查 XKB"):
             self.assertFalse(parser.is_noise(text), text)
 
 
