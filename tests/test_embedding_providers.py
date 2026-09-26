@@ -125,6 +125,7 @@ class EmbeddingConfigurationTests(unittest.TestCase):
         import tempfile
 
         from scripts import build_vector_index
+        import build_fts_index
 
         with tempfile.TemporaryDirectory() as tmp:
             index_path = Path(tmp) / "search_index.json"
@@ -132,6 +133,9 @@ class EmbeddingConfigurationTests(unittest.TestCase):
             args = ["build_vector_index.py", "--index-file", str(index_path), "--vector-file", str(Path(tmp) / "vectors.json")]
             stderr = io.StringIO()
             with mock.patch.object(sys, "argv", args), \
+                    mock.patch.object(build_vector_index.xkb_paths, "BOOKMARKS_DIR", Path(tmp)), \
+                    mock.patch.object(build_fts_index, "FTS_DB", Path(tmp) / "fts_index.db"), \
+                    mock.patch.object(build_fts_index, "knowledge_section_docs", return_value=[]), \
                     mock.patch.object(build_vector_index, "knowledge_section_docs", return_value=[]), \
                     mock.patch.object(build_vector_index, "extract_card_text", return_value="text"), \
                     mock.patch.object(build_vector_index, "load_vector_index", return_value={}), \

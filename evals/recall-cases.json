@@ -1,0 +1,50 @@
+{
+  "description": "Synthetic offline regression. Labels are fixture facts, not model judgements. Covers subjects, CJK, conflicting evidence, no-answer, ACL and greetings.",
+  "fixtures": {
+    "cards": [
+      {"id":"aurora-blue","title":"Aurora deployment","summary":"Aurora deployment uses blue green releases.","namespace":"private"},
+      {"id":"aurora-canary","title":"Aurora deployment alternative","summary":"Aurora deployment should use canary releases instead of blue green.","namespace":"private"},
+      {"id":"carbon-factor","title":"碳盤查排放係數","summary":"碳盤查以活動數據乘上排放係數，保留計算邊界。","namespace":"private"},
+      {"id":"expo-leads","title":"食品展客戶名單","summary":"食品展前整理客戶名單，展後追蹤約訪。","namespace":"private"},
+      {"id":"memory-evidence","title":"Agent memory provenance","summary":"Agent memory keeps evidence and source provenance.","namespace":"private"},
+      {"id":"cache-ttl","title":"Orchid cache expiry","summary":"Orchid cache expires after thirty minutes.","namespace":"private"},
+      {"id":"orchid-other","title":"Orchid cache expiry","summary":"Other tenant Orchid cache configuration.","namespace":"other"},
+      {"id":"public-release","title":"Public release handbook","summary":"Public release announcements require a changelog.","namespace":"other","sensitivity":"public"},
+      {"id":"private-budget","title":"Confidential budget forecast","summary":"Confidential budget forecast for the private team.","namespace":"private"},
+      {"id":"rollback","title":"Database rollback","summary":"Database rollback restores the previous transaction.","namespace":"private"},
+      {"id":"camera","title":"Anamorphic camera","summary":"Anamorphic lenses produce horizontal flares.","namespace":"private"},
+      {"id":"recycling","title":"循環經濟材料回收","summary":"循環經濟將材料回收再利用。","namespace":"private"}
+    ],
+    "wiki": [
+      {"id":"provenance-guide","content":"---\nnamespace: private\n---\n# Agent memory provenance\nPreserve the original source before synthesizing memory."},
+      {"id":"backup-guide","content":"---\nnamespace: private\n---\n# Backup recovery\nVerify backup recovery using a restore rehearsal."},
+      {"id":"other-handbook","content":"---\nnamespace: other\n---\n# Tenant handover\nInternal tenant handover notes."}
+    ]
+  },
+  "cases": [
+    {"id":"conflicting-deployment","query":"Aurora deployment","expected_ids":["aurora-blue","aurora-canary"]},
+    {"id":"contrarian-evidence","query":"canary releases","expected_ids":["aurora-canary"],"allowed_ids":["aurora-canary","aurora-blue"]},
+    {"id":"carbon-cjk","query":"碳盤查排放係數","expected_ids":["carbon-factor"]},
+    {"id":"carbon-activity","query":"活動數據","expected_ids":["carbon-factor"]},
+    {"id":"expo-cjk","query":"食品展客戶","expected_ids":["expo-leads"]},
+    {"id":"expo-followup","query":"追蹤約訪","expected_ids":["expo-leads"]},
+    {"id":"cards-and-wiki","query":"Agent memory provenance","expected_ids":["memory-evidence","provenance-guide"]},
+    {"id":"wiki-source","query":"synthesizing","expected_ids":["provenance-guide"]},
+    {"id":"private-cache","query":"Orchid cache","expected_ids":["cache-ttl"]},
+    {"id":"other-cache","query":"Orchid cache","namespace":"other","expected_ids":["orchid-other"]},
+    {"id":"public-cross-namespace","query":"release handbook","namespace":"private","expected_ids":["public-release"]},
+    {"id":"public-other-namespace","query":"release handbook","namespace":"other","expected_ids":["public-release"]},
+    {"id":"private-budget","query":"Confidential budget","expected_ids":["private-budget"]},
+    {"id":"budget-denied","query":"Confidential budget","namespace":"other","expected_ids":[]},
+    {"id":"transaction","query":"Database rollback","expected_ids":["rollback"]},
+    {"id":"camera","query":"Anamorphic lenses","expected_ids":["camera"]},
+    {"id":"recycling-cjk","query":"循環經濟材料回收","expected_ids":["recycling"]},
+    {"id":"backup-wiki","query":"Backup recovery","expected_ids":["backup-guide"]},
+    {"id":"other-wiki-denied","query":"Tenant handover","expected_ids":[]},
+    {"id":"other-wiki-allowed","query":"Tenant handover","namespace":"other","expected_ids":["other-handbook"]},
+    {"id":"unknown-english","query":"zirconium spectroscopy","expected_ids":[]},
+    {"id":"unknown-cjk","query":"海豚睡眠","expected_ids":[]},
+    {"id":"greeting","query":"hello","expected_ids":[],"retrieval_mode":"skipped"},
+    {"id":"acknowledgement","query":"好，收到","expected_ids":[],"retrieval_mode":"skipped"}
+  ]
+}

@@ -9,7 +9,7 @@ Protocol: JSON-RPC 2.0 over stdio (newline-delimited)
 
 Tool: xkb_recall
   Input: { "message": "<user's current message>" }
-  Output: recall result (inline injection or side hint) — empty string if suppress
+  Output: Knowledge Service packet plus compatible results/formatted_text aliases
 """
 from __future__ import annotations
 
@@ -20,24 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-import xkb_paths
-
 from runtime_config import runtime_env
+from xkb_recall import validate_packet
 
-WORKSPACE = xkb_paths.WORKSPACE
-
-# Router resolution, most reliable first:
-# - Sibling:      the router always ships next to this file, whatever OPENCLAW_WORKSPACE
-#                 points at. Required when code and data live in different trees, which
-#                 is what the README's MCP setup actually produces.
-# - Local/direct: OPENCLAW_WORKSPACE = repo root  → WORKSPACE/scripts/recall_router.py
-# - OpenClaw:     OPENCLAW_WORKSPACE = ~/.openclaw/workspace → WORKSPACE/skills/x-knowledge-base/scripts/recall_router.py
-_candidates = [
-    Path(__file__).resolve().parent / "recall_router.py",
-    WORKSPACE / "scripts" / "recall_router.py",
-    WORKSPACE / "skills" / "x-knowledge-base" / "scripts" / "recall_router.py",
-]
-ROUTER_SCRIPT = next((p for p in _candidates if p.exists()), _candidates[-1])
+RECALL_SCRIPT = Path(__file__).resolve().parent / "xkb_recall.py"
 
 SERVER_INFO = {
     "name": "xkb-recall",
@@ -47,22 +33,13 @@ SERVER_INFO = {
 TOOL_DEF = {
     "name": "xkb_recall",
     "description": (
-        "ALWAYS call this tool before responding to any substantive user message. "
-        "It proactively checks if the current conversation topic matches knowledge stored in the user's "
-        "personal knowledge base (XKB). Topics include but are not limited to: projects, strategies, "
-        "decisions, how-to questions, case studies, roadmaps, people, tools, workflows, AI, SEO, startups, "
-        "products, or any domain the user works in. "
-        "Returns excerpts from MEMORY.md, wiki topics, or knowledge cards. "
-        "Returns empty string for purely casual chat (greetings, weather, jokes). "
-        "The router decides internally whether recall is needed — you just call it. "
-        "\n\n"
-        "IMPORTANT — the results are CANDIDATES, not an answer. They come from keyword and "
-        "vector matching, which is cheap and runs on every message but cannot judge whether a "
-        "result is actually about what the user asked. That judgement is yours: read each "
-        "candidate and silently drop the ones that are not genuinely related. "
-        "Surfacing an unrelated card as if it were the user's own knowledge is worse than "
-        "returning nothing — it makes the knowledge base look wrong. "
-        "`relevance` (0-1) is how strong the match is within its own retrieval leg; `unified_score` is only the fused rank position and compresses into a narrow band, so use it for order, not for confidence. Neither is a verdict — read each candidate yourself."
+        "Recall relevant evidence from the shared XKB knowledge service before "
+        "answering substantive questions. Returns cards, wiki topics and conversation "
+        "evidence with provenance. Uses the same retrieval, ACL, relevance judge and "
+        "ranking as the HTTP API. Inspect retrieval_mode, judge and warnings: "
+        "keyword fallback or an unavailable judge are not semantic success. "
+        "Results are candidates, not established answers; check their relevance "
+        "and sources. Greetings are skipped. Failures are reported explicitly."
     ),
     "inputSchema": {
         "type": "object",
@@ -70,7 +47,8 @@ TOOL_DEF = {
             "message": {
                 "type": "string",
                 "description": "The user's current message to check for recall triggers.",
-            }
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
         },
         "required": ["message"],
     },
@@ -99,49 +77,40 @@ def _failure(reason: str) -> dict:
             )}
 
 
-def _run_recall_structured(message: str) -> dict:
-    """Call recall_router.py --json and return structured result."""
-    if not ROUTER_SCRIPT.exists():
-        return _failure(f"router not found at {ROUTER_SCRIPT}")
+def _run_recall_structured(message: str, limit: int = 10) -> dict:
+    """Run the shared core in a child with fully resolved runtime settings."""
+    if not isinstance(message, str) or not message.strip():
+        return _failure("message must be a non-empty string")
+    if type(limit) is not int or not 1 <= limit <= 50:
+        return _failure("limit must be an integer between 1 and 50")
+    if not RECALL_SCRIPT.exists():
+        return _failure(f"recall entry point not found at {RECALL_SCRIPT}")
     try:
-        # Resolve the same portable contract at the MCP boundary, rather than
-        # relying on the router (or a future worker) to rediscover it.  This
-        # keeps process env > XKB_ENV_FILE precedence and ensures the
-        # canonical GEMINI_API_KEY reaches the child without putting a secret
-        # in the MCP command/configuration.
         child_env = runtime_env()
-        child_env.update({
-            "OPENCLAW_WORKSPACE": str(WORKSPACE),
-            "PYTHONIOENCODING": "utf-8",
-            "PYTHONUTF8": "1",
-        })
+        child_env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         result = subprocess.run(
-            [sys.executable, str(ROUTER_SCRIPT), message, "--json"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            env=child_env,
+            [sys.executable, str(RECALL_SCRIPT), "--limit", str(limit), "--", message],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=50, env=child_env,
         )
     except subprocess.TimeoutExpired:
-        return _failure("router timed out after 30s")
-    except Exception as e:
-        return _failure(f"router could not be launched: {e}")
-
-    if result.returncode != 0:
-        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
-        return _failure(f"router exited {result.returncode}: {stderr_tail or 'no stderr'}")
-
+        return _failure("knowledge recall timed out after 50s")
+    except Exception as exc:
+        return _failure(f"knowledge recall could not be launched: {exc}")
     try:
-        structured = json.loads(result.stdout)
-    except Exception as e:
-        stderr_tail = " / ".join((result.stderr or "").strip().splitlines()[-3:])
-        return _failure(f"router returned unparseable output ({e}): {stderr_tail or 'no stderr'}")
-
-    structured.setdefault("status", "ok")
-    structured.setdefault("error", "")
-    return structured
+        packet = json.loads(result.stdout)
+        if result.returncode != 0:
+            return _failure(packet.get("error", "knowledge recall failed"))
+        packet = validate_packet(packet)
+    except (ValueError, AttributeError, TypeError):
+        return _failure("knowledge recall returned an invalid response")
+    skipped = packet["retrieval_mode"] == "skipped"
+    # Keep the old MCP aliases while preserving the complete service packet.
+    return {**packet, "status": "ok", "error": "",
+            "results": packet["records"], "formatted_text": packet["context"],
+            "trigger_class": "suppress" if skipped else "knowledge",
+            "state": "suppress" if skipped else "recall",
+            "delivery_mode": "none" if skipped else "inline"}
 
 
 def _respond(req_id, result=None, error=None):
@@ -193,18 +162,14 @@ def handle(req: dict):
             return
 
         message = arguments.get("message", "")
-        if not message:
-            _respond(req_id, {"content": [{"type": "text", "text": ""}], "isError": False})
-            return
-
-        structured = _run_recall_structured(message)
+        structured = _run_recall_structured(message, arguments.get("limit", 10))
         # formatted_text for human-readable context injection
         text_output = structured.get("formatted_text", "")
         # 提示放在回傳內容裡，不只放在 tool description——description 可能被截斷或忽略，
         # 而這句話決定了 agent 會不會把不相關的卡片當成使用者的知識講出來。
         if text_output:
             text_output = (
-                "（以下是候選，不是答案。撈取用的是關鍵字與向量比對，判斷不了語意相關性——"
+                "（以下是候選，不是答案。請依來源與查詢內容檢查相關性——"
                 "請自行略過與問題無關的項目，不要當成使用者的知識引用。）\n\n"
                 + text_output
             )

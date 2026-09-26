@@ -593,7 +593,8 @@ def check_conversation_capture(days: int = 3) -> dict:
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
         import sqlite3
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
+        from contextlib import closing
+        with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as db:
             total, empty = db.execute(
                 """SELECT COUNT(*),
                           SUM(CASE WHEN t.n IS NULL THEN 1 ELSE 0 END)

@@ -52,7 +52,7 @@ class RecallServerEnvTests(unittest.TestCase):
             router = Path(tmp) / "recall_router.py"
             router.write_text("# fixture\n", encoding="utf-8")
             with mock.patch.dict(os.environ, env, clear=True), \
-                    mock.patch.object(self.server, "ROUTER_SCRIPT", router), \
+                    mock.patch.object(self.server, "RECALL_SCRIPT", router), \
                     mock.patch.object(self.server.subprocess, "run", side_effect=fake_run):
                 self.server._run_recall_structured("fixture query")
         return captured["env"]
@@ -87,7 +87,7 @@ class RecallServerEnvTests(unittest.TestCase):
                 os.environ,
                 {**clean_env(), "XKB_ENV_FILE": str(Path(tmp) / "does-not-exist.env")},
                 clear=True,
-            ), mock.patch.object(self.server, "ROUTER_SCRIPT", router):
+            ), mock.patch.object(self.server, "RECALL_SCRIPT", router):
                 result = self.server._run_recall_structured("fixture query")
         self.assertNotEqual(result.get("status"), "ok")
         self.assertIn("does-not-exist.env", str(result))

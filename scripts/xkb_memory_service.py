@@ -17,6 +17,8 @@ import re
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1105,10 +1107,18 @@ class Store:
             if "analysis_json" not in candidate_columns:
                 db.execute("ALTER TABLE candidates ADD COLUMN analysis_json TEXT NOT NULL DEFAULT '{}'")
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            # sqlite's transaction context commits/rolls back but does not close
+            # the handle. Close it deterministically for repeated HTTP requests
+            # and Windows callers that need to release the database file.
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def record_usage(self, observations: list[tuple[str, float, bool]]) -> None:
         """Accumulate how each record actually performed when retrieved.

@@ -283,6 +283,14 @@ Nothing reaches a wiki topic without passing the gate, and you can always see wh
 
 ## Share it across agents
 
+MCP clients can run `scripts/xkb_recall_server.py` over stdio. MCP and HTTP now
+use the same Knowledge Service recall core, including relevance judging and ACLs.
+Set `XKB_MEMORY_SERVICE_URL` to use a shared deployed service; without it, MCP
+uses the local data paths and conversation database. Run
+`python scripts/xkb_doctor.py --query "a known topic" --json` to verify the actual
+connection. See [recall validation](docs/recall-validation.md) for configuration,
+strict acceptance checks, and the repeatable evaluation suite.
+
 Start the service, then install the hook. Recall and capture become automatic — the agent is not trusted to remember to call anything.
 
 ```bash

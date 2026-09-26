@@ -1,0 +1,388 @@
+{
+  "ok": false,
+  "cases": 24,
+  "passed": 20,
+  "mean_recall_at_k": 1.0,
+  "mean_precision_at_k": 0.9074074074074074,
+  "no_answer_passed": 5,
+  "no_answer_cases": 6,
+  "latency_ms": {
+    "p50": 200.0,
+    "p95": 212
+  },
+  "retrieval_modes": {
+    "keyword_fallback": 23,
+    "skipped": 1
+  },
+  "judge_statuses": {
+    "unavailable": 18,
+    "no_records": 5,
+    "not_attempted": 1
+  },
+  "results": [
+    {
+      "id": "conflicting-deployment",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "aurora-blue",
+        "aurora-canary"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 227
+    },
+    {
+      "id": "contrarian-evidence",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "aurora-canary",
+        "aurora-blue"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 208
+    },
+    {
+      "id": "carbon-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "carbon-factor"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 197
+    },
+    {
+      "id": "carbon-activity",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "carbon-factor"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 202
+    },
+    {
+      "id": "expo-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "expo-leads"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 199
+    },
+    {
+      "id": "expo-followup",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "expo-leads"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 200
+    },
+    {
+      "id": "cards-and-wiki",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "provenance-guide",
+        "memory-evidence"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 197
+    },
+    {
+      "id": "wiki-source",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "provenance-guide"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 201
+    },
+    {
+      "id": "private-cache",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "cache-ttl"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 196
+    },
+    {
+      "id": "other-cache",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "orchid-other"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 200
+    },
+    {
+      "id": "public-cross-namespace",
+      "ok": false,
+      "errors": [
+        "unexpected: aurora-blue, aurora-canary"
+      ],
+      "record_ids": [
+        "public-release",
+        "aurora-blue",
+        "aurora-canary"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.3333333333333333,
+      "no_answer": false,
+      "false_positive_count": 2,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 200
+    },
+    {
+      "id": "public-other-namespace",
+      "ok": false,
+      "errors": [
+        "unexpected: other-handbook"
+      ],
+      "record_ids": [
+        "other-handbook",
+        "public-release"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.5,
+      "no_answer": false,
+      "false_positive_count": 1,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 212
+    },
+    {
+      "id": "private-budget",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "private-budget"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 200
+    },
+    {
+      "id": "budget-denied",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 212
+    },
+    {
+      "id": "transaction",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "rollback"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 198
+    },
+    {
+      "id": "camera",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "camera"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 199
+    },
+    {
+      "id": "recycling-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "recycling"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 196
+    },
+    {
+      "id": "backup-wiki",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "backup-guide"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 198
+    },
+    {
+      "id": "other-wiki-denied",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 201
+    },
+    {
+      "id": "other-wiki-allowed",
+      "ok": false,
+      "errors": [
+        "unexpected: orchid-other"
+      ],
+      "record_ids": [
+        "other-handbook",
+        "orchid-other"
+      ],
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.5,
+      "no_answer": false,
+      "false_positive_count": 1,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 197
+    },
+    {
+      "id": "unknown-english",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 201
+    },
+    {
+      "id": "unknown-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 197
+    },
+    {
+      "id": "greeting",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "skipped",
+      "judge_status": "not_attempted",
+      "elapsed_ms": 194
+    },
+    {
+      "id": "acknowledgement",
+      "ok": false,
+      "errors": [
+        "wrong retrieval mode"
+      ],
+      "record_ids": [],
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 209
+    }
+  ],
+  "scope": "synthetic offline keyword/ACL/transport regression; not a semantic quality benchmark"
+}
