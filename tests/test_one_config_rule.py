@@ -28,18 +28,15 @@ import embedding_providers  # noqa: E402
 
 
 class OneImplementation(unittest.TestCase):
-    def test_embedding_side_delegates_to_the_shared_loader(self):
-        """不要再長出第二份 dotenv 解析。"""
-        source = (ROOT / "tools" / "embedding_providers.py").read_text(encoding="utf-8")
-        self.assertIn("return load_env_file(path)", source)
-        # 第二份實作的指紋：自己的錯誤訊息與自己的逐行解析。
-        self.assertNotIn("Invalid embedding env file", source)
-        self.assertNotIn("Embedding env file not found", source)
-
-    def test_embedding_side_does_not_reimplement_precedence(self):
-        """`os.getenv(X) or env_values.get(X)` 就是在原地重寫優先順序。"""
-        source = (ROOT / "tools" / "embedding_providers.py").read_text(encoding="utf-8")
-        self.assertNotIn("env_values.get(", source)
+    def test_embedding_config_uses_the_shared_loader_result(self):
+        """Exercise the active config path, not a spelling in an unused wrapper."""
+        env_file = Path("fixture.env")
+        with mock.patch.object(embedding_providers, "runtime_env", return_value={
+                "EMBEDDING_MODEL": "gemini-shared-loader"}) as loader, \
+             mock.patch.object(embedding_providers, "_load_xkb_config", return_value={}):
+            config = embedding_providers.load_config(env_file)
+        loader.assert_called_once_with(env_file)
+        self.assertEqual(config.model, "gemini-shared-loader")
 
 
 class TheRule(unittest.TestCase):

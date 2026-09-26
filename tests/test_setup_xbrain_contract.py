@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "setup_xbrain.sh"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _isolation import isolated_env, needs_posix_exec
+from _isolation import isolated_env
 
 
 class SetupXbrainContractTests(unittest.TestCase):
@@ -71,14 +71,6 @@ class SetupXbrainContractTests(unittest.TestCase):
         for forbidden in ("OPENCLAW_JSON", "openclaw.json", "$HOME/.openclaw", "/root/.openclaw"):
             self.assertNotIn(forbidden, source)
 
-    def test_process_env_wins_over_xkb_env_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            env_file = root / "runtime.env"
-            env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
-            result = self.run_setup(root, env_file=env_file)
-            self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_explicit_env_file_wins_over_xkb_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -113,13 +105,19 @@ class SetupXbrainContractTests(unittest.TestCase):
             self.assertFalse((root / "home" / ".openclaw").exists())
 
     def test_portable_custom_path_runs_without_host_state(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            result = self.run_setup(root)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("GBRAIN_AVAILABLE: True", result.stdout)
-            self.assertIn("gbrain_dir = " + str(root / "portable" / "gbrain"), result.stdout)
-            self.assertFalse((root / "home" / ".openclaw").exists())
+        # Preserve both process-only and mixed-source installation coverage.
+        # Actual precedence is checked by the shared-loader and xbrain CLI tests.
+        for with_file in (False, True):
+            with self.subTest(with_file=with_file), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env_file = root / "runtime.env" if with_file else None
+                if env_file:
+                    env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
+                result = self.run_setup(root, env_file=env_file)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("GBRAIN_AVAILABLE: True", result.stdout)
+                self.assertIn("gbrain_dir = " + str(root / "portable" / "gbrain"), result.stdout)
+                self.assertFalse((root / "home" / ".openclaw").exists())
 
 
 if __name__ == "__main__":

@@ -19,12 +19,6 @@ class NoiseListTests(unittest.TestCase):
         for text in ("ok", "好的", "收到", "ok 收到", "好的收到", "謝謝", "好，收到", "好的, 了解", "OK, got it!"):
             self.assertTrue(parser.is_noise(text), text)
 
-    def test_compound_acknowledgement(self) -> None:
-        """The case that reached the live path: five characters, not in the
-        exact set, so a subset copy of this list let it through and ten
-        knowledge records were injected into a conversation asking nothing."""
-        self.assertTrue(parser.is_noise("ok 收到"))
-
     def test_greetings_are_noise(self) -> None:
         for text in ("早安", "嗨", "hi", "hello", "哈哈"):
             self.assertTrue(parser.is_noise(text), text)

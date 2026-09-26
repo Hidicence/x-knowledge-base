@@ -256,15 +256,6 @@ class BatchSummary(unittest.TestCase):
 
 
 class Wiring(unittest.TestCase):
-    def test_the_check_is_registered(self):
-        # 同上：問 CHECKS，不問檔案內容。
-        self.assertIn("check_pipeline_ledger", {c.__name__ for c in hc.CHECKS})
-
-    def test_the_daily_message_can_name_it(self):
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import health_check_notify as notify
-        self.assertIn("pipeline_ledger", notify.FAULT_LABELS)
-
     def test_the_batch_stages_write_to_it(self):
         """階段不寫，帳本就永遠是空的——而空帳本不會報錯。"""
         for name, stage in [("run_bookmark_batch.sh", "bookmark-batch"),

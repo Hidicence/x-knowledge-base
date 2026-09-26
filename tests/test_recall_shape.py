@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import io
 import sys
+import threading
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -47,11 +48,24 @@ class RecallShapeTest(unittest.TestCase):
                 )
 
     def test_the_two_expensive_layers_overlap(self) -> None:
-        """排隊跑的話,hard 召回會多花 1.2 秒,而 hook 只給六秒。"""
-        self.assertIn(
-            "ThreadPoolExecutor", self.source(),
-            "continuity 與卡片層互不相依,應該平行取回",
-        )
+        """Both searches must start before either finishes; no timing race."""
+        rendezvous = threading.Barrier(2, timeout=3)
+
+        def search(result):
+            def run(*args, **kwargs):
+                rendezvous.wait()
+                return result
+            return run
+
+        parsed = recall_router.ParseResult("continuity", "hard", 1.0, "fixture", [])
+        with mock.patch.object(recall_router, "parse_state", return_value=parsed), \
+             mock.patch.object(recall_router, "run_associative_recall", side_effect=search(("", []))), \
+             mock.patch.object(recall_router, "continuity_recall", side_effect=search([])), \
+             mock.patch.object(recall_router, "action_recall", return_value=[]), \
+             mock.patch.object(recall_router, "_dedup_filter_new", side_effect=lambda rows: (rows, 0)), \
+             mock.patch.object(recall_router, "_dedup_mark_shown"), \
+             mock.patch.object(recall_router, "_write_telemetry"):
+            self.assertEqual(recall_router.route("fixture")["trigger_class"], "hard")
 
     def test_a_failed_search_is_reported_not_emptied(self) -> None:
         """後端壞掉回空陣列,跟「這個主題沒有知識」長得一模一樣。"""

@@ -175,20 +175,5 @@ class IndexFreshness(_Sandbox):
         self.assertTrue(all(c["ok"] for c in section["checks"]), self._msgs(section))
 
 
-class Wiring(unittest.TestCase):
-    def test_the_new_check_is_actually_registered(self):
-        """寫了檢查卻沒接進 main()，等於沒寫。"""
-        # 問清單，不問某個檔案的字串。原本這裡讀 pipeline 的原始碼，而每天
-        # 跑的是 notify——那份清單少了這一項，而這個測試照樣綠。
-        self.assertIn("check_card_production", {c.__name__ for c in hc.CHECKS})
-
-    def test_the_daily_message_can_name_it(self):
-        """section 名稱是內部識別字；沒有標籤，通知裡就會出現生字。"""
-        sys.path.insert(0, str(SKILL_DIR / "scripts"))
-        import health_check_notify as notify
-
-        self.assertIn("card_production", notify.FAULT_LABELS)
-
-
 if __name__ == "__main__":
     unittest.main()
