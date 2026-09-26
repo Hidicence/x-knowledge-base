@@ -19,13 +19,13 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import xkb_eviction as ev  # noqa: E402
-import xkb_relevance  # noqa: E402
 import xkb_score  # noqa: E402
 from xkb_memory_service import KnowledgeCatalog, Store, tag_demoted  # noqa: E402
 
@@ -36,7 +36,7 @@ class StoredForLaterSurvives(unittest.TestCase):
     def test_a_card_nobody_has_searched_for_is_never_demoted(self):
         """存起來以後才用的卡片，特徵是**沒被撈出來過**。
 
-        considered_count 低，所以不管 injected 是 0 還是什麼，都不該降權。
+        judged_count 低，所以不管 relevant 是 0 還是什麼，都不該降權。
         這是這條規則跟「很久沒用到就退場」最大的差別——後者正好會殺掉它。
         """
         for considered in range(0, ev.DEMOTE_AFTER_CONSIDERED):
@@ -52,7 +52,7 @@ class StoredForLaterSurvives(unittest.TestCase):
                              "降權不該看時間——看時間就會殺掉存起來以後才用的東西")
 
     def test_one_hit_ever_is_enough_to_stay(self):
-        """通過地板一次就夠了，不需要維持命中率。
+        """有一次明確的相關判斷就夠了，不需要維持命中率。
 
         保守在這裡：這不是 gain 那套「比平均差就退」，是「從來沒有用過」。
         """
@@ -82,9 +82,7 @@ class DemotionIsNotRemoval(unittest.TestCase):
     def test_rank_only_obeys_the_flag_it_does_not_decide(self):
         """排序不判斷該不該降權，只照旗標排。
 
-        判斷在 tag_demoted，因為那要比的是餘弦地板（0.55），而這個模組裡的
-        RELEVANCE_FLOOR 是壓縮後的腿內尺度（0.35）。兩把尺混用的後果見
-        TheExemptionUsesTheSameFloorAsInjected。
+        判斷在合併召回處依 judge verdict 與 namespace 統計進行，不能拿檢索分數代替。
         """
         import inspect
         src = inspect.getsource(xkb_score.rank)
@@ -98,61 +96,21 @@ class DemotionIsNotRemoval(unittest.TestCase):
         self.assertEqual(results[-1]["title"], "高分但被降權")
 
 
-class TheExemptionUsesTheSameFloorAsInjected(unittest.TestCase):
-    """2026-09-12 在 VPS 上用真實查詢驗證，同一處錯了兩次。
+class RevivalUsesExplicitVerdicts(unittest.TestCase):
+    def test_retrieval_scores_do_not_override_rejections(self):
+        for scale, score in (("card_semantic", .99), ("card_keyword", 99)):
+            records = [{"id": "noise", "score": score, "score_scale": scale}]
+            tag_demoted(records, lambda: {"noise"}, relevant_ids=set())
+            self.assertTrue(records[0]["demoted"])
 
-    兩次都是標記掛上了（demoted=True）、名次一動也沒動：
-
-      第一次  豁免條件寫成 `not _above_floor`
-              非語意腿（關鍵字／BM25／wiki 關鍵字）一律被標成上地板，因為餘弦
-              地板對它們的尺度不適用。那是「地板不適用」，不是「證明相關」。
-              結果所有關鍵字命中永久免疫降權。
-
-      第二次  豁免條件改成「語意腿過了 xkb_score.RELEVANCE_FLOOR」
-              那是 0.35，壓縮後的腿內尺度；而決定「有沒有被用上」的是餘弦 0.55。
-              真實資料上那些從來沒被用上的卡片 relevance 都在 0.50 左右——對 0.35
-              是過的、對 0.55 是不過的，於是機制還是完全不會動。
-
-    這是本專案記錄在案的尺度混用第四次（記憶 xkb-scale-mixing-bug-class：
-    共同點是隨資料量才浮現）。豁免必須用**定義 injected 的那同一把尺**。
-    """
-
-    def setUp(self):
-        self.floor = xkb_relevance.min_similarity()
-        self.sink = lambda: {"cards/noise.md"}
-
-    def _tag(self, score: float, scale: str) -> bool:
-        records = [{"id": "cards/noise.md", "score": score, "score_scale": scale}]
-        tag_demoted(records, self.sink)
-        return bool(records[0].get("demoted"))
-
-    def test_a_hit_between_the_two_floors_is_still_demoted(self):
-        """真實資料的那一段：0.50 對 0.35 是過的，對 0.55 不是。"""
-        between = 0.50
-        self.assertLess(between, self.floor)
-        self.assertTrue(self._tag(between, "card_semantic"),
-                        "用腿內尺度當豁免條件的話，這一筆永遠不會被降權")
-
-    def test_clearing_the_injection_floor_exempts_it(self):
-        self.assertFalse(self._tag(self.floor, "card_semantic"))
-        self.assertFalse(self._tag(self.floor + 0.2, "card_semantic"))
-
-    def test_a_keyword_hit_never_exempts_it(self):
-        """關鍵字腿的分數不是餘弦，再高也不是相關的證據。"""
-        self.assertTrue(self._tag(9.0, "card_keyword"))
-
-    def test_the_exemption_looks_across_every_leg_for_that_record(self):
-        """同一筆在 rank 之前每條腿各一份，不能只看手上這個 dict。
-
-        否則結果會取決於哪條腿排在前面——語意那份排後面就白豁免了。
-        """
-        records = [
-            {"id": "cards/noise.md", "score": 9.0, "score_scale": "card_keyword"},
-            {"id": "cards/noise.md", "score": self.floor + 0.1,
-             "score_scale": "card_semantic"},
-        ]
-        tag_demoted(records, self.sink)
+    def test_current_relevance_clears_all_legs_and_stale_flags(self):
+        records = [{"id": "noise", "score_scale": scale, "demoted": True}
+                   for scale in ("card_keyword", "card_semantic")]
+        tag_demoted(records, lambda: {"noise"}, relevant_ids={"noise"})
         self.assertFalse(any(r.get("demoted") for r in records))
+        records[0]["demoted"] = True
+        tag_demoted(records, lambda: set())
+        self.assertNotIn("demoted", records[0])
 
 
 class RevivalNeedsNoIntervention(unittest.TestCase):
@@ -165,7 +123,9 @@ class RevivalNeedsNoIntervention(unittest.TestCase):
 
     def _consider(self, record_id: str, similarity: float, injected: bool, times: int):
         for _ in range(times):
-            self.store.record_usage([(record_id, similarity, injected)])
+            item = {"id": record_id, "score": similarity, "judge": .9 if injected else .01}
+            self.store.record_recall_usage("private", [item], [item] if injected else [],
+                                           {"status": "judged"})
 
     def test_it_becomes_demoted_after_enough_useless_considerations(self):
         n = ev.DEMOTE_AFTER_CONSIDERED
@@ -179,7 +139,7 @@ class RevivalNeedsNoIntervention(unittest.TestCase):
         """被降權之後還是會被量測，所以它自己能回來。
 
         excluded 旗標做不到這件事：它把卡片從索引拿掉，於是再也不會被
-        considered，injected_count 永遠是 0，永遠回不來。
+        judged，relevant_count 永遠是 0，永遠回不來。
         """
         self._consider("cards/borderline.md", 0.53, False,
                        ev.DEMOTE_AFTER_CONSIDERED)
@@ -214,7 +174,8 @@ class ItMustNotDependOnWhichLegFoundIt(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = Store(Path(self.tmp.name) / "memory.sqlite")
         for _ in range(ev.DEMOTE_AFTER_CONSIDERED):
-            self.store.record_usage([("02-seo-geo/999", 0.54, False)])
+            self.store.record_recall_usage("private", [{"id": "02-seo-geo/999", "judge": .01}], [],
+                                           {"status": "judged"})
 
     def _keyword_leg_record(self, record_id: str, score: float) -> dict:
         """關鍵字腿產出的形狀。它不經過 _drop_irrelevant。"""
@@ -231,7 +192,8 @@ class ItMustNotDependOnWhichLegFoundIt(unittest.TestCase):
             "records": records, "filtered_counts": {"by_layer": {}}}
         self.store.recall = lambda *a, **k: {"memories": []}
 
-        out = self.store.knowledge_recall("ヘアメイク プロンプト", limit=10)
+        with mock.patch("xkb_memory_service.xkb_jev.relevance", return_value=None):
+            out = self.store.knowledge_recall("ヘアメイク プロンプト", limit=10)
 
         got = {r["id"]: r for r in out["records"]}
         self.assertTrue(got[demoted_id].get("demoted"),

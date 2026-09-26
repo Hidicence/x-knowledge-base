@@ -72,7 +72,7 @@ class XkbAskRuntimeTests(unittest.TestCase):
             ), mock.patch.object(
                 self.xkb_ask, "build_answer", return_value="fixture answer"
             ), mock.patch.object(
-                sys, "argv", ["xkb_ask.py", "fixture query", "--json", "--env-file", str(env_file)]
+                sys, "argv", ["xkb_ask.py", "fixture query", "--legacy-search", "--json", "--env-file", str(env_file)]
             ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(self.xkb_ask.main(), 0)
 
@@ -95,7 +95,7 @@ class XkbAskRuntimeTests(unittest.TestCase):
         ), mock.patch.object(
             self.xkb_ask, "build_answer", side_effect=AssertionError("LLM must not run")
         ), mock.patch.object(
-            sys, "argv", ["xkb_ask.py", "fixture query"]
+            sys, "argv", ["xkb_ask.py", "fixture query", "--legacy-search"]
         ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(self.xkb_ask.main(), 2)
 

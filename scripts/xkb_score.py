@@ -267,17 +267,9 @@ def rank(results: list[dict]) -> list[dict]:
         # 下地板的減 1.0——_rrf 都在 0.01~0.02，減完必為負，穩定墊在所有上地板
         # 之下。這樣「照 unified_score 由大到小排」就等於回傳順序。
         above_floor = surv.pop("_above_floor", False)
-        # 再減 1.0 給帶 demoted 旗標的（「反覆被端上來、從來沒被用上」）。
-        #
-        # 這裡不判斷該不該降權，只照旗標排。判斷在 xkb_memory_service.tag_demoted，
-        # 因為那件事要比的是**定義「有沒有被用上」的那個餘弦地板**
-        # （xkb_relevance.min_similarity()，0.55），而這個模組裡的 RELEVANCE_FLOOR
-        # 是壓縮後的腿內尺度（0.35），兩者不是同一把尺。
-        #
-        # 2026-09-12 我先後用 _above_floor 和「語意腿過了 RELEVANCE_FLOOR」當豁免
-        # 條件，兩次都讓機制完全不會動：真實資料上那些從來沒被用上的卡片
-        # relevance 都在 0.50 左右，對 0.35 是過的、對 0.55 是不過的。這是本專案
-        # 記錄在案的尺度混用第四次（xkb-scale-mixing-bug-class）。
+        # Demotion is decided at the service merge boundary from explicit
+        # relevance verdicts. Ranking only applies the flag; retrieval scores
+        # cannot override a judgement measured on another scale.
         demoted = bool(surv.get("demoted"))
         surv["unified_score"] = round(surv.pop("_rrf", 0.0)
                                       - (0.0 if above_floor else 1.0)

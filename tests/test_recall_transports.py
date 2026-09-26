@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import os
+import subprocess
 import sqlite3
 import sys
 import tempfile
@@ -176,10 +179,103 @@ class RecallTransports(unittest.TestCase):
         self.assertFalse(assess(packet, expect_ids=["not-present"])["ok"])
 
     def test_bad_input_never_launches_a_worker(self):
-        with mock.patch.object(mcp.subprocess, "run") as run:
+        with mock.patch("xkb_recall.subprocess.run") as run:
             for query, limit in [("", 10), (None, 10), ("query", True), ("query", 51)]:
                 self.assertEqual(mcp._run_recall_structured(query, limit)["status"], "failed")
             run.assert_not_called()
+
+    def usage(self, namespace="private"):
+        with self.store.connect() as db:
+            return {r["record_id"]: dict(r) for r in db.execute(
+                "SELECT * FROM recall_usage WHERE namespace=?", (namespace,))}
+
+    def test_usage_distinguishes_verdicts_from_returned_after_limit(self):
+        self.judge.side_effect = lambda query, candidates: {key: .9 for key, _ in candidates}
+        candidates = self.store.catalog.search("Aurora deployment", 10)
+        with mock.patch.object(self.store.catalog, "search", return_value=candidates):
+            packet = self.http(limit=1)
+        rows = self.usage()
+        self.assertEqual(set(rows), {"answer", "noise"})
+        for key, row in rows.items():
+            self.assertEqual(row["judged_count"], 1)
+            self.assertEqual(row["relevant_count"], 1)
+            self.assertEqual(row["returned_count"], int(key == packet["records"][0]["id"]))
+        self.assertEqual(self.store.demoted_ids(after=1), set())
+
+    def test_usage_is_namespace_scoped_and_does_not_reinterpret_legacy(self):
+        self.store.record_usage([("answer", .9, True), ("noise", .1, False)] * 6)
+        self.assertEqual(self.store.demoted_ids(), set())
+        items = [{"id": "noise", "judge": .01}]
+        for _ in range(5):
+            self.store.record_recall_usage("private", items, [], {"status": "judged"})
+        self.assertEqual(self.store.demoted_ids(), {"noise"})
+        self.assertEqual(self.store.demoted_ids(namespace="other"), set())
+        self.store.record_recall_usage("other", [{"id": "noise", "judge": .9}], [], {"status": "judged"})
+        self.assertEqual(self.store.demoted_ids(), {"noise"})
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT injected_count FROM knowledge_usage WHERE record_id='answer'").fetchone()[0], 6)
+
+    def test_unknown_verdicts_and_duplicate_legs_do_not_manufacture_rejections(self):
+        items = [{"id": "same", "judge": .01}, {"id": "same", "judge": None}]
+        for status in ("judged", "unavailable", "off", "error"):
+            self.store.record_recall_usage("private", items, items[:1], {"status": status})
+        row = self.usage()["same"]
+        self.assertEqual((row["considered_count"], row["returned_count"], row["judged_count"]), (4, 4, 0))
+        items[1]["judge"] = .9
+        self.store.record_recall_usage("private", items, [], {"status": "judged"})
+        row = self.usage()["same"]
+        self.assertEqual((row["considered_count"], row["judged_count"], row["relevant_count"]), (5, 1, 1))
+
+    def test_rejections_are_recorded_and_revival_is_immediate(self):
+        # Just below the floor: display rounding must not turn this positive.
+        self.judge.side_effect = lambda query, candidates: {key: .0999 for key, _ in candidates}
+        for _ in range(5):
+            self.assertEqual(self.http()["records"], [])
+        self.assertEqual(self.store.demoted_ids(), {"answer", "noise"})
+        self.assertTrue(all(r["returned_count"] == 0 for r in self.usage().values()))
+        self.judge.side_effect = lambda query, candidates: {key: .9 for key, _ in candidates}
+        packet = self.http()
+        self.assertFalse(any(r.get("demoted") for r in packet["records"]))
+        self.assertEqual(self.store.demoted_ids(), set())
+
+    def test_usage_write_failure_does_not_break_recall(self):
+        with mock.patch.object(self.store, "record_recall_usage", side_effect=sqlite3.OperationalError("fixture")):
+            self.assertEqual(self.http()["count"], 2)
+
+    def test_router_cli_uses_shared_packet_and_reports_remote_failure(self):
+        env = {**self.env, "XKB_MEMORY_SERVICE_URL": self.url}
+        command = [sys.executable, str(ROOT / "scripts" / "recall_router.py"), "Aurora deployment", "--json"]
+        result = subprocess.run(command, env=env, capture_output=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet["results"], self.http()["records"])
+        self.assertEqual(packet["connection"]["transport"], "http")
+        self.server.auth = service.AuthPolicy({"tokens": {"fixture-token-at-least-16": {"namespace": "private"}}})
+        result = subprocess.run(command, env=env, capture_output=True, encoding="utf-8", timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HTTP 401", json.loads(result.stdout)["error"])
+
+    def test_ask_uses_remote_evidence_including_conversations_without_local_embedding_key(self):
+        import xkb_ask
+        session = self.store.open_session({"namespace": "private", "session_key": "fixture-ask"})
+        turn = self.store.start_turn({"session_id": session["session_id"], "query": "Aurora deployment"})
+        self.store.complete_turn(turn["turn_id"], {"query": "Aurora deployment", "answer": "Aurora deployment uses a canary first."})
+        env_file = Path(self.tmp.name) / "remote.env"
+        env_file.write_text(f"XKB_MEMORY_SERVICE_URL={self.url}\n", encoding="utf-8")
+        with mock.patch.object(sys, "argv", ["xkb_ask.py", "Aurora deployment", "--json", "--env-file", str(env_file)]), \
+                mock.patch.object(xkb_ask, "llm_call", return_value="fixture answer") as llm, \
+                contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(xkb_ask.main(), 0)
+        output = json.loads(stdout.getvalue())
+        self.assertIn("canary first", llm.call_args.args[0])
+        self.assertEqual(output["recall"]["connection"]["transport"], "http")
+        self.assertTrue(any(r["record_type"] == "conversation_trace" and r["source"] for r in output["evidence_refs"]))
+        self.assertNotIn("XKB_ENV_FILE", os.environ)
+        self.server.auth = service.AuthPolicy({"tokens": {"fixture-token-at-least-16": {"namespace": "private"}}})
+        with mock.patch.object(sys, "argv", ["xkb_ask.py", "Aurora deployment", "--env-file", str(env_file)]), \
+                mock.patch.object(xkb_ask, "llm_call") as llm, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(xkb_ask.main(), 2)
+            llm.assert_not_called()
 
     def test_store_transaction_closes_and_rolls_back(self):
         with self.store.connect() as db:

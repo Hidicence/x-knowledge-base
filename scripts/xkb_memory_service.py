@@ -43,6 +43,7 @@ import xkb_jev
 import xkb_relevance
 import xkb_text
 import xkb_score
+from xkb_evidence import fields, record_id, render_context
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -299,11 +300,10 @@ def judgeable_text(item: dict[str, Any]) -> str:
     一筆是完整的正確答案（展前拿名單、展中面對面、展後跟催），另外兩筆是
     harness 通知留下的殘骸。所以它需要被判斷，不是被略過、也不是被全丟。
     """
-    for fields in (("title", "summary"), ("query", "answer")):
-        text = " ".join(str(item.get(f) or "") for f in fields).strip()
-        if text:
-            return text
-    return ""
+    if not any(item.get(k) for k in ("title", "query", "section", "summary", "answer", "excerpt")):
+        return ""
+    title, body, _ = fields(item)
+    return f"{title} {body}".strip()
 
 
 def judge_relevance(query: str, records: list[dict[str, Any]], *,
@@ -339,7 +339,9 @@ def judge_relevance(query: str, records: list[dict[str, Any]], *,
             item["judge"] = None
             kept.append(item)
             continue
-        item["judge"] = round(float(score), 3)
+        # Keep the verdict's precision: rounding .0999 to .100 would make
+        # usage accounting call a filtered-out item relevant at the .10 floor.
+        item["judge"] = float(score)
         if score >= floor:
             kept.append(item)
     return kept, {"status": "judged", "floor": floor,
@@ -347,56 +349,25 @@ def judge_relevance(query: str, records: list[dict[str, Any]], *,
                   "dropped": len(records) - len(kept)}
 
 
-def tag_demoted(records: list[dict[str, Any]], sink: Any) -> None:
-    """標記「反覆被端上來、從來沒被用上」的知識，讓 xkb_score 把它排到最後。
+def tag_demoted(records: list[dict[str, Any]], sink: Any, *, relevant_ids: set[str] | None = None) -> None:
+    """Apply historical demotion after merging; a current relevant verdict revives.
 
-    **必須在合併點呼叫，不能掛在任何一條召回腿裡。** 每條腿都自己新建 dict
-    （語意腿、關鍵字腿、wiki 腿各有一份欄位清單），所以掛在其中一條上的標記會被
-    其他腿靜默繞過。第一版掛在語意腿尾端，真實資料驗證時就抓到：那張被撈出 8 次
-    的卡片這次是關鍵字腿撈到的，標記完全沒掛上。這是這個專案記錄在案的
-    「多寫入者一讀取者」——保護要放在讀的那一端。
-
-    寫成模組函式而不是 KnowledgeCatalog 的方法，因為降權跟「去哪裡找知識」無關：
-    它要的是使用統計，而那是 Store 的東西。掛在 catalog 上會讓每個 catalog 替身
-    都得多長一個方法才跑得起來——測試替身當場就撞到了。
-
-    標記而不是丟掉，而且標在通過過濾的記錄上——它照樣被 record_usage 量測。所以
-    它哪天真的過了一次地板，injected_count 變 1，下一次查詢這個標記就不會再出現，
-    降權自動解除（見 xkb_eviction.is_demoted）。
-
-    豁免條件是「這次的語意相似度過了 xkb_relevance.min_similarity()」——也就是
-    **定義「有沒有被用上」的那同一把尺**。那一次就是它的復活訊號，壓掉它等於在它
-    唯一有用的那次把它藏起來。
-
-    豁免條件放在這裡而不是 xkb_score，是因為那個模組裡的 RELEVANCE_FLOOR 是壓縮
-    後的腿內尺度（0.35），跟餘弦地板（0.55）不是同一把尺。2026-09-12 我先後拿
-    _above_floor 和「語意腿過了 RELEVANCE_FLOOR」當豁免條件，兩次都讓機制完全不會
-    動：真實資料上那些從來沒被用上的卡片 relevance 都在 0.50 左右，對 0.35 是過的、
-    對 0.55 是不過的。這是本專案記錄在案的尺度混用第四次。
-
-    取不到統計時什麼都不做：降權是最佳化，不是正確性。讀不到使用統計而讓召回失敗，
-    會比多排幾筆弱命中糟得多。
+    Scores from retrieval legs are not judge verdicts. Unknown verdicts do not
+    add rejections, but they do not erase earlier explicit rejections either.
+    Missing statistics must never break recall.
     """
+    for item in records:
+        item.pop("demoted", None)
     if sink is None or not records:
         return
     try:
         demoted = sink()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return
-    if not demoted:
-        return
-    floor = xkb_relevance.min_similarity()
-    # 先收集「這次在語意上過了地板」的 id，再套用——同一筆知識在 rank 之前會以
-    # 每條腿一份的樣子出現，只看當下這個 dict 的話，結果會取決於哪條腿排在前面。
-    cleared = {
-        str(item.get("id") or "")
-        for item in records
-        if str(item.get("score_scale") or "").endswith("_semantic")
-        and float(item.get("score") or 0.0) >= floor
-    }
+    cleared = relevant_ids or set()
     for item in records:
-        record_id = str(item.get("id") or "")
-        if record_id in demoted and record_id not in cleared:
+        key = record_id(item)
+        if key in demoted and key not in cleared:
             item["demoted"] = True
 
 
@@ -696,10 +667,8 @@ class KnowledgeCatalog:
         keys = {str(item.get("id") or ""): xkb_relevance.vector_key(str(item.get("id") or ""))
                 for item in records}
         if self.usage_sink is not None:
-            # Every candidate the backend surfaced, with the similarity it
-            # actually achieved. This is the only honest "was it any use"
-            # signal XKB has: a card retrieved many times that never once
-            # clears the floor is not earning its place.
+            # Legacy cosine observations remain comparable with historical
+            # reports. They do not measure final delivery or drive demotion.
             floor = xkb_relevance.min_similarity()
             try:
                 self.usage_sink([
@@ -846,7 +815,7 @@ class KnowledgeCatalog:
             retrieval_mode = "keyword_fallback"
             self._stats = filter_stats(card=filtered_cards, wiki=filtered_wiki)
             filtered_counts = dict(self._stats)
-        context = "\n\n".join(f"[{item['record_type']}] {item.get('title', item['id'])}\n{item.get('summary', '')}" for item in records)
+        context = render_context(records)
         return {
             "schema": SCHEMA, "query": query, "namespace": namespace,
             "request_namespace": namespace, "acl_policy": self._acl_policy(namespace),
@@ -1083,9 +1052,19 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS knowledge_usage_cold
                   ON knowledge_usage(injected_count, considered_count);
-                -- 影子模式：餘弦照常決定，jev 的判斷存在這裡供比對。
-                -- 兩個分數都留著，因為要回答的問題是「它們在哪裡不一致」，
-                -- 而不是「jev 說了什麼」。kept 是餘弦當下的決定。
+                -- Merged recall counts have different semantics from legacy
+                -- cosine passes. Historical counts are never backfilled here.
+                CREATE TABLE IF NOT EXISTS recall_usage (
+                  namespace TEXT NOT NULL,
+                  record_id TEXT NOT NULL,
+                  considered_count INTEGER NOT NULL DEFAULT 0,
+                  judged_count INTEGER NOT NULL DEFAULT 0,
+                  relevant_count INTEGER NOT NULL DEFAULT 0,
+                  returned_count INTEGER NOT NULL DEFAULT 0,
+                  last_considered_at TEXT NOT NULL,
+                  PRIMARY KEY(namespace, record_id)
+                );
+                -- Optional shadow mode: kept is the cosine decision, not Jev's.
                 CREATE TABLE IF NOT EXISTS relevance_shadow (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   at TEXT NOT NULL,
@@ -1120,15 +1099,41 @@ class Store:
         finally:
             db.close()
 
-    def record_usage(self, observations: list[tuple[str, float, bool]]) -> None:
-        """Accumulate how each record actually performed when retrieved.
+    def record_recall_usage(self, namespace: str, candidates: list[dict], returned: list[dict],
+                            judge: dict) -> None:
+        """Count unique merged candidates, explicit verdicts and returned evidence.
 
-        XKB has no task-success signal, so Memmy's reward model cannot be
-        copied honestly — a card about camera moves is not "successful" or
-        "failed". What can be measured is whether a record, once surfaced,
-        was ever relevant enough to be worth injecting. A record retrieved
-        many times that has never cleared the floor is dead weight, and that
-        is a real observation rather than an invented score.
+        Legacy knowledge_usage records cosine passes, not delivery. Keep it
+        intact; new decisions start with independent, namespace-scoped counters.
+        Unknown verdicts never count as rejections. Returned means in the API
+        packet, not proof that an agent used it in its answer.
+        """
+        groups: dict[str, list[dict]] = {}
+        for item in candidates:
+            key = record_id(item)
+            if key:
+                groups.setdefault(key, []).append(item)
+        delivered = {record_id(item) for item in returned}
+        with self.lock, self.connect() as db:
+            for key, items in groups.items():
+                scores = [i.get("judge") for i in items]
+                known = [s for s in scores if type(s) in (int, float)] if judge.get("status") == "judged" else []
+                relevant = any(s >= judge.get("floor", JUDGE_FLOOR) for s in known)
+                judged = bool(known) and (relevant or len(known) == len(scores))
+                db.execute("""INSERT INTO recall_usage(namespace, record_id, considered_count,
+                    judged_count, relevant_count, returned_count, last_considered_at)
+                    VALUES(?,?,1,?,?,?,?) ON CONFLICT(namespace,record_id) DO UPDATE SET
+                    considered_count=considered_count+1, judged_count=judged_count+excluded.judged_count,
+                    relevant_count=relevant_count+excluded.relevant_count,
+                    returned_count=returned_count+excluded.returned_count,
+                    last_considered_at=excluded.last_considered_at""",
+                    (namespace, key, int(judged), int(relevant), int(key in delivered), now()))
+
+    def record_usage(self, observations: list[tuple[str, float, bool]]) -> None:
+        """Retain legacy cosine-pass observations for historical reports.
+
+        The old injected_count name does not mean returned or used in an answer.
+        Current demotion uses record_recall_usage instead.
         """
         if not observations:
             return
@@ -1171,23 +1176,19 @@ class Store:
         except sqlite3.Error as err:
             xkb_failures.note("relevance shadow", err)
 
-    def demoted_ids(self, after: int = xkb_eviction.DEMOTE_AFTER_CONSIDERED) -> set[str]:
-        """被撈出來 after 次以上、一次都沒通過地板的 record_id。
-
-        規則跟門檻都在 xkb_eviction 裡，這邊只負責把它翻成 SQL——判斷不要有
-        第二份定義。knowledge_usage_cold 索引就是為這個 where 子句建的。
-        """
+    def demoted_ids(self, after: int = xkb_eviction.DEMOTE_AFTER_CONSIDERED, *, namespace: str = "private") -> set[str]:
+        """IDs repeatedly judged irrelevant in this namespace, never relevant."""
         try:
             with self.lock, self.connect() as db:
                 rows = db.execute(
-                    "SELECT record_id, considered_count, injected_count"
-                    "  FROM knowledge_usage WHERE injected_count = 0 AND considered_count >= ?",
-                    (max(1, int(after)),),
+                    "SELECT record_id, judged_count, relevant_count"
+                    "  FROM recall_usage WHERE namespace = ? AND relevant_count = 0 AND judged_count >= ?",
+                    (namespace, max(1, int(after))),
                 ).fetchall()
         except sqlite3.Error:
             return set()
         return {r["record_id"] for r in rows
-                if xkb_eviction.is_demoted(r["considered_count"], r["injected_count"],
+                if xkb_eviction.is_demoted(r["judged_count"], r["relevant_count"],
                                            after=after)}
 
     def cold_knowledge(self, min_considered: int = 5, limit: int = 100) -> dict[str, Any]:
@@ -1215,6 +1216,7 @@ class Store:
             "schema": SCHEMA,
             "read_only": True,
             "automatic_retirement": False,
+            "measurement_basis": "legacy_cosine_passes; not returned evidence or current demotion",
             "relevance_floor": xkb_relevance.min_similarity(),
             "min_considered": min_considered,
             "tracked_records": totals["tracked"] or 0,
@@ -1545,7 +1547,7 @@ class Store:
         # 降權要標在這裡——xkb_score.rank 是唯一的跨層比較點，也是唯一一處
         # 三條腿的記錄同時存在。標在任何一條腿裡都會被其他腿繞過（見
         # tag_demoted 的說明）。
-        tag_demoted(records, self.demoted_ids)
+        candidates = list(records)
         # jev 判斷接在這裡，排序之前：排序只需要處理真的相關的那些。
         # 一個旗標就能退回餘弦——XKB_JEV_DECIDE=0。
         judge_note: dict[str, Any] = {"status": "off"}
@@ -1555,7 +1557,15 @@ class Store:
             except Exception as err:  # noqa: BLE001
                 xkb_failures.note("jev judge", err)
                 judge_note = {"status": "error"}
+        relevant_ids = {record_id(item) for item in records
+                        if type(item.get("judge")) in (int, float)
+                        and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_note.get("status") == "judged" else set()
+        tag_demoted(records, lambda: self.demoted_ids(namespace=namespace), relevant_ids=relevant_ids)
         records = xkb_score.rank(records)
+        try:
+            self.record_recall_usage(namespace, candidates, records[:limit], judge_note)
+        except Exception as err:
+            xkb_failures.note("recall usage", err)
         # Conversation recall filters by namespace in SQL, so nothing is
         # dropped after the fact and its layer count is structurally zero.
         filtered_counts = dict(knowledge.get("filtered_counts", filter_stats()))
@@ -1570,10 +1580,7 @@ class Store:
                                 + [_unverified_warning(records)]) if w]
         for item in records:
             item.pop("index_unreadable", None)
-        context = "\n\n".join(
-            f"[{item.get('record_type', 'knowledge')}] {item.get('title') or item.get('query') or item.get('id')}\n{item.get('summary') or item.get('answer') or ''}"
-            for item in records[: max(1, min(limit, 50))]
-        )
+        context = render_context(records[:limit])
         return {
             "schema": SCHEMA,
             "query": query,

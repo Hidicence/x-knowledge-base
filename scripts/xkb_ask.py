@@ -47,6 +47,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_failures
 from runtime_config import runtime_env
+from xkb_recall import run_configured
+from xkb_evidence import fields, record_id, render_context
 
 def _resolve_gbrain_dir(settings: dict[str, str]) -> Path:
     """Resolve the non-credential gbrain workspace from portable settings."""
@@ -512,6 +514,53 @@ def print_chat(query: str, answer: str, wiki_hits: list[dict], card_hits: list[d
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def ask_shared(query: str, args) -> int:
+    """Answer from the exact shared recall packet, including conversation traces."""
+    try:
+        packet = run_configured(query, args.limit, env_file=args.env_file)
+    except Exception as exc:
+        print(f"無法召回知識：{exc}", file=sys.stderr)
+        return 2
+    records = packet["records"]
+    print(f"[召回] mode={packet['retrieval_mode']}, judge={packet.get('judge', {}).get('status', 'not_attempted')}, records={len(records)}", file=sys.stderr)
+    for warning in packet.get("warnings", []):
+        print(f"[XKB] {warning}", file=sys.stderr)
+    refs = [{"id": record_id(r), "record_type": r.get("record_type", "knowledge"),
+             "title": fields(r)[0], "source": fields(r)[2]} for r in records]
+    context = render_context(records)
+    if refs:
+        context += "\n\n證據來源（只引用實際使用的內容）：\n" + "\n".join(
+            f"- {r['title']}: {r['source'] or r['id']}" for r in refs)
+    previous = os.environ.get("XKB_ENV_FILE")
+    if args.env_file:
+        os.environ["XKB_ENV_FILE"] = str(args.env_file)
+    try:
+        prompt = CONTEXT_TMPL.format(context=context, query=query) if records else query
+        answer = _fix_simplified(_strip_internal_labels(llm_call(
+            prompt, system=PROMPT_ENRICHMENT if records else PROMPT_DIRECT)))
+    except RuntimeError as exc:
+        print(f"無法產生回答：{exc}", file=sys.stderr)
+        return 3
+    finally:
+        if args.env_file:
+            if previous is None:
+                os.environ.pop("XKB_ENV_FILE", None)
+            else:
+                os.environ["XKB_ENV_FILE"] = previous
+    if args.json:
+        print(json.dumps({"query": query, "answer": answer, "evidence_refs": refs,
+            "wiki_refs": [{"slug": Path(r["id"]).stem, "title": r["title"]} for r in refs if r["record_type"] == "wiki_topic"],
+            "card_refs": [{"title": r["title"], "url": r["source"]} for r in refs if r["record_type"] == "knowledge_card"],
+            "recall": packet}, ensure_ascii=False, indent=2))
+    else:
+        if args.format == "full":
+            print(f"# {query}\n")
+        print(answer)
+        if refs:
+            print("\n召回證據：" + " | ".join(f"{r['title']} → {r['source'] or r['id']}" for r in refs))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ask your XKB knowledge base")
     parser.add_argument("query", nargs="?", help="問題")
@@ -524,6 +573,8 @@ def main() -> int:
     parser.add_argument("--max-wiki",   type=int, default=MAX_WIKI_TOPICS)
     parser.add_argument("--max-cards",  type=int, default=MAX_CARDS)
     parser.add_argument("--env-file", help="明確指定 XKB dotenv runtime credential 檔案")
+    parser.add_argument("--limit", type=int, default=10, help="共用召回的回傳筆數（1–50）")
+    parser.add_argument("--legacy-search", action="store_true", help="使用舊的獨立 wiki/card 搜尋")
     args = parser.parse_args()
 
     query = (args.query or "").strip()
@@ -531,6 +582,12 @@ def main() -> int:
         print("請提供問題，例如：python3 scripts/xkb_ask.py \"RAG 的替代方案是什麼？\"",
               file=sys.stderr)
         return 1
+
+    # Per-layer switches explicitly select the old specialized search contract.
+    legacy = (args.legacy_search or args.no_gbrain or args.no_wiki or args.no_cards
+              or args.max_wiki != MAX_WIKI_TOPICS or args.max_cards != MAX_CARDS)
+    if not legacy:
+        return ask_shared(query, args)
 
     settings = runtime_env(args.env_file)
     api_key = settings.get("GEMINI_API_KEY", "")

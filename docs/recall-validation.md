@@ -1,10 +1,26 @@
 # Shared recall and connection checks
 
-MCP (`xkb_recall`) and HTTP (`POST /v1/recall`) use
+MCP (`xkb_recall`), the default `recall_router.py` and `xkb_ask.py` CLIs,
+and HTTP (`POST /v1/recall`) use
 `Store.knowledge_recall`: cards, wiki and conversation evidence go through the
-same namespace checks, relevance judge and ranking. The old conversation router
-remains a separate CLI for its continuity/action/contrarian presentation; it is
-no longer the MCP backend.
+same namespace checks, relevance judge and ranking. `xkb_evidence.py` defines
+the title/body/source fallbacks used by the service, judge, hook and ask client.
+Original evidence fields remain intact in the packet; MCP preserves it.
+
+The old continuity/action/contrarian presentation is available through
+`recall_router.py --legacy-router`; its Python `route()` API and classification-only
+`--dry-run` retain their previous behavior. `xkb_ask.py --legacy-search` selects
+its previous standalone wiki/card search. Existing per-layer options (`--no-wiki`,
+`--no-cards`, `--no-gbrain`, or non-default `--max-wiki`/`--max-cards`) also select
+that legacy search. They do not change the shared service's retrieval policy.
+Both default CLIs accept `--env-file` and `--limit` (1–50).
+
+The ask client generates an answer from the shared records, including conversation
+traces, and returns `evidence_refs` and the complete `recall` packet in JSON.
+`wiki_refs` and `card_refs` remain compatible subsets. These are available
+evidence, not proof that the generated answer used every item. A remote recall
+does not require local embedding credentials; answer generation still needs its
+configured LLM credentials. Recall failure stops before answer generation.
 
 ## Select the library
 
@@ -41,6 +57,40 @@ contains the full HTTP recall packet (`records`, `context`, `retrieval_mode`,
 The older `results` and `formatted_text` names remain aliases for compatibility.
 The old router-specific trigger classification is no longer returned: non-skipped
 calls use `trigger_class: knowledge`, `state: recall`.
+
+## Relevance and usage accounting
+
+Jev decides relevance at the merged recall boundary by default (`XKB_JEV_DECIDE=1`).
+The existing cosine gates still apply earlier in retrieval. `XKB_JEV_DECIDE=0`
+disables the final judge; optional shadow comparisons then provide observations
+for `xkb_jev_shadow_report.py`. A missing/failed judge is reported and retains
+the candidates; it is never counted as a negative verdict.
+
+`recall_usage` records one observation per namespace and evidence ID per call:
+
+| Counter | Meaning |
+| --- | --- |
+| `considered_count` | Reached the merged recall boundary, after upstream retrieval gates. |
+| `judged_count` | Received a decisive verdict: at least one positive leg, or every leg explicitly negative. |
+| `relevant_count` | At least one leg passed the final judge's relevance floor. |
+| `returned_count` | Survived filtering, ranking and the final limit into the recall packet. |
+
+Repeated legs with the same ID do not inflate counts. A missing verdict on one
+leg prevents treating a partly judged record as rejected. Returned evidence is
+not proof of network receipt, hook injection, answer citation or task success.
+
+Demotion requires at least five explicit judged observations and no positive
+verdict in that namespace. One positive verdict lifts it immediately, even if
+the result limit prevents returning the item. Unknown verdicts neither add
+rejections nor erase prior verdicts. Demotion affects rank, never deletes data.
+The unused gain/EMA experiment and its tests were retired; Git retains history.
+
+Existing `knowledge_usage` is preserved and still measures legacy cosine passes.
+Its historical `injected_count` and `ever_useful` names do **not** mean final
+delivery or answer use. The `/v1/knowledge/cold` report labels that basis explicitly.
+No historical count is backfilled into the new counters: current demotion starts
+fresh. Inspect it with `python scripts/xkb_evict_report.py --namespace private --json`.
+Rolling back the code leaves this additive SQLite table harmlessly in place.
 
 ## Check a real connection
 

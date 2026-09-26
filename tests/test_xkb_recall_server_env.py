@@ -53,7 +53,7 @@ class RecallServerEnvTests(unittest.TestCase):
             router.write_text("# fixture\n", encoding="utf-8")
             with mock.patch.dict(os.environ, env, clear=True), \
                     mock.patch.object(self.server, "RECALL_SCRIPT", router), \
-                    mock.patch.object(self.server.subprocess, "run", side_effect=fake_run):
+                    mock.patch("xkb_recall.subprocess.run", side_effect=fake_run):
                 self.server._run_recall_structured("fixture query")
         return captured["env"]
 

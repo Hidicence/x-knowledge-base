@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -36,6 +37,46 @@ def validate_packet(packet: object) -> dict:
             or not isinstance(packet.get("retrieval_mode"), str)):
         raise ValueError("incomplete XKB recall packet")
     return packet
+
+
+def run_configured(message: str, limit: int = 10, *, env_file=None, script=None) -> dict:
+    """Resolve runtime settings before importing path/provider modules in a worker."""
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("message must be a non-empty string")
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise ValueError("limit must be an integer between 1 and 50")
+    entry = Path(script) if script else Path(__file__).resolve()
+    if not entry.is_file():
+        raise RuntimeError(f"recall entry point not found at {entry}")
+    env = runtime_env(env_file)
+    if env_file:
+        env["XKB_ENV_FILE"] = str(env_file)
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+    try:
+        result = subprocess.run(
+            [sys.executable, str(entry), "--limit", str(limit), "--", message],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=50, env=env)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("knowledge recall timed out after 50s") from None
+    try:
+        packet = json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError("knowledge recall returned an invalid response") from None
+    if result.returncode != 0:
+        reason = packet.get("error", "knowledge recall failed") if isinstance(packet, dict) else "knowledge recall failed"
+        raise RuntimeError(reason)
+    return validate_packet(packet)
+
+
+def compatibility_aliases(packet: dict) -> dict:
+    """Preserve the old presentation keys without another routing decision."""
+    skipped = packet["retrieval_mode"] == "skipped"
+    return {**packet, "status": "ok", "error": "",
+            "results": packet["records"], "formatted_text": packet["context"],
+            "trigger_class": "suppress" if skipped else "knowledge",
+            "state": "suppress" if skipped else "recall",
+            "delivery_mode": "none" if skipped else "inline"}
 
 
 def recall(query: str, limit: int = 10) -> dict:

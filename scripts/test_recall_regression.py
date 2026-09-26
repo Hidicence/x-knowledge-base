@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-召回層回歸測試
+舊 router 特殊提示路徑的回歸測試；共用召回核心見 xkb_eval.py。
 
 分兩組，判定標準不同：
 
@@ -90,7 +90,7 @@ _SESSION_STATE = Path(tempfile.gettempdir()) / f"xkb-regression-session-{os.getp
 def run_one(message: str) -> tuple[dict, float]:
     started = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, str(ROUTER), "--json", message],
+        [sys.executable, str(ROUTER), "--legacy-router", "--json", "--", message],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         env={**os.environ, "XKB_SESSION_FILE": str(_SESSION_STATE)},
     )

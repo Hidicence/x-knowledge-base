@@ -14,14 +14,12 @@ Tool: xkb_recall
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from runtime_config import runtime_env
-from xkb_recall import validate_packet
+from xkb_recall import run_configured, compatibility_aliases
 
 RECALL_SCRIPT = Path(__file__).resolve().parent / "xkb_recall.py"
 
@@ -78,39 +76,11 @@ def _failure(reason: str) -> dict:
 
 
 def _run_recall_structured(message: str, limit: int = 10) -> dict:
-    """Run the shared core in a child with fully resolved runtime settings."""
-    if not isinstance(message, str) or not message.strip():
-        return _failure("message must be a non-empty string")
-    if type(limit) is not int or not 1 <= limit <= 50:
-        return _failure("limit must be an integer between 1 and 50")
-    if not RECALL_SCRIPT.exists():
-        return _failure(f"recall entry point not found at {RECALL_SCRIPT}")
+    """Expose the common runtime boundary through MCP's explicit error contract."""
     try:
-        child_env = runtime_env()
-        child_env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
-        result = subprocess.run(
-            [sys.executable, str(RECALL_SCRIPT), "--limit", str(limit), "--", message],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=50, env=child_env,
-        )
-    except subprocess.TimeoutExpired:
-        return _failure("knowledge recall timed out after 50s")
+        return compatibility_aliases(run_configured(message, limit, script=RECALL_SCRIPT))
     except Exception as exc:
-        return _failure(f"knowledge recall could not be launched: {exc}")
-    try:
-        packet = json.loads(result.stdout)
-        if result.returncode != 0:
-            return _failure(packet.get("error", "knowledge recall failed"))
-        packet = validate_packet(packet)
-    except (ValueError, AttributeError, TypeError):
-        return _failure("knowledge recall returned an invalid response")
-    skipped = packet["retrieval_mode"] == "skipped"
-    # Keep the old MCP aliases while preserving the complete service packet.
-    return {**packet, "status": "ok", "error": "",
-            "results": packet["records"], "formatted_text": packet["context"],
-            "trigger_class": "suppress" if skipped else "knowledge",
-            "state": "suppress" if skipped else "recall",
-            "delivery_mode": "none" if skipped else "inline"}
+        return _failure(str(exc))
 
 
 def _respond(req_id, result=None, error=None):

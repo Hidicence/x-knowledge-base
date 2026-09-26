@@ -131,6 +131,11 @@ python3 scripts/xkb_ask.py "你的問題" --format chat
 python3 scripts/xkb_ask.py "你的問題" --json
 ```
 
+預設與 MCP、HTTP 共用召回核心，包含卡片、Wiki 與對話證據。
+`--legacy-search` 保留舊問答檢索；分層選項（例如 `--no-gbrain`）也會選擇舊路徑。
+`recall_router.py` 預設也走共用核心，舊特殊路由使用 `--legacy-router`。
+環境設定、降權與統計定義見 [共用召回說明](docs/recall-validation.md)。
+
 ### ClawHub 發佈 / 同步
 
 ```bash
@@ -331,7 +336,7 @@ python3 scripts/migrate_schema.py             # 執行
 | `scripts/build_vector_index.py` | 建立 / 增量更新語意向量索引 |
 | `scripts/search_bookmarks.sh` | 關鍵字搜尋 |
 | `scripts/recall_for_conversation.py` | 對話主動召回（semantic + keyword fallback） |
-| `scripts/recall_router.py` | 召回路由：分類 → 派送到對應模組 |
+| `scripts/recall_router.py` | 共用召回 CLI；`--legacy-router` 保留舊分類與特殊提示 |
 | `scripts/xkb_ask.py` | 自然語言問答（返回有來源的回答） |
 | `scripts/xkb_recall_server.py` | MCP server，讓 AI agent 工具呼叫 xkb_recall |
 
@@ -448,16 +453,16 @@ with no caller is indistinguishable from one that was forgotten.
 
 | Tool | When you reach for it |
 | --- | --- |
-| `test_recall_regression.py` | After anything that touches recall. 15 cases: six that must find something, nine that must stay quiet. Isolates its own session state, so the result does not depend on what else ran today. |
+| `test_recall_regression.py` | After changes to the legacy router's special hints. 15 cases with isolated session state, explicitly using `--legacy-router`. For the shared core, use `xkb_eval.py` and `test_recall_transports.py`; see `docs/recall-validation.md`. |
 | `smoke_test_pipeline.sh` | After changing the wiki pipeline — checks each stage still produces what the next one expects. |
 | `xkb_synthesize_topic.py` | When a topic page has accumulated more bullets than anyone will read. Writes a review draft; `--apply` merges it back. The daily summary reports how many pages are past that point. |
 | `topic_guide_generator.py` | To produce a domain guide from the cards — terminology, reading order, where the consensus is and where it is missing. |
 | `setup_xbrain.sh` | Once per machine, to install the hybrid search runtime. |
 | `full_sync_v2.py` | To rebuild a workspace from its sources. |
 | `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
-| `xkb_jev_shadow_report.py` | To see where the fixed cosine floor and jev disagree about relevance. Recall still runs on cosine alone; jev's verdict on the same candidates is recorded in the background and this reads it back. Look at the two disagreement buckets — knowledge the floor dropped that jev says answers the question, and knowledge the floor kept that jev says does not. Reports only; it suggests no threshold, because picking one means judging who is right. |
+| `xkb_jev_shadow_report.py` | Read historical or optional shadow comparisons between cosine and Jev. Jev now decides relevance at the merged recall boundary by default (`XKB_JEV_DECIDE=1`); shadow collection is available when that final judge is off. This report does not describe current delivery counts. |
 | `xkb_recategorize.py` | When the daily report says knowledge is sitting outside the taxonomy. Reclassifies those items with the existing LLM classifier and rebuilds the index; previews by default, `--apply` writes. A genuinely new category is not opened on one card: the classifier's proposal is counted, and the category opens only once the same name has been proposed `PROMOTE_AFTER` times — the same rule the wiki topic layer already uses. Cards waiting on a proposal keep the proposed name and get gathered when it opens. Cards whose content is broken (an LLM template leaked into the file, a failed fetch) are listed separately and left alone — classifying one only makes a broken card look fine. |
-| `xkb_evict_report.py` | To see which knowledge is currently demoted — retrieved repeatedly, never once relevant. Reports only; the demotion itself is automatic and lifts itself the moment an item clears the floor once. Read it to check the mechanism is not demoting anything good, not to approve anything. |
+| `xkb_evict_report.py` | Read current namespace-scoped demotion from `recall_usage`: at least five explicit judge verdicts, never positive. A positive verdict lifts demotion immediately; judge outages do not count as rejection. Returned evidence and legacy cosine passes are separate measurements. |
 
 ## Maintenance Verification
 

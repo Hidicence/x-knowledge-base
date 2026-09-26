@@ -2,7 +2,7 @@
 """
 Recall Router — Active Recall Layer Phase 1.1
 
-統一入口：使用者訊息 → 分類 → routing → 執行 → structured output + telemetry
+CLI 預設呼叫共用 Knowledge Service；--legacy-router 或 route() 保留舊的分類與特殊提示。
 
 輸出 schema (JSON):
 {
@@ -25,7 +25,7 @@ Recall Router — Active Recall Layer Phase 1.1
 
 Usage:
   python3 recall_router.py "XKB 下一步是什麼"
-  python3 recall_router.py "AI SEO 值不值得做" --format side_hint
+  python3 recall_router.py "AI SEO 值不值得做" --legacy-router --format full
   python3 recall_router.py "query" --json
   python3 recall_router.py "query" --dry-run
 """
@@ -581,6 +581,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Show routing decision without executing recall")
     parser.add_argument("--format", choices=["chat", "full"], default="chat")
+    parser.add_argument("--legacy-router", action="store_true",
+                        help="Use the old continuity/action/contrarian routing")
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--env-file")
     args = parser.parse_args()
 
     message = args.message or sys.stdin.read().strip()
@@ -588,7 +592,18 @@ def main() -> int:
         print("Usage: recall_router.py <message>")
         return 1
 
-    result = route(message, dry_run=args.dry_run)
+    if args.legacy_router or args.dry_run:
+        result = route(message, dry_run=args.dry_run)
+    else:
+        from xkb_recall import run_configured, compatibility_aliases
+        try:
+            result = compatibility_aliases(run_configured(message, args.limit, env_file=args.env_file))
+        except Exception as exc:
+            if args.as_json:
+                print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
+            else:
+                print(f"Recall failed: {exc}", file=sys.stderr)
+            return 1
 
     if args.as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -600,7 +615,8 @@ def main() -> int:
         print(f"query   : {result['query']}")
         print(f"delivery: {result['delivery_mode']}")
         print(f"results : {len(result['results'])}")
-        print(f"conf    : {result['confidence']:.2f}")
+        if "confidence" in result:
+            print(f"conf    : {result['confidence']:.2f}")
         print()
 
     output = result.get("formatted_text", "")

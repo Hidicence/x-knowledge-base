@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from conversation_state_parser import is_harness_text
+from xkb_evidence import fields
 
 DEFAULT_URL = "http://127.0.0.1:18972"
 TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_TIMEOUT", "6"))
@@ -133,9 +134,8 @@ def render(records: list[dict]) -> str:
         "",
     ]
     for item in records:
-        title = str(item.get("title") or item.get("query") or item.get("id") or item.get("trace_id") or "").strip()
-        summary = " ".join(str(item.get("summary") or item.get("answer") or "").split())[:600]
-        source = str(item.get("source_url") or item.get("trace_id") or "").strip()
+        title, body, source = fields(item)
+        summary = " ".join(body.split())[:600]
         lines.append(f"- [{item.get('record_type', 'knowledge')}] {title}")
         if summary:
             lines.append(f"  {summary}")
