@@ -61,15 +61,18 @@ def assess(packet: dict, *, expect_ids: list[str] = (), require_semantic: bool =
     missing = sorted(set(expect_ids) - set(ids))
     if missing:
         problems.append("expected evidence missing: " + ", ".join(missing))
-    if require_semantic and packet["retrieval_mode"] != "xbrain_hybrid":
+    semantic_used = packet.get("semantic_backend", {}).get("used", packet["retrieval_mode"] in {"xbrain_hybrid", "wiki_semantic"})
+    if require_semantic and not semantic_used:
         problems.append("semantic retrieval was not used")
     judge = packet.get("judge", {"status": "not_attempted"})
     if require_judge and judge.get("status") != "judged":
         problems.append("relevance judge did not run")
     warnings = list(packet.get("warnings", []))
     degraded = packet["retrieval_mode"] != "skipped" and (
-        packet["retrieval_mode"] != "xbrain_hybrid"
-        or judge.get("status") in {"unavailable", "error", "off"})
+        (not semantic_used and packet["retrieval_mode"] not in {"keyword", "conversation_only"})
+        or judge.get("status") in {"unavailable", "error", "off"}
+        or any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
+               for s in packet.get("backends", {}).values()))
     if judge.get("status") in {"unavailable", "error", "off"}:
         warnings.append("relevance judge: " + judge["status"])
     if packet["count"] == 0 and packet["retrieval_mode"] != "skipped":
@@ -77,7 +80,7 @@ def assess(packet: dict, *, expect_ids: list[str] = (), require_semantic: bool =
     return {"ok": not problems, "status": "failed" if problems else "degraded" if degraded else "ready",
             "checks": {"initialize": True, "tools_list": True,
             "tools_call": True}, "connection": packet.get("connection"),
-            "retrieval_mode": packet["retrieval_mode"], "judge": judge,
+            "retrieval_mode": packet["retrieval_mode"], "judge": judge, "backends": packet.get("backends", {}),
             "count": packet["count"], "record_ids": ids, "warnings": warnings,
             "problems": problems,
             "scope": "fresh MCP subprocess; does not prove an already-open agent refreshed its tools"}

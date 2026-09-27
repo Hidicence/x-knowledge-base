@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _isolation import isolated_env
+from xkb_evidence import identity_key, identity_source
 import xkb_memory_service as service
 import xkb_recall_server as mcp
 from xkb_doctor import probe, assess
@@ -46,10 +47,15 @@ class RecallTransports(unittest.TestCase):
         self.store.catalog.index_file = index
         self.store.catalog.cards_dir = data / "cards"
         self.store.catalog.wiki_topics_dir = data / "x-knowledge-base" / "wiki" / "topics"
-        for name in ("_semantic_search", "_wiki_search"):
-            patch = mock.patch.object(self.store.catalog, name, return_value=[])
-            patch.start()
-            self.addCleanup(patch.stop)
+        def unavailable(query, **kwargs):
+            kwargs["diagnostics"].update(available=False, attempted=False, used=False, status="unavailable")
+            return []
+        patch = mock.patch.object(service, "xbrain_query", side_effect=unavailable)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch("continuity_recall.recall_semantic", return_value=None)
+        patch.start()
+        self.addCleanup(patch.stop)
         patch = mock.patch.object(service.xkb_jev, "relevance", return_value=None)
         self.judge = patch.start()
         self.addCleanup(patch.stop)
@@ -69,9 +75,9 @@ class RecallTransports(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
 
-    def http(self, query="Aurora deployment", limit=10):
+    def http(self, query="Aurora deployment", limit=10, options=None):
         req = Request(self.url + "/v1/recall", method="POST",
-                      data=json.dumps({"query": query, "limit": limit}).encode(),
+                      data=json.dumps({"query": query, "limit": limit, "options": options}).encode(),
                       headers={"Content-Type": "application/json"})
         with urlopen(req, timeout=5) as response:
             return json.load(response)
@@ -186,7 +192,7 @@ class RecallTransports(unittest.TestCase):
 
     def usage(self, namespace="private"):
         with self.store.connect() as db:
-            return {r["record_id"]: dict(r) for r in db.execute(
+            return {identity_source(r["record_id"]): dict(r) for r in db.execute(
                 "SELECT * FROM recall_usage WHERE namespace=?", (namespace,))}
 
     def test_usage_distinguishes_verdicts_from_returned_after_limit(self):
@@ -208,10 +214,10 @@ class RecallTransports(unittest.TestCase):
         items = [{"id": "noise", "judge": .01}]
         for _ in range(5):
             self.store.record_recall_usage("private", items, [], {"status": "judged"})
-        self.assertEqual(self.store.demoted_ids(), {"noise"})
+        self.assertEqual(self.store.demoted_ids(), {identity_key({"id": "noise"})})
         self.assertEqual(self.store.demoted_ids(namespace="other"), set())
         self.store.record_recall_usage("other", [{"id": "noise", "judge": .9}], [], {"status": "judged"})
-        self.assertEqual(self.store.demoted_ids(), {"noise"})
+        self.assertEqual(self.store.demoted_ids(), {identity_key({"id": "noise"})})
         with self.store.connect() as db:
             self.assertEqual(db.execute("SELECT injected_count FROM knowledge_usage WHERE record_id='answer'").fetchone()[0], 6)
 
@@ -231,7 +237,7 @@ class RecallTransports(unittest.TestCase):
         self.judge.side_effect = lambda query, candidates: {key: .0999 for key, _ in candidates}
         for _ in range(5):
             self.assertEqual(self.http()["records"], [])
-        self.assertEqual(self.store.demoted_ids(), {"answer", "noise"})
+        self.assertEqual(self.store.demoted_ids(), {identity_key({"id": key}) for key in ("answer", "noise")})
         self.assertTrue(all(r["returned_count"] == 0 for r in self.usage().values()))
         self.judge.side_effect = lambda query, candidates: {key: .9 for key, _ in candidates}
         packet = self.http()
@@ -288,6 +294,64 @@ class RecallTransports(unittest.TestCase):
                 raise RuntimeError("abort")
         with self.store.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM fixture").fetchone()[0], 0)
+
+    def test_layer_options_are_enforced_by_http_and_the_local_worker(self):
+        from xkb_recall import run_configured
+        topic_dir = self.store.catalog.wiki_topics_dir
+        topic_dir.mkdir(parents=True)
+        (topic_dir / "aurora.md").write_text("# Aurora deployment\nAurora deployment guide", encoding="utf-8")
+        options = {"cards": False, "semantic": False, "conversations": False, "max_wiki": 1}
+        packet = self.http(options=options)
+        self.assertEqual([r["record_type"] for r in packet["records"]], ["wiki_topic"])
+        self.assertEqual(packet["retrieval_mode"], "keyword")
+        self.assertEqual(packet["backends"]["cards"]["status"], "disabled")
+        self.assertFalse(packet["backends"]["conversation"]["attempted"])
+        for endpoint in ("", self.url):
+            with mock.patch.dict(os.environ, {"XKB_MEMORY_SERVICE_URL": endpoint}):
+                actual = run_configured("Aurora deployment", options=options)
+            self.assertEqual(actual["records"], packet["records"])
+            self.assertEqual(actual["options"], packet["options"])
+        without_wiki = self.http(options={"wiki": False, "semantic": False, "max_cards": 1})
+        self.assertEqual([r["record_type"] for r in without_wiki["records"]], ["knowledge_card"])
+
+    def test_invalid_or_unacknowledged_options_never_silently_change_search(self):
+        from urllib.error import HTTPError
+        from xkb_recall import run_configured
+        for options in ({"wiki": "false"}, {"max_cards": -1}, {"max_wiki": True}, {"unknown": True}):
+            with self.assertRaises(HTTPError) as exc:
+                self.http(options=options)
+            self.assertEqual(exc.exception.code, 400)
+        packet = self.http()
+        packet.pop("options")
+        with mock.patch.object(self.store, "knowledge_recall", return_value=packet), \
+                mock.patch.dict(os.environ, {"XKB_MEMORY_SERVICE_URL": self.url}):
+            with self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+                run_configured("Aurora deployment", options={"wiki": False})
+
+    def test_wiki_only_results_do_not_claim_the_card_backend_worked(self):
+        from types import SimpleNamespace
+        hit = SimpleNamespace(source_file="wiki/topics/a.md", section="A", excerpt="Aurora deployment guide",
+                              source_type="wiki_semantic", score=.8, url="")
+        with mock.patch("continuity_recall.recall_semantic", return_value=[hit]):
+            packet = self.http()
+        self.assertEqual(packet["retrieval_mode"], "wiki_semantic")
+        self.assertFalse(packet["backends"]["cards"]["used"])
+        self.assertTrue(packet["backends"]["wiki"]["used"])
+        self.assertEqual(packet["records"][0]["section"], "A")
+        self.assertEqual(assess(packet, require_semantic=True)["status"], "degraded")
+
+    def test_empty_failed_and_disabled_sources_are_distinct_and_reset(self):
+        from xkb_memory_service import KnowledgeCatalog
+        with mock.patch("continuity_recall.recall_semantic", return_value=[]):
+            self.assertEqual(self.http()["backends"]["wiki"]["status"], "empty")
+        with mock.patch("continuity_recall.recall_semantic", side_effect=RuntimeError("fixture")):
+            self.assertEqual(self.http()["backends"]["wiki"]["status"], "error")
+        packet = self.http(options={"semantic": False})
+        self.assertEqual(packet["backends"]["wiki"]["status"], "disabled")
+        with mock.patch.object(self.store, "recall", side_effect=sqlite3.OperationalError("fixture")):
+            packet = self.http()
+        self.assertEqual(packet["backends"]["conversation"]["status"], "error")
+        self.assertEqual(packet["count"], 2)
 
 
 if __name__ == "__main__":

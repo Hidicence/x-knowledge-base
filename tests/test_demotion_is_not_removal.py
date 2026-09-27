@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import xkb_eviction as ev  # noqa: E402
+from xkb_evidence import identity_key
 import xkb_score  # noqa: E402
 from xkb_memory_service import KnowledgeCatalog, Store, tag_demoted  # noqa: E402
 
@@ -100,13 +101,13 @@ class RevivalUsesExplicitVerdicts(unittest.TestCase):
     def test_retrieval_scores_do_not_override_rejections(self):
         for scale, score in (("card_semantic", .99), ("card_keyword", 99)):
             records = [{"id": "noise", "score": score, "score_scale": scale}]
-            tag_demoted(records, lambda: {"noise"}, relevant_ids=set())
+            tag_demoted(records, lambda: {identity_key({"id": "noise"})}, relevant_ids=set())
             self.assertTrue(records[0]["demoted"])
 
     def test_current_relevance_clears_all_legs_and_stale_flags(self):
         records = [{"id": "noise", "score_scale": scale, "demoted": True}
                    for scale in ("card_keyword", "card_semantic")]
-        tag_demoted(records, lambda: {"noise"}, relevant_ids={"noise"})
+        tag_demoted(records, lambda: {identity_key({"id": "noise"})}, relevant_ids={identity_key({"id": "noise"})})
         self.assertFalse(any(r.get("demoted") for r in records))
         records[0]["demoted"] = True
         tag_demoted(records, lambda: set())
@@ -133,7 +134,7 @@ class RevivalNeedsNoIntervention(unittest.TestCase):
         self.assertEqual(self.store.demoted_ids(), set(),
                          "還沒到門檻就降權的話，保守的意義就沒了")
         self._consider("cards/noise.md", 0.51, False, 1)
-        self.assertEqual(self.store.demoted_ids(), {"cards/noise.md"})
+        self.assertEqual(self.store.demoted_ids(), {identity_key({"id": "cards/noise.md"})})
 
     def test_one_real_hit_lifts_the_demotion_with_nobody_deciding(self):
         """被降權之後還是會被量測，所以它自己能回來。
@@ -143,7 +144,7 @@ class RevivalNeedsNoIntervention(unittest.TestCase):
         """
         self._consider("cards/borderline.md", 0.53, False,
                        ev.DEMOTE_AFTER_CONSIDERED)
-        self.assertIn("cards/borderline.md", self.store.demoted_ids())
+        self.assertIn(identity_key({"id": "cards/borderline.md"}), self.store.demoted_ids())
 
         # 有一天某個問法讓它通過地板。
         self._consider("cards/borderline.md", 0.71, True, 1)
@@ -232,7 +233,7 @@ class LosingTheStatsMustNotBreakRecall(unittest.TestCase):
 
     def test_it_tags_only_the_matching_record(self):
         records = [{"id": "cards/noise.md"}, {"id": "cards/good.md"}]
-        tag_demoted(records, lambda: {"cards/noise.md"})
+        tag_demoted(records, lambda: {identity_key({"id": "cards/noise.md"})})
         self.assertTrue(records[0].get("demoted"))
         self.assertNotIn("demoted", records[1])
 

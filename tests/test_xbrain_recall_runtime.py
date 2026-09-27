@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,23 @@ from _isolation import isolated_env, needs_posix_exec
 
 
 class XbrainRecallRuntimeTests(unittest.TestCase):
+    def test_backend_diagnostics_distinguish_empty_failure_and_timeout(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import xbrain_recall as xb
+        outcomes = [(subprocess.CompletedProcess([], 0, "[]", ""), "empty"),
+                    (subprocess.CompletedProcess([], 7, "", "secret"), "error"),
+                    (subprocess.CompletedProcess([], 0, "unexpected output", ""), "invalid_response"),
+                    (subprocess.TimeoutExpired("fixture", 1), "timeout")]
+        with mock.patch.object(xb, "_resolve_gbrain_dir", return_value=Path("fixture")):
+            for outcome, expected in outcomes:
+                state = {}
+                kwargs = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+                with mock.patch.object(xb.subprocess, "run", **kwargs), mock.patch.object(xb.xkb_failures, "note"):
+                    self.assertEqual(xb.xbrain_query("fixture", diagnostics=state), [])
+                self.assertEqual(state["status"], expected)
+                self.assertTrue(state["attempted"])
+                self.assertNotIn("secret", str(state))
+
     def make_fixture(self, root: Path) -> tuple[Path, Path]:
         gbrain = root / "gbrain"
         (gbrain / "src").mkdir(parents=True)

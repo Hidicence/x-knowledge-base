@@ -127,6 +127,7 @@ def xbrain_query(
     no_expand: bool = True,
     semantic: bool = True,
     env_file: str | Path | None = None,
+    diagnostics: dict | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run hybrid search and return structured results.
@@ -134,10 +135,13 @@ def xbrain_query(
 
     Result keys: slug, title, type, chunk_text, score, source_url, stale
     """
+    state = diagnostics if diagnostics is not None else {}
+    state.update(available=False, attempted=False, used=False, status="unavailable")
     settings = runtime_env(env_file) if env_file is not None else _RUNTIME_ENV
     gbrain_dir = _resolve_gbrain_dir(settings)
     if gbrain_dir is None:
         return []
+    state.update(available=True, attempted=True)
 
     cmd = [BUN, "run", str(gbrain_dir / "src" / "cli.ts")]
     cmd += ["query", query, "--json"]
@@ -158,21 +162,25 @@ def xbrain_query(
             timeout=int(os.getenv("XKB_XBRAIN_TIMEOUT", "30")),
         )
     except subprocess.TimeoutExpired as err:
+        state["status"] = "timeout"
         # 逾時、找不到 bun、非零離開碼——三種都回空陣列，而空陣列的意思是
         # 「這個主題我們沒有知識」。它們其實是「問不到」。這正是下面那段
         # 註解在講的同一件事，只是原本只有最後一種會留下記錄。
         xkb_failures.note("semantic recall (xbrain) 逾時", err)
         return []
     except FileNotFoundError as err:
+        state["status"] = "unavailable"
         xkb_failures.note("semantic recall (xbrain)：PATH 上沒有 bun", err)
         return []
     except Exception as err:
+        state["status"] = "error"
         # 語意搜尋的後端掛掉，跟「這個主題我們沒有知識」是兩件事。
         # 2026-05-04 的十二週靜默故障，就是因為這兩者長得一模一樣。
         xkb_failures.note("semantic recall (xbrain)", err)
         return []
 
     if result.returncode != 0:
+        state["status"] = "error"
         # 只留離開碼，不要把 stderr 貼進來：後端的錯誤訊息會回音請求內容，
         # 而請求裡有憑證。tests/test_xbrain_recall_runtime.py 的
         # test_failed_backend_does_not_echo_credential 就是釘這件事的。
@@ -180,6 +188,7 @@ def xbrain_query(
         return []
 
     raw = result.stdout.strip()
+    state["status"] = "empty"
     if not raw or raw == "No results.":
         return []
 
@@ -189,7 +198,12 @@ def xbrain_query(
         # gbrain v0.42+ 移除了 query --json，輸出為「[分數] slug -- 內文」行格式
         items = _parse_line_format(raw)
         if not items:
+            state["status"] = "invalid_response"
             return []
+
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        state["status"] = "invalid_response"
+        return []
 
     results = []
     for item in items:
@@ -209,6 +223,7 @@ def xbrain_query(
             "source_url": source_url,
             "stale": item.get("stale", False),
         })
+    state.update(used=bool(results), status="used" if results else "empty")
     return results
 
 

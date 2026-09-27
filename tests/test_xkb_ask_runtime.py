@@ -1,128 +1,48 @@
+"""Ask is an answer client; retrieval options cannot select a second search stack."""
 from __future__ import annotations
-
 import contextlib
-import importlib
 import io
-import os
+import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _isolation import clean_env
-
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import xkb_ask as ask
 
 
-class XkbAskRuntimeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.xkb_ask = importlib.import_module("xkb_ask")
+class AskRuntime(unittest.TestCase):
+    def test_legacy_switches_use_the_shared_contract(self):
+        packet = {"records": [], "retrieval_mode": "keyword", "query": "fixture", "count": 0}
+        args = ["xkb_ask", "fixture", "--json", "--legacy-search", "--no-wiki",
+                "--no-gbrain", "--max-cards", "2", "--env-file", "fixture.env"]
+        with mock.patch.object(sys, "argv", args), mock.patch.object(ask, "run_configured", return_value=packet) as run, \
+                mock.patch.object(ask, "llm_call", return_value="answer"), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(ask.main(), 0)
+        self.assertFalse(run.call_args.kwargs["options"]["wiki"])
+        self.assertFalse(run.call_args.kwargs["options"]["semantic"])
+        self.assertEqual(run.call_args.kwargs["options"]["max_cards"], 2)
+        self.assertEqual(run.call_args.kwargs["env_file"], "fixture.env")
+        self.assertIn("--legacy-search", err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["answer"], "answer")
 
-    def test_process_environment_takes_precedence_over_explicit_env_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            env_file = Path(tmp) / "explicit.env"
-            env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
-            with mock.patch.dict(
-                os.environ,
-                {**clean_env(), "GEMINI_API_KEY": "process-placeholder"},
-                clear=True,
-            ):
-                self.assertEqual(self.xkb_ask.load_env_key(env_file), "process-placeholder")
+    def test_invalid_quota_stops_before_retrieval(self):
+        for value in ("-1", "51"):
+            with mock.patch.object(sys, "argv", ["xkb_ask", "fixture", "--max-wiki", value]), \
+                    mock.patch.object(ask, "run_configured") as run, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    ask.main()
+                run.assert_not_called()
 
-    def test_explicit_env_file_supplies_credential(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            env_file = Path(tmp) / "explicit.env"
-            env_file.write_text("GEMINI_API_KEY=file-placeholder\n", encoding="utf-8")
-            with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
-                self.assertEqual(self.xkb_ask.load_env_key(env_file), "file-placeholder")
-
-    def test_missing_explicit_env_file_is_actionable_before_search(self) -> None:
-        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True):
-            with self.assertRaisesRegex(FileNotFoundError, "XKB env file not found"):
-                self.xkb_ask.load_env_key("/missing/xkb-runtime.env")
-
-    def test_cli_keeps_noncredential_gbrain_path_and_forwards_env_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            env_file = root / "runtime.env"
-            env_file.write_text("GEMINI_API_KEY=fixture-key\n", encoding="utf-8")
-            gbrain = root / "portable-gbrain"
-            (gbrain / "src").mkdir(parents=True)
-            (gbrain / "src" / "cli.ts").write_text("// isolated fixture\n", encoding="utf-8")
-            observed: dict[str, object] = {}
-
-            def fake_gbrain(query: str, limit: int, env_file: str | Path | None = None):
-                observed["query"] = query
-                observed["limit"] = limit
-                observed["env_file"] = env_file
-                return []
-
-            with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
-                self.xkb_ask, "_resolve_gbrain_dir", return_value=gbrain
-            ) as resolve_gbrain_dir, mock.patch.object(
-                self.xkb_ask, "search_wiki_topics", return_value=([], 0.0)
-            ), mock.patch.object(
-                self.xkb_ask, "search_cards_gbrain", side_effect=fake_gbrain
-            ), mock.patch.object(
-                self.xkb_ask, "build_answer", return_value="fixture answer"
-            ), mock.patch.object(
-                sys, "argv", ["xkb_ask.py", "fixture query", "--legacy-search", "--json", "--env-file", str(env_file)]
-            ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(self.xkb_ask.main(), 0)
-
-            self.assertEqual(observed["env_file"], str(env_file))
-            settings, = resolve_gbrain_dir.call_args.args
-            self.assertEqual(settings.get("GEMINI_API_KEY"), "fixture-key")
-            # 除了憑證與作業系統自己要用的那幾個，不該多帶任何東西過去。
-            # 名字要轉大寫再比：Windows 的 os.environ 會把鍵 normalise 成大寫，
-            # SystemRoot 進去、SYSTEMROOT 出來。
-            extra = {key.upper() for key in settings} - {key.upper() for key in clean_env()}
-            self.assertEqual(extra, {"GEMINI_API_KEY"})
-
-    def test_cli_fails_fast_without_credential_before_search_or_llm(self) -> None:
-        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
-            self.xkb_ask, "search_wiki_topics", side_effect=AssertionError("search must not run")
-        ), mock.patch.object(
-            self.xkb_ask, "search_cards", side_effect=AssertionError("cards must not run")
-        ), mock.patch.object(
-            self.xkb_ask, "search_cards_gbrain", side_effect=AssertionError("gbrain search must not run")
-        ), mock.patch.object(
-            self.xkb_ask, "build_answer", side_effect=AssertionError("LLM must not run")
-        ), mock.patch.object(
-            sys, "argv", ["xkb_ask.py", "fixture query", "--legacy-search"]
-        ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stderr:
-            self.assertEqual(self.xkb_ask.main(), 2)
-
-        self.assertIn("GEMINI_API_KEY", stderr.getvalue())
-
-    def test_keyword_mode_runs_without_an_embedding_credential(self) -> None:
-        """--no-gbrain is the documented keyword path and needs no Gemini key."""
-        with mock.patch.dict(os.environ, {**clean_env(), }, clear=True), mock.patch.object(
-            self.xkb_ask, "search_wiki_topics", return_value=([], 0.0)
-        ), mock.patch.object(
-            self.xkb_ask, "search_cards", return_value=[]
-        ) as search_cards, mock.patch.object(
-            self.xkb_ask, "search_cards_gbrain",
-            side_effect=AssertionError("semantic search must not run"),
-        ), mock.patch.object(
-            self.xkb_ask, "build_answer", return_value="fixture answer"
-        ), mock.patch.object(
-            sys, "argv", ["xkb_ask.py", "fixture query", "--no-gbrain", "--json"]
-        ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(self.xkb_ask.main(), 0)
-
-        self.assertTrue(search_cards.called)
-
-    def test_active_source_has_no_private_host_credential_fallback(self) -> None:
-        source = (SCRIPTS / "xkb_ask.py").read_text(encoding="utf-8")
-        for forbidden in ("OPENCLAW_JSON", "openclaw.json", "$HOME/.openclaw", "/root/.openclaw"):
-            self.assertNotIn(forbidden, source)
+    def test_no_cards_remains_an_explicit_remote_option(self):
+        with mock.patch.object(sys, "argv", ["xkb_ask", "fixture", "--no-cards"]), \
+                mock.patch.object(ask, "run_configured", side_effect=RuntimeError("HTTP 401")) as run, \
+                mock.patch.object(ask, "llm_call") as llm, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ask.main(), 2)
+        self.assertFalse(run.call_args.kwargs["options"]["cards"])
+        llm.assert_not_called()
 
 
 if __name__ == "__main__":

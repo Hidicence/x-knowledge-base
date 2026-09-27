@@ -9,11 +9,28 @@ Original evidence fields remain intact in the packet; MCP preserves it.
 
 The old continuity/action/contrarian presentation is available through
 `recall_router.py --legacy-router`; its Python `route()` API and classification-only
-`--dry-run` retain their previous behavior. `xkb_ask.py --legacy-search` selects
-its previous standalone wiki/card search. Existing per-layer options (`--no-wiki`,
-`--no-cards`, `--no-gbrain`, or non-default `--max-wiki`/`--max-cards`) also select
-that legacy search. They do not change the shared service's retrieval policy.
+`--dry-run` retain their previous behavior. Its special hints have not been
+removed. The ask client's standalone search and answer branches have been retired;
+`--legacy-search` prints a migration notice and uses the common core.
 Both default CLIs accept `--env-file` and `--limit` (1–50).
+
+`xkb_ask.py --no-wiki`, `--no-cards`, `--no-conversations`, `--no-gbrain`,
+`--max-wiki` and `--max-cards` now send validated options to the service. Quotas
+are upper bounds (0–50), applied after identity fusion and before the global
+limit. Disabled layers are not searched. `--no-gbrain` disables vector retrieval
+and uses the core's keyword search; the shared relevance judge still applies.
+`wiki` selects the wiki/daily-note index; `cards` selects the card backend.
+
+HTTP clients can send the same contract in `POST /v1/recall` or `/v1/context`:
+
+```json
+{"query":"deployment","limit":10,"options":{"wiki":false,"semantic":false,"max_cards":3}}
+```
+
+The response echoes the complete effective `options`. The client rejects an old
+server that silently ignores options instead of falling back to standalone search.
+Omitting options preserves the common defaults: all layers, semantic retrieval,
+and no additional per-layer cap beyond the request's global limit.
 
 The ask client generates an answer from the shared records, including conversation
 traces, and returns `evidence_refs` and the complete `recall` packet in JSON.
@@ -57,6 +74,35 @@ contains the full HTTP recall packet (`records`, `context`, `retrieval_mode`,
 The older `results` and `formatted_text` names remain aliases for compatibility.
 The old router-specific trigger classification is no longer returned: non-skipped
 calls use `trigger_class: knowledge`, `state: recall`.
+
+## Evidence identity and source diagnostics
+
+Each merged recall record includes `evidence_key`, produced by the same identity
+function used for RRF fusion, usage counting and demotion. Explicit IDs take
+precedence over citation URLs. Card identity ignores display titles; wiki and
+daily-note identity includes the source document and section. Conversations use
+their trace ID. The namespace is part of the identity. Distinct IDs sharing a URL
+remain separate, and anonymous records are neither merged by title nor assigned
+persistent usage counters. Original IDs and provenance remain available.
+
+The versioned `ev1:` keys are stored in `recall_usage.record_id`. Earlier unversioned
+rows remain untouched but no longer drive current demotion or its report. A former
+document-level counter cannot be split reliably across sections, so no inferred
+backfill is performed. New counters accumulate only observed evidence identities.
+
+`backends.cards`, `backends.wiki` and `backends.conversation` report their own
+`attempted`, `used` and `status`. States distinguish `disabled`, `unavailable`,
+`empty`, `used`, `filtered`, `error`, `timeout` and `invalid_response`; `unknown`
+means an adapter omitted diagnostics. Keyword fallback has its own nested status.
+`filtered` means retrieval produced hits but the eligibility/relevance gates removed
+them; it is not a backend outage. ACL counts record filtering events, not unique IDs.
+
+Wiki-only semantic results use `retrieval_mode: wiki_semantic`; they no longer
+claim that XBrain succeeded. Explicit keyword mode uses `keyword`; disabling both
+knowledge indexes uses `conversation_only`. The compatibility `semantic_backend`
+field aggregates the semantic legs, while `backends` retains partial failures.
+Doctor accepts Wiki semantic retrieval for `--require-semantic`, but reports
+degradation if another enabled source failed. A disabled layer is not a failure.
 
 ## Relevance and usage accounting
 

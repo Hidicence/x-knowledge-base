@@ -14,6 +14,7 @@ import xkb_console
 import xkb_eviction as ev
 import xkb_frontmatter
 import xkb_paths
+from xkb_evidence import IDENTITY_PREFIX, identity_source
 
 xkb_console.use_utf8()
 
@@ -30,6 +31,7 @@ def describe(record_id: str) -> tuple[str, str]:
     04-ai-tools-agents，而它被撈出來是內容嵌入弱相關，跟資料夾毫無關係。報告印出
     前綴卻不印真正的分類，就是在邀請這個推論。
     """
+    record_id = identity_source(record_id)
     stem = record_id.rsplit("/", 1)[-1]
     card = xkb_paths.CARDS_DIR / f"{stem}.md"
     if not card.is_file():
@@ -56,7 +58,7 @@ def load_rows(namespace: str = "private") -> list[dict]:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='recall_usage'").fetchone():
             return []
         return [dict(r) for r in db.execute(
-            "SELECT * FROM recall_usage WHERE namespace=? ORDER BY judged_count DESC", (namespace,))]
+            "SELECT * FROM recall_usage WHERE namespace=? AND record_id LIKE ? ORDER BY judged_count DESC", (namespace, IDENTITY_PREFIX + "%"))]
 
 
 def main() -> int:

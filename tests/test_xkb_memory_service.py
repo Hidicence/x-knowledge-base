@@ -173,7 +173,7 @@ class XKBMemoryServiceTests(unittest.TestCase):
     def test_semantic_backend_is_used_and_declared(self) -> None:
         original = module.xbrain_query
 
-        def fixture_query(query, *, limit, no_expand, semantic):
+        def fixture_query(query, *, limit, no_expand, semantic, diagnostics=None):
             self.assertEqual(query, "semantic fixture")
             self.assertTrue(semantic)
             return [{
@@ -302,7 +302,7 @@ class XKBMemoryServiceTests(unittest.TestCase):
 
         known = set(xkb_score.DEFAULT_ANCHORS) & set(xkb_score.DEFAULT_WEIGHTS)
 
-        def fixture_query(query, *, limit, no_expand, semantic):
+        def fixture_query(query, *, limit, no_expand, semantic, diagnostics=None):
             return [{"slug": "s", "title": "t", "chunk_text": "c",
                      "source_url": "", "type": "knowledge-card", "score": 0.8}]
 
@@ -369,7 +369,7 @@ class XKBMemoryServiceTests(unittest.TestCase):
     def test_recall_packet_explains_acl_namespace_filtering_and_backend(self) -> None:
         original = module.xbrain_query
 
-        def fixture_query(query, *, limit, no_expand, semantic):
+        def fixture_query(query, *, limit, no_expand, semantic, diagnostics=None):
             return [
                 {"slug": "allowed", "title": "Allowed", "chunk_text": "visible", "namespace": "team-a"},
                 {"slug": "hidden", "title": "Hidden", "chunk_text": "secret", "namespace": "team-b"},

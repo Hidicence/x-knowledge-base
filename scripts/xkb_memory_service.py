@@ -43,7 +43,8 @@ import xkb_jev
 import xkb_relevance
 import xkb_text
 import xkb_score
-from xkb_evidence import fields, record_id, render_context
+from xkb_evidence import fields, record_id, render_context, identity_key, IDENTITY_PREFIX
+from xkb_recall import recall_options
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -112,12 +113,13 @@ def _recall_warnings(knowledge: dict[str, Any], filtered_counts: dict[str, Any])
     """
     warnings = []
     dropped = knowledge.get("dropped_as_irrelevant", 0)
-    if knowledge.get("retrieval_mode") != "xbrain_hybrid":
-        if dropped:
-            warnings.append(f"semantic results found but {dropped} dropped below the relevance floor")
-        else:
-            warnings.append("semantic_backend_unavailable_or_empty; keyword fallback used")
-    elif dropped:
+    if "backends" in knowledge:
+        for layer, state in knowledge["backends"].items():
+            if state.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}:
+                warnings.append(f"{layer} retrieval: {state['status']}")
+    elif knowledge.get("retrieval_mode") != "xbrain_hybrid" and not dropped:
+        warnings.append("semantic_backend_unavailable_or_empty; keyword fallback used")
+    if dropped:
         warnings.append(f"{dropped} semantic results dropped below the relevance floor")
     if filtered_counts.get("total"):
         warnings.append("records_filtered_by_acl")
@@ -366,7 +368,7 @@ def tag_demoted(records: list[dict[str, Any]], sink: Any, *, relevant_ids: set[s
         return
     cleared = relevant_ids or set()
     for item in records:
-        key = record_id(item)
+        key = identity_key(item)
         if key in demoted and key not in cleared:
             item["demoted"] = True
 
@@ -458,6 +460,7 @@ class KnowledgeCatalog:
         """每次召回開始時清空。沒有這一步，讀不到的路徑會沿用上一個請求的數字。"""
         self._local.stats = filter_stats()
         self._local.irrelevant = 0
+        self._local.backends = {}
 
     @staticmethod
     def _allowed(metadata: dict[str, Any], namespace: str) -> bool:
@@ -561,13 +564,21 @@ class KnowledgeCatalog:
         The service must not silently claim semantic retrieval when the vector
         backend is unavailable, so the caller receives an explicit mode.
         """
+        state = {"backend": "xbrain_hybrid", "available": False, "attempted": False,
+                 "used": False, "status": "unavailable"}
+        if not hasattr(self._local, "backends"):
+            self._local.backends = {}
+        self._local.backends["cards"] = state
         if xbrain_query is None or not query.strip():
             return []
         try:
-            hits = xbrain_query(query, limit=limit, no_expand=True, semantic=True)
+            hits = xbrain_query(query, limit=limit, no_expand=True, semantic=True, diagnostics=state)
+            if hits:
+                state.update(available=True, attempted=True, used=True, status="used")
         except Exception as err:
             # 每一台機器都是透過這個服務問 XKB。這裡回空的，對方收到的是
             # 「我們沒有這方面的知識」——跟一切正常時的回答一模一樣。
+            state.update(attempted=True, status="error")
             xkb_failures.note("service semantic search", err)
             return []
         records = []
@@ -598,6 +609,10 @@ class KnowledgeCatalog:
         # from, so ACL drops here can only be attributed to the channel.
         self._stats = filter_stats(semantic=filtered)
         records, self._irrelevant = self._drop_irrelevant(query, records)
+        state.update(candidate_count=len(records), filtered_count=filtered)
+        state["used"] = bool(records)
+        if state["status"] == "used" and not records:
+            state["status"] = "filtered"
         return records
 
     def _wiki_search(self, query: str, limit: int, namespace: str = "private") -> list[dict[str, Any]]:
@@ -608,40 +623,57 @@ class KnowledgeCatalog:
         page belonging to another namespace must stay invisible here exactly
         as it would through the card path.
         """
+        state = {"backend": "wiki_semantic", "available": False, "attempted": False,
+                 "used": False, "status": "unavailable"}
+        if not hasattr(self._local, "backends"):
+            self._local.backends = {}
+        self._local.backends["wiki"] = state
         try:
             from continuity_recall import recall_semantic
         except ImportError:
             return []
         try:
-            hits = recall_semantic(query, top_k=max(2, limit // 2))
+            state["attempted"] = True
+            hits = recall_semantic(query, top_k=max(1, limit))
         except Exception as err:
+            state["status"] = "error"
             xkb_failures.note("service wiki search", err)
             return []
-        if not hits:            # None means unavailable, [] means nothing relevant
+        if hits is None:
+            return []
+        state.update(available=True, used=bool(hits), status="used" if hits else "empty")
+        if not hits:
             return []
         allowed = []
+        metadata_by_hit = {}
         for hit in hits:
             topic = Path(hit.source_file).stem
             path = self.wiki_topics_dir / f"{topic}.md"
             metadata = self._frontmatter(path) if path.exists() else {}
             if self._allowed(metadata, namespace):
                 allowed.append(hit)
+                metadata_by_hit[id(hit)] = metadata
             else:
                 stats = self._stats
                 stats["by_layer"]["wiki"] = stats["by_layer"].get("wiki", 0) + 1
                 stats["total"] = stats.get("total", 0) + 1
+        state.update(candidate_count=len(allowed), filtered_count=len(hits) - len(allowed))
+        state["used"] = bool(allowed)
+        if hits and not allowed:
+            state["status"] = "filtered"
         hits = allowed
         return [{
             "schema": KNOWLEDGE_SCHEMA,
             "record_type": "wiki_topic" if hit.source_type == "wiki_semantic" else "memory_note",
             "id": hit.source_file,
             "title": hit.section or Path(hit.source_file).stem,
+            "source_file": hit.source_file, "section": hit.section,
             "summary": hit.excerpt,
             "source_url": hit.url,
             "source_type": "wiki",
             "memory_layer": "knowledge_product",
-            "visibility": "private",
-            "namespace": "private",
+            "visibility": metadata_by_hit[id(hit)].get("sensitivity", metadata_by_hit[id(hit)].get("visibility", "private")),
+            "namespace": metadata_by_hit[id(hit)].get("namespace", "private"),
             "score": hit.score,
             # 這裡是餘弦，不是關鍵字分數——wiki 的錨點是照關鍵字尺度量的，
             # 套上去會把每一筆 wiki 命中都算錯。
@@ -757,41 +789,43 @@ class KnowledgeCatalog:
             "decision": "allow_public_or_matching_namespace",
         }
 
-    def search(self, query: str, limit: int = 10, namespace: str = "private") -> dict[str, Any]:
+    def search(self, query: str, limit: int = 10, namespace: str = "private", *, options=None) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
-        semantic_backend = {
-            "name": "xbrain_hybrid",
-            "available": xbrain_query is not None,
-            "attempted": bool(query.strip() and xbrain_query is not None),
-            "used": False,
-            "status": "available" if xbrain_query is not None else "unavailable",
-        }
-        semantic_records = self._semantic_search(query, limit, namespace)
-        # The card backend and the wiki index are two different stores. Cards
-        # live in gbrain; wiki topics and daily memory live in XKB's own
-        # semantic index and gbrain has never seen them — so searching only
-        # gbrain made the entire wiki invisible to this service, including a
-        # 700K arsenal page holding 320 named patterns. Recall returned card
-        # fragments and never the distilled conclusions written above them.
-        semantic_records += self._wiki_search(query, limit, namespace)
-        semantic_backend["used"] = bool(semantic_records)
-        if semantic_records:
-            semantic_backend["status"] = "used"
-        elif semantic_backend["attempted"]:
-            semantic_backend["status"] = "empty_or_failed"
+        self._reset_request_stats()
+        opts = recall_options(options)
+        card_limit = min(limit, opts["max_cards"]) if opts["cards"] else 0
+        wiki_limit = min(limit, opts["max_wiki"]) if opts["wiki"] else 0
+        semantic_records = []
+        for layer, budget, search in (("cards", card_limit, self._semantic_search),
+                                       ("wiki", wiki_limit, self._wiki_search)):
+            self._local.backends[layer] = {"backend": "xbrain_hybrid" if layer == "cards" else "wiki_semantic",
+                "available": False, "attempted": False, "used": False, "status": "disabled"}
+            if budget and opts["semantic"]:
+                # Unknown is useful for adapters that return rows but omit diagnostics.
+                self._local.backends[layer]["status"] = "unknown"
+                rows = search(query, budget, namespace)
+                semantic_records.extend(rows)
+                if rows:
+                    self._local.backends[layer].update(available=True, attempted=True, used=True, status="used")
+        backends = self._local.backends
+        used = [v["backend"] for v in backends.values() if v["used"]]
+        semantic_backend = {"name": "+".join(used) or "none",
+            "available": any(v["available"] for v in backends.values()),
+            "attempted": any(v["attempted"] for v in backends.values()),
+            "used": bool(used), "status": "used" if used else "empty" if any(v["status"] == "empty" for v in backends.values()) else "unavailable"}
         if semantic_records:
             records = semantic_records
-            retrieval_mode = "xbrain_hybrid"
+            retrieval_mode = "xbrain_hybrid" if backends["cards"]["used"] else "wiki_semantic"
             filtered_counts = dict(self._stats)
         else:
             terms = query_terms(query)
             hits: list[tuple[int, dict[str, Any]]] = []
             filtered_cards = filtered_wiki = 0
-            for item in self._index():
+            for item in self._index() if card_limit else []:
                 metadata = self._item_metadata(item)
                 if not self._allowed(metadata, namespace):
                     filtered_cards += 1
@@ -800,7 +834,7 @@ class KnowledgeCatalog:
                 score = _keyword_unit_score(blob, terms)
                 if score:
                     hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "score_scale": "card_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
-            for path in sorted(self.wiki_topics_dir.glob("*.md")):
+            for path in sorted(self.wiki_topics_dir.glob("*.md")) if wiki_limit else []:
                 metadata = self._frontmatter(path)
                 if not self._allowed(metadata, namespace):
                     filtered_wiki += 1
@@ -811,16 +845,29 @@ class KnowledgeCatalog:
                 if score:
                     hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
             hits.sort(key=lambda pair: pair[0], reverse=True)
-            records = [item for _, item in hits[: max(1, min(limit, 50))]]
-            retrieval_mode = "keyword_fallback"
-            self._stats = filter_stats(card=filtered_cards, wiki=filtered_wiki)
+            records = []
+            counts = {"cards": 0, "wiki": 0}
+            for _, item in hits:
+                layer = "wiki" if item["record_type"] == "wiki_topic" else "cards"
+                if counts[layer] < (wiki_limit if layer == "wiki" else card_limit):
+                    records.append(item)
+                    counts[layer] += 1
+            records = records[:limit]
+            for layer, budget in (("cards", card_limit), ("wiki", wiki_limit)):
+                if budget:
+                    backends[layer]["fallback"] = {"backend": "keyword", "status": "used" if counts[layer] else "empty"}
+            retrieval_mode = ("keyword_fallback" if opts["semantic"] else "keyword") if card_limit or wiki_limit else "conversation_only"
+            previous = self._stats["by_layer"]
+            self._stats = filter_stats(card=filtered_cards + previous.get("card", 0),
+                                       wiki=filtered_wiki + previous.get("wiki", 0),
+                                       semantic=previous.get("semantic", 0))
             filtered_counts = dict(self._stats)
         context = render_context(records)
         return {
             "schema": SCHEMA, "query": query, "namespace": namespace,
             "request_namespace": namespace, "acl_policy": self._acl_policy(namespace),
             "records": records, "count": len(records), "context": context,
-            "retrieval_mode": retrieval_mode, "semantic_backend": semantic_backend,
+            "retrieval_mode": retrieval_mode, "semantic_backend": semantic_backend, "backends": backends,
             "filtered_counts": filtered_counts,
             "dropped_as_irrelevant": self._irrelevant,
             "warnings": [],
@@ -1110,10 +1157,10 @@ class Store:
         """
         groups: dict[str, list[dict]] = {}
         for item in candidates:
-            key = record_id(item)
+            key = identity_key(item)
             if key:
                 groups.setdefault(key, []).append(item)
-        delivered = {record_id(item) for item in returned}
+        delivered = {identity_key(item) for item in returned}
         with self.lock, self.connect() as db:
             for key, items in groups.items():
                 scores = [i.get("judge") for i in items]
@@ -1182,8 +1229,8 @@ class Store:
             with self.lock, self.connect() as db:
                 rows = db.execute(
                     "SELECT record_id, judged_count, relevant_count"
-                    "  FROM recall_usage WHERE namespace = ? AND relevant_count = 0 AND judged_count >= ?",
-                    (namespace, max(1, int(after))),
+                    "  FROM recall_usage WHERE namespace = ? AND relevant_count = 0 AND judged_count >= ? AND record_id LIKE ?",
+                    (namespace, max(1, int(after)), IDENTITY_PREFIX + "%"),
                 ).fetchall()
         except sqlite3.Error:
             return set()
@@ -1502,12 +1549,13 @@ class Store:
         """
         return _noise_kind(query)
 
-    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private") -> dict[str, Any]:
+    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
+        opts = recall_options(options)
         # 每次召回從乾淨的統計開始。少了這一步，某些路徑（例如語意後端不在時
         # 提早回傳的那條）會沿用同一條執行緒上一個請求的數字，回應裡的
         # 「為什麼結果這麼少」就會是別人的答案。
@@ -1523,16 +1571,28 @@ class Store:
                 "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
                 "records": [], "count": 0, "unfiltered_count": 0,
                 "filtered_counts": filter_stats(), "context": "",
-                "retrieval_mode": "skipped", "skip_reason": skipped,
+                "retrieval_mode": "skipped", "skip_reason": skipped, "options": opts,
+                "backends": {k: {"status": "not_attempted", "attempted": False, "used": False} for k in ("cards", "wiki", "conversation")},
                 "semantic_retrieval_attempted": False,
                 "semantic_backend": {"status": "not_attempted"},
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
-        knowledge = self.catalog.search(query, limit, namespace)
-        conversation = self.recall(query, limit, namespace)
+        knowledge = self.catalog.search(query, limit, namespace, **({"options": opts} if options is not None else {}))
+        conversation_state = {"backend": "conversation_keyword", "attempted": opts["conversations"],
+                              "used": False, "status": "disabled"}
+        conversation = {"memories": []}
+        if opts["conversations"]:
+            try:
+                conversation = self.recall(query, limit, namespace)
+                conversation_state.update(used=bool(conversation["memories"]),
+                                          status="used" if conversation["memories"] else "empty")
+            except sqlite3.Error as err:
+                conversation_state["status"] = "error"
+                xkb_failures.note("conversation recall", err)
+        backends = {**knowledge.get("backends", {}), "conversation": conversation_state}
         records = knowledge["records"] + [
             {**item, "record_type": "conversation_trace", "source_type": "conversation",
-             "score_scale": "conversation"}
+             "score_scale": "conversation", "namespace": namespace}
             for item in conversation["memories"]
         ]
         # 三層各有自己的尺度：卡片是 RRF 或餘弦、wiki 是真餘弦、對話是關鍵字
@@ -1547,6 +1607,8 @@ class Store:
         # 降權要標在這裡——xkb_score.rank 是唯一的跨層比較點，也是唯一一處
         # 三條腿的記錄同時存在。標在任何一條腿裡都會被其他腿繞過（見
         # tag_demoted 的說明）。
+        for item in records:
+            item["evidence_key"] = identity_key(item)
         candidates = list(records)
         # jev 判斷接在這裡，排序之前：排序只需要處理真的相關的那些。
         # 一個旗標就能退回餘弦——XKB_JEV_DECIDE=0。
@@ -1557,11 +1619,23 @@ class Store:
             except Exception as err:  # noqa: BLE001
                 xkb_failures.note("jev judge", err)
                 judge_note = {"status": "error"}
-        relevant_ids = {record_id(item) for item in records
+        relevant_ids = {identity_key(item) for item in records
                         if type(item.get("judge")) in (int, float)
                         and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_note.get("status") == "judged" else set()
         tag_demoted(records, lambda: self.demoted_ids(namespace=namespace), relevant_ids=relevant_ids)
         records = xkb_score.rank(records)
+        # Quotas apply after identity fusion, before the global response limit.
+        counts = {"cards": 0, "wiki": 0}
+        selected = []
+        for item in records:
+            kind = item.get("record_type")
+            layer = "wiki" if kind in {"wiki_topic", "memory_note"} else "cards"
+            if kind == "conversation_trace":
+                selected.append(item)
+            elif opts[layer] and counts[layer] < opts["max_" + layer]:
+                selected.append(item)
+                counts[layer] += 1
+        records = selected
         try:
             self.record_recall_usage(namespace, candidates, records[:limit], judge_note)
         except Exception as err:
@@ -1576,7 +1650,7 @@ class Store:
         # 它必須活過 catalog.search 才能變成警告，但不在
         # KNOWLEDGE_SCHEMA 上，不該送到用戶端——兩輪前 _unverified
         # 就是這樣漏出去的。
-        warnings = [w for w in (_recall_warnings(knowledge, filtered_counts)
+        warnings = [w for w in (_recall_warnings({**knowledge, "backends": backends}, filtered_counts)
                                 + [_unverified_warning(records)]) if w]
         for item in records:
             item.pop("index_unreadable", None)
@@ -1599,6 +1673,7 @@ class Store:
             "retrieval_mode": knowledge.get("retrieval_mode", "keyword_fallback"),
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
+            "backends": backends, "options": opts,
             "warnings": warnings,
         }
 
@@ -1756,10 +1831,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, self.store.complete_turn(turn_id, body)); return
             if parsed.path == "/v1/recall":
                 self.authorize(principal, READ_SCOPE)
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))))); return
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"))); return
             if parsed.path == "/v1/context":
                 self.authorize(principal, READ_SCOPE)
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))))); return
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"))); return
             if parsed.path == "/v1/ingest/status":
                 self.authorize(principal, READ_SCOPE)
                 self.send_json(200, self.store.catalog.pipeline_status()); return

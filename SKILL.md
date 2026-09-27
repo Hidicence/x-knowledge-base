@@ -132,7 +132,8 @@ python3 scripts/xkb_ask.py "你的問題" --json
 ```
 
 預設與 MCP、HTTP 共用召回核心，包含卡片、Wiki 與對話證據。
-`--legacy-search` 保留舊問答檢索；分層選項（例如 `--no-gbrain`）也會選擇舊路徑。
+分層選項（例如 `--no-wiki`、`--no-cards`、`--no-gbrain`）由共用服務執行。
+舊問答檢索已移除；`--legacy-search` 會提示遷移並使用共用核心。
 `recall_router.py` 預設也走共用核心，舊特殊路由使用 `--legacy-router`。
 環境設定、降權與統計定義見 [共用召回說明](docs/recall-validation.md)。
 
@@ -462,7 +463,7 @@ with no caller is indistinguishable from one that was forgotten.
 | `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
 | `xkb_jev_shadow_report.py` | Read historical or optional shadow comparisons between cosine and Jev. Jev now decides relevance at the merged recall boundary by default (`XKB_JEV_DECIDE=1`); shadow collection is available when that final judge is off. This report does not describe current delivery counts. |
 | `xkb_recategorize.py` | When the daily report says knowledge is sitting outside the taxonomy. Reclassifies those items with the existing LLM classifier and rebuilds the index; previews by default, `--apply` writes. A genuinely new category is not opened on one card: the classifier's proposal is counted, and the category opens only once the same name has been proposed `PROMOTE_AFTER` times — the same rule the wiki topic layer already uses. Cards waiting on a proposal keep the proposed name and get gathered when it opens. Cards whose content is broken (an LLM template leaked into the file, a failed fetch) are listed separately and left alone — classifying one only makes a broken card look fine. |
-| `xkb_evict_report.py` | Read current namespace-scoped demotion from `recall_usage`: at least five explicit judge verdicts, never positive. A positive verdict lifts demotion immediately; judge outages do not count as rejection. Returned evidence and legacy cosine passes are separate measurements. |
+| `xkb_evict_report.py` | Read current namespace-scoped demotion from versioned evidence identities in `recall_usage`: at least five explicit judge verdicts, never positive. A positive verdict lifts demotion immediately; judge outages do not count as rejection. Historical document counts and cosine passes are preserved separately from current evidence accounting. |
 
 ## Maintenance Verification
 

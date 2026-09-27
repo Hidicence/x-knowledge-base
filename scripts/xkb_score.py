@@ -27,6 +27,7 @@ relevance() / unified()（舊的 raw/(raw+anchor)×權重）留著只給 relevan
 from __future__ import annotations
 
 import os
+from xkb_evidence import identity_key
 
 # 各層實測中位數（2026-07-28，8 個代表性查詢）。改了計分方式就要重新量。
 #
@@ -175,38 +176,12 @@ def rank(results: list[dict]) -> list[dict]:
     idempotent：matched_by / leg_rank / relevance / unified_score 每次呼叫都重建。
     原始分數 <= 0 或缺分的項目不拿名次，歸到下層、墊底。
     """
-    def _key(r: dict) -> object:
-        # 身分：卡片 / 書籤在 _assoc_dict 之後路徑落在 source_file（cards/xxx.md），
-        # 一個檔就是一張卡——section 只是標題，不進 key，不然同一張卡被語意腿和
-        # BM25 腿撈到會被當成兩筆、雙腿 RRF 加分就沒了。
-        # wiki / memory / 反例 / 動作的 source_file 是一個檔、底下很多段，段落
-        # 標題才是身分——只靠 source_file 會把同一頁不同段併成一筆、RRF 重複累加。
-        # section（其實是標題）不能當「沒有路徑」時的退路：兩個剛好同名的書籤
-        # 會被併掉。
-        ident = (r.get("source_file") or r.get("relative_path")
-                 or r.get("source_url") or r.get("url"))
-        if not ident:
-            return id(r)
-        ident = str(ident).split("#", 1)[0]
-        st = str(r.get("source_type") or "")
-        # wiki／memory 段落：身分是 (檔, 段落標題)，跟哪條腿撈到無關。語意腿
-        # （wiki_semantic）和 BM25 腿（wiki）撈到同一段要合併成一筆、兩條腿的
-        # RRF 都算——不要各佔一格。
-        if ident.startswith(("wiki/", "memory/")) and not ident.startswith("memory/cards/"):
-            return ("wiki", ident, r.get("section") or "")
-        # 卡片 / 書籤：一個檔就是一張卡，section 只是標題不進 key——同一張卡被
-        # 語意腿和 BM25 腿撈到要能合併。
-        if st in ("card", "bookmark") or ident.startswith(("cards/", "memory/cards/")):
-            return ("card", ident)
-        # 其餘（反例、動作…）：source_file 底下可能多段，標題才是身分。
-        return (st or "sec", ident, r.get("section") or "")
-
     # 按路徑去重：一張卡被 BM25 和向量都撈到（最強訊號）只留一筆，但兩條腿
     # 的貢獻都要算進去。search() 原本按路徑丟掉 BM25 的重複，於是雙腿加分
     # 永遠不會發生；light 路徑上同一頁 wiki 被兩條腿撈到會重複出現。
     uniq: dict = {}
     for item in results:
-        k = _key(item)
+        k = identity_key(item) or ("anonymous", id(item))
         if k not in uniq:
             item["matched_by"] = []
             item["_rrf"] = 0.0

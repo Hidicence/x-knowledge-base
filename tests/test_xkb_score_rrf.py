@@ -119,6 +119,31 @@ class RankFusesRanksNotScales(unittest.TestCase):
 
 
 class RankKeyAndLegDedup(unittest.TestCase):
+    def test_id_without_url_fuses_and_usage_keeps_distinct_wiki_sections(self):
+        import tempfile
+        from xkb_memory_service import Store
+        from xkb_evidence import identity_key
+        records = [
+            {"id": "card-a", "score_scale": leg, "score": .8, "judge": .9}
+            for leg in ("card_semantic", "card_keyword")]
+        records += [{"id": "wiki/topics/a.md", "record_type": "wiki_topic", "section": section,
+                     "score_scale": "wiki_semantic", "score": .8, "judge": .9}
+                    for section in ("First", "Second")]
+        ranked = xs.rank(records)
+        self.assertEqual(len(ranked), 3)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "usage.sqlite")
+            store.record_recall_usage("private", records, ranked, {"status": "judged"})
+            with store.connect() as db:
+                rows = db.execute("SELECT record_id,considered_count,returned_count FROM recall_usage").fetchall()
+        self.assertEqual({r["record_id"] for r in rows}, {identity_key(r) for r in ranked})
+        self.assertTrue(all(r["considered_count"] == r["returned_count"] == 1 for r in rows))
+
+    def test_same_url_does_not_merge_distinct_ids_or_namespaces(self):
+        records = [{"id": key, "namespace": ns, "source_url": "https://example.test/common", "score": .8}
+                   for key, ns in (("a", "private"), ("b", "private"), ("a", "team"))]
+        self.assertEqual(len(xs.rank(records)), 3)
+
     def test_same_key_same_leg_adds_the_rrf_term_once(self) -> None:
         # 合併後 _legs 對同一條腿有兩筆（同頁 wiki 兩段被舊 _key 併掉、或
         # search() 不再去重後的重複列）。w/(K+i) 不能加兩次、matched_by 不能重複。
