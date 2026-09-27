@@ -17,6 +17,7 @@ import tempfile
 import time
 
 from xkb_doctor import assess, probe
+from xkb_evidence import identity_key, record_id
 
 DEFAULT_CASES = Path(__file__).resolve().parent.parent / "evals" / "recall-cases.json"
 
@@ -44,11 +45,16 @@ def fixture_env(root: Path, fixtures: dict) -> dict[str, str]:
 
 
 def score_case(case: dict, packet: dict) -> dict:
-    actual = [str(r.get("id") or r.get("trace_id") or "") for r in packet["records"]]
+    record_ids = [record_id(r) for r in packet["records"]]
+    evidence_keys = [r.get("evidence_key") or identity_key(r) for r in packet["records"]]
+    label_unit = case.get("label_unit", "document")
+    if label_unit not in {"document", "evidence"}:
+        raise ValueError("label_unit must be document or evidence")
+    actual = set(evidence_keys if label_unit == "evidence" else record_ids)
     expected = set(case["expected_ids"])
     allowed = set(case.get("allowed_ids", case["expected_ids"]))
-    missing = sorted(expected - set(actual))
-    unexpected = sorted(set(actual) - allowed)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - allowed)
     errors = []
     if missing:
         errors.append("missing: " + ", ".join(missing))
@@ -56,12 +62,15 @@ def score_case(case: dict, packet: dict) -> dict:
         errors.append("unexpected: " + ", ".join(unexpected))
     if case.get("retrieval_mode") and packet["retrieval_mode"] != case["retrieval_mode"]:
         errors.append("wrong retrieval mode")
-    if len(actual) != len(set(actual)):
+    identified = [key for key in evidence_keys if key]
+    if len(identified) != len(set(identified)):
         errors.append("duplicate evidence")
+    if len(identified) != len(evidence_keys):
+        errors.append("unidentified evidence")
     return {"id": case["id"], "ok": not errors, "errors": errors,
-            "record_ids": actual,
-            "recall_at_k": len(expected & set(actual)) / len(expected) if expected else None,
-            "precision_at_k": len(allowed & set(actual)) / len(actual) if actual else None,
+            "record_ids": record_ids, "evidence_keys": evidence_keys, "label_unit": label_unit,
+            "recall_at_k": len(expected & actual) / len(expected) if expected else None,
+            "precision_at_k": len(allowed & actual) / len(actual) if actual else None,
             "no_answer": not expected, "false_positive_count": len(unexpected),
             "retrieval_mode": packet["retrieval_mode"],
             "judge_status": packet.get("judge", {}).get("status", "not_attempted")}
@@ -126,6 +135,12 @@ def main() -> int:
                     or not isinstance(case["expected_ids"], list)
                     or not all(isinstance(x, str) for x in case["expected_ids"])):
                 raise ValueError("each case needs a query and expected_ids list")
+            if case.get("label_unit", "document") not in {"document", "evidence"}:
+                raise ValueError("label_unit must be document or evidence")
+            allowed = case.get("allowed_ids", case["expected_ids"])
+            if (not isinstance(allowed, list) or not all(isinstance(x, str) for x in allowed)
+                    or not set(case["expected_ids"]).issubset(allowed)):
+                raise ValueError("allowed_ids must be a list containing all expected_ids")
         if args.live:
             report = run_cases(cases, require_semantic=args.require_semantic, require_judge=args.require_judge)
         else:

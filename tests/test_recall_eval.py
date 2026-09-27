@@ -33,6 +33,41 @@ class RecallEvaluation(unittest.TestCase):
         self.assertFalse(xkb_eval.score_case(case, self.packet(["noise"]))["ok"])
         self.assertTrue(xkb_eval.score_case(case, self.packet([]))["ok"])
 
+    def test_distinct_sections_are_not_duplicates_and_document_precision_is_consistent(self):
+        packet = self.packet(["guide", "guide", "noise"])
+        for record, section in zip(packet["records"], ["setup", "recovery", ""]):
+            record.update(record_type="wiki_topic", section=section)
+        result = xkb_eval.score_case({"id": "q", "expected_ids": ["guide"]}, packet)
+        self.assertNotIn("duplicate evidence", result["errors"])
+        self.assertEqual(result["precision_at_k"], .5)
+        packet["records"].pop()
+        self.assertTrue(xkb_eval.score_case({"id": "q", "expected_ids": ["guide"]}, packet)["ok"])
+
+    def test_evidence_labels_detect_missing_section_and_namespace(self):
+        records = [{"id": "guide", "record_type": "wiki_topic", "section": section,
+                    "namespace": namespace} for section, namespace in
+                   [("setup", "private"), ("recovery", "private"), ("setup", "other")]]
+        keys = [xkb_eval.identity_key(r) for r in records]
+        case = {"id": "q", "label_unit": "evidence", "expected_ids": keys[:2]}
+        packet = self.packet([])
+        packet["records"] = records[::2]
+        result = xkb_eval.score_case(case, packet)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["recall_at_k"], .5)
+        self.assertEqual(result["precision_at_k"], .5)
+        self.assertIn("missing: " + keys[1], result["errors"])
+
+    def test_same_evidence_from_two_retrieval_legs_is_a_duplicate(self):
+        packet = self.packet(["cards/guide.md", "guide"])
+        self.assertIn("duplicate evidence", xkb_eval.score_case(
+            {"id": "q", "expected_ids": [], "allowed_ids": ["cards/guide.md", "guide"]},
+            packet)["errors"])
+
+    def test_anonymous_records_fail_as_unidentified_not_duplicates(self):
+        result = xkb_eval.score_case({"id": "q", "expected_ids": []}, self.packet(["", ""]))
+        self.assertIn("unidentified evidence", result["errors"])
+        self.assertNotIn("duplicate evidence", result["errors"])
+
     def test_transport_failure_is_not_dropped_from_recall_denominator(self):
         cases = [{"id": "positive", "query": "q", "expected_ids": ["good"]},
                  {"id": "negative", "query": "q", "expected_ids": []}]

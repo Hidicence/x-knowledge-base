@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover - semantic backend is optional
 import xkb_eviction
 import xkb_failures
 import xkb_jev
+from xkb_frontmatter import FRONTMATTER
 import xkb_relevance
 import xkb_text
 import xkb_score
@@ -825,32 +826,39 @@ class KnowledgeCatalog:
             retrieval_mode = "xbrain_hybrid" if backends["cards"]["used"] else "wiki_semantic"
             filtered_counts = dict(self._stats)
         else:
-            terms = query_terms(query)
-            hits: list[tuple[int, dict[str, Any]]] = []
+            terms = [term for term in query_terms(query) if term not in xkb_text.STOPWORDS]
+            hits: list[tuple[float, dict[str, Any], bool]] = []
             filtered_cards = filtered_wiki = 0
             for item in self._index() if card_limit else []:
                 metadata = self._item_metadata(item)
                 if not self._allowed(metadata, namespace):
                     filtered_cards += 1
                     continue
-                blob = json.dumps(item, ensure_ascii=False).lower()
+                blob = " ".join(str(item.get(key) or "") for key in
+                                ("title", "summary", "tags", "keywords")).lower()
                 score = _keyword_unit_score(blob, terms)
                 if score:
-                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "score_scale": "card_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
+                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "score_scale": "card_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}, all(term in blob for term in terms)))
             for path in sorted(self.wiki_topics_dir.glob("*.md")) if wiki_limit else []:
                 metadata = self._frontmatter(path)
                 if not self._allowed(metadata, namespace):
                     filtered_wiki += 1
                     continue
-                content = safe_read(path, 100_000)
-                blob = f"{path.stem} {content}".lower()
+                content = FRONTMATTER.sub("", safe_read(path, 100_000), count=1)
+                blob = (content + " " + " ".join(str(metadata.get(key) or "") for key in
+                        ("title", "tags", "keywords"))).lower()
                 score = _keyword_unit_score(blob, terms)
                 if score:
-                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}))
+                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}, all(term in blob for term in terms)))
+            # Prefer complete content matches when available. Retain partial
+            # matches when none exist, including natural-language CJK queries
+            # whose overlapping n-grams rarely all appear in one document.
+            if any(complete for _, _, complete in hits):
+                hits = [hit for hit in hits if hit[2]]
             hits.sort(key=lambda pair: pair[0], reverse=True)
             records = []
             counts = {"cards": 0, "wiki": 0}
-            for _, item in hits:
+            for _, item, _ in hits:
                 layer = "wiki" if item["record_type"] == "wiki_topic" else "cards"
                 if counts[layer] < (wiki_limit if layer == "wiki" else card_limit):
                     records.append(item)

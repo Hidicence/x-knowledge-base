@@ -1,0 +1,461 @@
+{
+  "ok": true,
+  "cases": 24,
+  "passed": 24,
+  "mean_recall_at_k": 1.0,
+  "mean_precision_at_k": 1.0,
+  "no_answer_passed": 6,
+  "no_answer_cases": 6,
+  "latency_ms": {
+    "p50": 203.0,
+    "p95": 235
+  },
+  "retrieval_modes": {
+    "keyword_fallback": 22,
+    "skipped": 2
+  },
+  "judge_statuses": {
+    "unavailable": 18,
+    "no_records": 4,
+    "not_attempted": 2
+  },
+  "results": [
+    {
+      "id": "conflicting-deployment",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "aurora-blue",
+        "aurora-canary"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"aurora-blue\",\"\"]",
+        "ev1:[\"card\",\"private\",\"aurora-canary\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 235
+    },
+    {
+      "id": "contrarian-evidence",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "aurora-canary"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"aurora-canary\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "carbon-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "carbon-factor"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"carbon-factor\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "carbon-activity",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "carbon-factor"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"carbon-factor\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "expo-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "expo-leads"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"expo-leads\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "expo-followup",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "expo-leads"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"expo-leads\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "cards-and-wiki",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "provenance-guide",
+        "memory-evidence"
+      ],
+      "evidence_keys": [
+        "ev1:[\"document\",\"private\",\"wiki/topics/provenance-guide.md\",\"\"]",
+        "ev1:[\"card\",\"private\",\"memory-evidence\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "wiki-source",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "provenance-guide"
+      ],
+      "evidence_keys": [
+        "ev1:[\"document\",\"private\",\"wiki/topics/provenance-guide.md\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 204
+    },
+    {
+      "id": "private-cache",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "cache-ttl"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"cache-ttl\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 234
+    },
+    {
+      "id": "other-cache",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "orchid-other"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"other\",\"orchid-other\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "public-cross-namespace",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "public-release"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"other\",\"public-release\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "public-other-namespace",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "public-release"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"other\",\"public-release\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "private-budget",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "private-budget"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"private-budget\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "budget-denied",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 204
+    },
+    {
+      "id": "transaction",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "rollback"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"rollback\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "camera",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "camera"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"camera\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "recycling-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "recycling"
+      ],
+      "evidence_keys": [
+        "ev1:[\"card\",\"private\",\"recycling\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "backup-wiki",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "backup-guide"
+      ],
+      "evidence_keys": [
+        "ev1:[\"document\",\"private\",\"wiki/topics/backup-guide.md\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 219
+    },
+    {
+      "id": "other-wiki-denied",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "other-wiki-allowed",
+      "ok": true,
+      "errors": [],
+      "record_ids": [
+        "other-handbook"
+      ],
+      "evidence_keys": [
+        "ev1:[\"document\",\"other\",\"wiki/topics/other-handbook.md\",\"\"]"
+      ],
+      "label_unit": "document",
+      "recall_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "no_answer": false,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "unavailable",
+      "elapsed_ms": 265
+    },
+    {
+      "id": "unknown-english",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 235
+    },
+    {
+      "id": "unknown-cjk",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "keyword_fallback",
+      "judge_status": "no_records",
+      "elapsed_ms": 219
+    },
+    {
+      "id": "greeting",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "skipped",
+      "judge_status": "not_attempted",
+      "elapsed_ms": 203
+    },
+    {
+      "id": "acknowledgement",
+      "ok": true,
+      "errors": [],
+      "record_ids": [],
+      "evidence_keys": [],
+      "label_unit": "document",
+      "recall_at_k": null,
+      "precision_at_k": null,
+      "no_answer": true,
+      "false_positive_count": 0,
+      "retrieval_mode": "skipped",
+      "judge_status": "not_attempted",
+      "elapsed_ms": 203
+    }
+  ],
+  "scope": "synthetic offline keyword/ACL/transport regression; not a semantic quality benchmark"
+}

@@ -189,6 +189,16 @@ After fixing punctuation in compound acknowledgements, the same unchanged cases
 score 21/24: `好，收到` is now skipped, while the three extra-keyword-match cases
 remain failures. `evals/recall-baseline.json` preserves the initial measurement.
 
+The 2026-09-27 keyword correction passes **24/24 with those labels unchanged**;
+`evals/recall-keyword-report.json` records the run. Keyword fallback searches
+titles, summaries, tags and keywords, plus Wiki body text. IDs, filenames,
+source URLs and ACL metadata are not content matches. Among ACL-allowed
+candidates, complete query-term matches take precedence over partial matches;
+if none are complete, partial matches remain available. Shared stopwords are
+ignored. This preserves natural-language CJK fallback, but can omit useful
+partial matches when a complete lexical match exists. It is a lexical policy,
+not a replacement for semantic relevance evaluation.
+
 The agent hook renders conversation evidence from `query`/`answer`, preserving
 `trace_id` as provenance, as well as cards and wiki records from `title`/`summary`.
 MCP availability alone does not establish automatic recall: verify that the
@@ -208,7 +218,13 @@ For a real-library quality evaluation, create labels from reviewed evidence:
 
 `allowed_ids` can list additional genuinely relevant evidence; it defaults to
 `expected_ids`. Optional `namespace`, `limit` and `retrieval_mode` allow targeted
-cases. Include paraphrases, stale/current evidence, contradictions, multilingual
+cases. The default `label_unit: "document"` measures recall and precision over
+unique display IDs, so multiple sections of one allowed document do not reduce
+precision. For section/namespace-specific evaluation, set `label_unit: "evidence"`
+and use the shared `ev1:` evidence keys in `expected_ids` and `allowed_ids`.
+Duplicate detection always uses evidence identity, regardless of label unit;
+unidentified records fail explicitly. Reports include both IDs and evidence keys.
+Include paraphrases, stale/current evidence, contradictions, multilingual
 questions and genuinely unanswerable questions. Review labels independently of
 the retrieval output; do not label results relevant merely because the system
 returned them.
@@ -220,3 +236,29 @@ python scripts/xkb_eval.py --live --cases reviewed-cases.json --require-semantic
 Live evaluation uses the configured library and providers and can incur provider
 costs. Synthetic success cannot establish a production judge threshold; reserve
 separate questions for validation rather than tuning and reporting on the same set.
+
+## Jev input-limit audit (2026-09-27)
+
+[TypeSafe's model reference](https://docs.typesafe.ai/models) documents 64k tokens
+for state plus all questions, and 32k for state plus the longest question.
+Question count and JSON byte count are not token counts. The XKB adapter trims
+queries to 600 characters and each candidate to 900 characters before adding
+instructions; these are character caps, not a token-budget guarantee.
+
+A read-only copy of the VPS conversation database was used to reproduce the
+default `Seedance workflow` retrieval with the production providers. The actual
+request contained 25 questions, 31,647 serialized bytes, a 24-character state,
+9,695 total instruction characters and a longest question of 922 characters.
+The provider returned HTTP 200, all 25 answers, and usage of **7,344 input tokens**
+(444 output tokens). Requested model: `jev-1.13`; returned model:
+`typesafe/jev-1.13-20260917`. This usage is provider-reported, not an independent
+count with TypeSafe's tokenizer. No production conversation/usage rows were
+changed by this measurement.
+
+This successful sample is below the documented budgets. It does not establish
+the cause of earlier HTTP 400 responses or guarantee that other payloads fit.
+No fixed 8/25/30-question limit or batching change was introduced. Larger limits
+can produce more input; any future batching must account for both total input
+and state-plus-longest-question budgets, including instructions. A previous
+small JSON payload producing a provider body-size error must not be described
+as proof that the official context limit was reached.

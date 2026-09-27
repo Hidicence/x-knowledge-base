@@ -91,6 +91,42 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(actual["formatted_text"], actual["context"])
         self.assertNotIn("secret", [r["id"] for r in actual["records"]])
 
+    def test_keyword_prefers_complete_content_but_preserves_partial_fallback(self):
+        self.items = [
+            {"id": "complete", "title": "Atlas recovery", "summary": "Restore rehearsal"},
+            {"id": "partial", "title": "Atlas notes", "summary": "General notes"},
+            {"id": "hidden", "title": "Atlas recovery procedure", "namespace": "other"},
+        ]
+        self.store.catalog.index_file.write_text(json.dumps({"items": self.items}), encoding="utf-8")
+        def ids(query):
+            return {r["id"] for r in self.http(query, options={"semantic": False})["records"]}
+        self.assertEqual(ids("Atlas recovery"), {"complete"})
+        self.assertEqual(ids("Atlas repair"), {"complete", "partial"})
+        # A full match in another namespace must not suppress allowed partials.
+        self.assertEqual(ids("Atlas recovery procedure"), {"complete", "partial"})
+        self.assertEqual(ids("Atlas and recovery"), {"complete"})
+
+    def test_keyword_metadata_is_not_searchable_content(self):
+        wiki = self.store.catalog.wiki_topics_dir
+        wiki.mkdir(parents=True)
+        (wiki / "metadataonly.md").write_text(
+            "---\nnamespace: private\nvisibility: private\nsource_url: https://metadataonly.test\n"
+            "title: Rescue manual\n---\n# Restore guide\nRehearse backups.", encoding="utf-8")
+        self.store.catalog.index_file.write_text(json.dumps({"items": [
+            {"id": "metadataonly", "title": "Rescue manual", "tags": ["rehearsal"],
+             "namespace": "private", "source_url": "https://metadataonly.test"}]}), encoding="utf-8")
+        for query in ("metadataonly", "private", "namespace"):
+            with self.subTest(query=query):
+                self.assertEqual(self.http(query, options={"semantic": False})["records"], [])
+        self.assertEqual(self.http("Rescue manual", options={"semantic": False})["count"], 2)
+        self.assertEqual(self.http("rehearsal", options={"semantic": False})["count"], 1)
+
+    def test_keyword_retains_natural_language_cjk_partial_matches(self):
+        self.store.catalog.index_file.write_text(json.dumps({"items": [
+            {"id": "video", "title": "產品廣告影片", "summary": "分鏡製作流程"}]}), encoding="utf-8")
+        result = self.http("我想做一支產品廣告影片", options={"semantic": False})
+        self.assertEqual([r["id"] for r in result["records"]], ["video"])
+
     def test_http_mcp_uses_the_service_judge_and_preserves_diagnostics(self):
         self.judge.side_effect = lambda query, candidates: {
             key: 0.9 if "blue green" in text else 0.01 for key, text in candidates}
