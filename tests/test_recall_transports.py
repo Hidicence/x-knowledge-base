@@ -332,8 +332,11 @@ class RecallTransports(unittest.TestCase):
         from types import SimpleNamespace
         hit = SimpleNamespace(source_file="wiki/topics/a.md", section="A", excerpt="Aurora deployment guide",
                               source_type="wiki_semantic", score=.8, url="")
-        with mock.patch("continuity_recall.recall_semantic", return_value=[hit]):
+        with mock.patch("continuity_recall.recall_semantic", return_value=[hit]) as wiki:
             packet = self.http()
+            self.assertEqual(wiki.call_args.kwargs["top_k"], 5)
+            self.http(options={"max_wiki": 1})
+            self.assertEqual(wiki.call_args.kwargs["top_k"], 1)
         self.assertEqual(packet["retrieval_mode"], "wiki_semantic")
         self.assertFalse(packet["backends"]["cards"]["used"])
         self.assertTrue(packet["backends"]["wiki"]["used"])

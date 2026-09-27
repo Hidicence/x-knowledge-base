@@ -799,9 +799,12 @@ class KnowledgeCatalog:
         opts = recall_options(options)
         card_limit = min(limit, opts["max_cards"]) if opts["cards"] else 0
         wiki_limit = min(limit, opts["max_wiki"]) if opts["wiki"] else 0
+        # Preserve the existing semantic Wiki budget without reducing keyword
+        # quotas. Options cap candidates; they do not expand default payloads.
+        wiki_semantic_limit = min(wiki_limit, max(2, limit // 2))
         semantic_records = []
         for layer, budget, search in (("cards", card_limit, self._semantic_search),
-                                       ("wiki", wiki_limit, self._wiki_search)):
+                                       ("wiki", wiki_semantic_limit, self._wiki_search)):
             self._local.backends[layer] = {"backend": "xbrain_hybrid" if layer == "cards" else "wiki_semantic",
                 "available": False, "attempted": False, "used": False, "status": "disabled"}
             if budget and opts["semantic"]:
