@@ -21,12 +21,29 @@
 | Search index (titles, summaries, tags) | Yes (if vector index enabled) | Embedding API (Gemini / OpenAI) |
 | Wiki pages | Yes | LLM API (absorb gate, distillation) |
 | Conversation memory logs | Yes (if distill is run) | LLM API |
+| Recall query + candidate evidence | Yes (if Jev is configured and enabled) | The configured `/systemone` judge endpoint |
+| Question + recalled context | Yes (if using a cloud answer model) | LLM API through `xkb_ask.py` |
 | Generated knowledge cards (local .md files) | **No** | Stays local |
 | search_index.json | **No** | Stays local |
 | vector_index.json | **No** | Stays local |
-| credentials / API keys | **No** | Stays local (if you follow the setup guide) |
+| Credentials / API keys | Used for authentication | Sent to the configured service/provider, never included as document content or committed to Git |
 
 ---
+
+## Recall and answer generation
+
+Local storage does not make inference local. Semantic recall sends the query to
+the configured embedding provider. When enabled and configured, Jev receives
+the query and candidate evidence from cards, wiki sections and conversation
+traces through the configured LLM provider's `/systemone` endpoint.
+`xkb_ask.py` separately sends the question and recalled context to its answer
+model. `XKB_JEV_DECIDE=0` disables the judge; using Ollama for embeddings alone
+does not disable cloud judging or answer generation.
+
+An MCP client targeting a shared HTTP service sends its query to that service.
+The service's provider settings control retrieval and judging there; the ask
+client's provider settings control answer generation. For configuration and
+failure behavior, see [recall validation](./recall-validation.md).
 
 ## Detailed Data Flow by Script
 

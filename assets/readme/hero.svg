@@ -1,103 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title desc">
-  <title id="title">XKB — one knowledge layer your agents share</title>
-  <desc id="desc">Claude Code, OpenClaw and Codex connect to a single local-first XKB service, which recalls from a shared plane of sourced evidence cards, distilled wiki topics, and captured conversation traces.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#07111A"/>
-      <stop offset="1" stop-color="#0D1D29"/>
-    </linearGradient>
-    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="14"/>
-    </filter>
-  </defs>
-
-  <rect width="1200" height="470" rx="28" fill="url(#bg)"/>
-
-  <!-- ── left: title ───────────────────────────────────────────── -->
-  <g transform="translate(64 64)">
-    <text x="0" y="0" fill="#59D8C8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">LOCAL-FIRST KNOWLEDGE INFRASTRUCTURE</text>
-
-    <text x="-4" y="104" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="104" font-weight="780" letter-spacing="-2">XKB</text>
-
-    <text x="0" y="158" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="31" font-weight="640">One knowledge layer your agents share.</text>
-
-    <text x="0" y="204" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">Semantic recall across your own sources — with</text>
-    <text x="0" y="232" fill="#91A4B7" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang TC, sans-serif" font-size="21">provenance, and an honest answer when there is none.</text>
-
-    <g transform="translate(0 272)">
-      <rect width="150" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="75" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">CROSS-AGENT</text>
-      <rect x="162" width="118" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="221" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">LOCAL-FIRST</text>
-      <rect x="292" width="132" height="42" rx="21" fill="#15313D" stroke="#3B6173"/>
-      <text x="358" y="27" text-anchor="middle" fill="#C8D5DE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">MULTI-SOURCE</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="title desc">
+  <title id="title">XKB — evidence your agents can use</title>
+  <desc id="desc">Source-linked cards, wiki knowledge and captured conversations feed one shared recall core, available through MCP, HTTP and CLI clients. This is a conceptual map, not a screenshot.</desc>
+  <rect width="1200" height="480" rx="16" fill="#132724"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g id="identity">
+      <text x="56" y="52" font-size="22" letter-spacing="3" fill="#ACC0B7">YOUR SOURCES. SHARED KNOWLEDGE.</text>
+      <text x="49" y="208" font-size="158" font-weight="750" letter-spacing="-7" fill="#F4F1E8">XKB</text>
+      <text x="398" y="148" font-size="46" font-weight="600" fill="#F4F1E8">Evidence your</text>
+      <text x="398" y="204" font-size="46" font-weight="600" fill="#F4F1E8">agents can use.</text>
+      <path d="M1032 103 H1110 V190 H1032 Z M1048 126 H1093 M1048 143 H1083 M1048 160 H1093" fill="none" stroke="#82D5BC" stroke-width="3"/>
+      <path d="M1020 115 H1005 V204 H1090 V199" fill="none" stroke="#42635A" stroke-width="3"/>
     </g>
-
-    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#6D8296">
-      <text x="0" y="352">Python · SQLite · vectors optional</text>
-      <text x="0" y="378">PolyForm Noncommercial 1.0.0</text>
-    </g>
-  </g>
-
-  <!-- ── right: the actual structure ───────────────────────────── -->
-  <g transform="translate(646 58)">
-    <circle cx="240" cy="200" r="180" fill="#59D8C8" opacity="0.05" filter="url(#soft)"/>
-
-    <!-- agents -->
-    <g fill="#102633" stroke="#2C4B5C" stroke-width="1.5">
-      <rect x="0" y="0" width="152" height="56" rx="12"/>
-      <rect x="168" y="0" width="152" height="56" rx="12"/>
-      <rect x="336" y="0" width="152" height="56" rx="12"/>
-    </g>
-    <g fill="#C8D5DE" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" text-anchor="middle">
-      <text x="76" y="34">Claude Code</text>
-      <text x="244" y="34">OpenClaw</text>
-      <text x="412" y="34">Codex</text>
-    </g>
-
-    <!-- converge into one service -->
-    <g fill="none" stroke="#3B6173" stroke-width="2">
-      <path d="M76 56 V84 H244"/>
-      <path d="M412 56 V84 H244"/>
-      <path d="M244 56 V84"/>
-    </g>
-    <path d="M244 84 V116" fill="none" stroke="#59D8C8" stroke-width="2.5"/>
-    <text x="262" y="108" fill="#6D8296" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">one HTTP service</text>
-
-    <!-- service -->
-    <g transform="translate(0 116)">
-      <rect width="488" height="74" rx="16" fill="#15313D" stroke="#59D8C8" stroke-width="2"/>
-      <text x="244" y="34" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700">recall · capture · govern</text>
-      <text x="244" y="58" text-anchor="middle" fill="#8FA3B4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">token-scoped namespace · loopback by default</text>
-    </g>
-
-    <path d="M244 190 V222" fill="none" stroke="#59D8C8" stroke-width="2.5"/>
-
-    <!-- shared plane -->
-    <g transform="translate(0 222)">
-      <rect width="488" height="164" rx="16" fill="#0C1B25" stroke="#2C4B5C"/>
-      <text x="20" y="30" fill="#6D8296" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="1.6">SHARED KNOWLEDGE PLANE</text>
-
-      <g transform="translate(20 46)">
-        <rect width="142" height="98" rx="13" fill="#102D2D" stroke="#59D8C8" stroke-opacity="0.55"/>
-        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">evidence</text>
-        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">cards</text>
-        <text x="71" y="84" text-anchor="middle" fill="#7E93A6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">sourced, graded</text>
+    <g id="evidence-sources">
+      <path d="M56 257 H1144" stroke="#42635A" stroke-width="2"/>
+      <g fill="#F4F1E8" font-size="32" font-weight="550">
+        <text x="56" y="310">Cards</text>
+        <text x="425" y="310">Wiki</text>
+        <text x="794" y="310">Conversations</text>
       </g>
-
-      <g transform="translate(173 46)">
-        <rect width="142" height="98" rx="13" fill="#2A2119" stroke="#FFB86B" stroke-opacity="0.6"/>
-        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">wiki</text>
-        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">topics</text>
-        <text x="71" y="84" text-anchor="middle" fill="#A8927A" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">gated intake</text>
+      <g fill="#ACC0B7" font-size="22">
+        <text x="56" y="346">Keep the source.</text>
+        <text x="425" y="346">Build understanding.</text>
+        <text x="794" y="346">Preserve the context.</text>
       </g>
-
-      <g transform="translate(326 46)">
-        <rect width="142" height="98" rx="13" fill="#102633" stroke="#3B6173"/>
-        <text x="71" y="36" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">conversation</text>
-        <text x="71" y="60" text-anchor="middle" fill="#F4F7F5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">traces</text>
-        <text x="71" y="84" text-anchor="middle" fill="#7E93A6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">never auto-promoted</text>
+      <g fill="none" stroke="#42635A" stroke-width="2">
+        <path d="M66 366 V390 H1134 V366 M435 366 V390"/>
       </g>
+      <g fill="#82D5BC">
+        <circle cx="66" cy="366" r="4"/>
+        <circle cx="435" cy="366" r="4"/>
+        <circle cx="1134" cy="366" r="4"/>
+      </g>
+    </g>
+    <g id="shared-recall" fill="#82D5BC" font-size="24" font-weight="600">
+      <text x="56" y="443">ONE RECALL CORE</text>
+      <path d="M530 435 H648 M638 425 L648 435 L638 445" fill="none" stroke="#82D5BC" stroke-width="2"/>
+      <text x="1144" y="443" text-anchor="end">MCP / HTTP / CLI</text>
     </g>
   </g>
 </svg>

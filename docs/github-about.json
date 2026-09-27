@@ -1,0 +1,15 @@
+{
+  "description": "Local-first knowledge for AI agents: turn sources into evidence cards and wiki knowledge, then retrieve cards, notes and captured conversations through one shared MCP/HTTP recall service.",
+  "topics": [
+    "ai-agents",
+    "knowledge-base",
+    "personal-knowledge-management",
+    "model-context-protocol",
+    "semantic-search",
+    "rag",
+    "python",
+    "self-hosted",
+    "markdown",
+    "wiki"
+  ]
+}
