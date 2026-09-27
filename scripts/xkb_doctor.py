@@ -99,7 +99,7 @@ def main() -> int:
         report = assess(probe(args.query), expect_ids=args.expect_id,
                         require_semantic=args.require_semantic, require_judge=args.require_judge)
     except Exception as exc:
-        report = {"ok": False, "problems": [str(exc)]}
+        report = {"ok": False, "status": "failed", "problems": [str(exc)]}
     report["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     # ASCII escapes also work on Windows terminals without UTF-8 configured.
     print(json.dumps(report, ensure_ascii=True, indent=None if args.json else 2))
