@@ -96,7 +96,9 @@ class OnlyOneWriter(unittest.TestCase):
                      "local_ingest.py", "sync_enriched_index.py"]:
             text = (SCRIPTS / name).read_text(encoding="utf-8")
             with self.subTest(script=name):
-                self.assertIn("xkb_index.rebuild()", text)
+                expected = ("xkb_index.rebuild()" if name == "sync_enriched_index.py"
+                            else "xkb_index.finish_ingest(")
+                self.assertIn(expected, text)
 
 
 class Frontmatter(unittest.TestCase):

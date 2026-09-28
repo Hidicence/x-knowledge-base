@@ -38,3 +38,24 @@ If you want the clean mental model, use this split:
 - `skills/x-knowledge-base/dist/`
   - packaged allowlist release
   - no personal data, no wiki topics, no staging, no build caches
+
+## Recovering an ingest after an index failure
+
+Local, GitHub and YouTube ingestion save cards before rebuilding the search
+index. If rebuilding fails, they exit with status `1` and keep the saved files.
+With the same data configuration (`XKB_CONFIG`, `XKB_DATA_DIR`, or explicit path
+overrides), run this from the repository root:
+
+```bash
+python3 scripts/xkb_index.py --rebuild
+```
+
+This rebuilds the search index from existing files without generating cards or
+calling an LLM. Repair the index before rerunning ingestion, since ingestion
+uses that index to detect sources it has already processed. Vector indexing
+remains a separate step. Local and GitHub ingestion retain status `2` for
+successful new cards; YouTube retains status `0` on success.
+
+`search_bookmarks.sh` uses the same resolved paths and rebuild function. If its
+automatic rebuild fails, it warns before using the old index or the bookmark
+full-text fallback; those results may be incomplete.

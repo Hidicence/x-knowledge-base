@@ -2,7 +2,7 @@
 # YouTube 播放清單自動同步腳本
 # 每日執行：抓新影片 → 生成知識卡 → 更新語意索引
 
-set -o pipefail
+set -euo pipefail
 
 # Use HOME-relative default instead of hardcoded /root/
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"

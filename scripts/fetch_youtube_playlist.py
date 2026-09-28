@@ -24,6 +24,7 @@ from pathlib import Path
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 import xkb_index
+from xkb_frontmatter import parse as extract_frontmatter
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
@@ -158,30 +159,6 @@ def load_index() -> dict:
     return {"items": []}
 
 
-def save_index(data: dict) -> None:
-    """索引不再由這裡修補——寫完檔案之後，讓 builder 從檔案重算。
-
-    參數保留是為了不動呼叫端：呼叫端在這之前已經把卡片寫進磁碟了，而重算的
-    結果由磁碟上的檔案決定，不是由這份記憶體中的 dict 決定。這正是重點——
-    八個寫入者各自修補，索引才會慢慢跟檔案說的不一樣。
-    """
-    del data  # 由檔案決定，不由呼叫端手上的副本決定
-    xkb_index.rebuild()
-
-
-def extract_frontmatter(md_content: str) -> dict:
-    """從 markdown frontmatter 解析欄位"""
-    m = re.match(r"^---\n(.+?)\n---", md_content, re.DOTALL)
-    if not m:
-        return {}
-    result = {}
-    for line in m.group(1).splitlines():
-        if ":" in line:
-            k, _, v = line.partition(":")
-            result[k.strip()] = v.strip()
-    return result
-
-
 # extract_summary imported from _card_prompt
 
 
@@ -295,16 +272,11 @@ def main():
                 "size": md_path.stat().st_size,
                 "enriched": True,
             }
-            index_data["items"].append(new_item)
             existing_items_list.append(new_item)  # keep related context fresh
             processed += 1
 
-    # 索引重建搬到迴圈外面。save_index 現在不是寫一份 JSON，而是叫起
-    # build_search_index.sh 整份重算——留在迴圈裡的話，50 支影片的播放清單
-    # 會做 50 次全目錄掃描與 50 次索引重寫。local_ingest 與 fetch_github_repos
-    # 都是跑完才呼叫一次，這裡漏了。
-    if processed > 0:
-        save_index(index_data)
+    if processed > 0 and not xkb_index.finish_ingest(processed):
+        return 1
 
     print(f"\n✅ 完成：新增 {processed} 張 YouTube 知識卡片")
     if processed > 0:

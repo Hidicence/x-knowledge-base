@@ -35,12 +35,25 @@ def has_frontmatter(text: str) -> bool:
     return bool(FRONTMATTER.match(text))
 
 
+def parse(text: str) -> dict[str, str]:
+    """Read the raw scalar fields used by card ingesters, without rewriting YAML."""
+    match = FRONTMATTER.match(text)
+    if not match:
+        return {}
+    fields = {}
+    for line in match.group(1).splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
 def get(text: str, key: str) -> str | None:
     """讀一個 frontmatter 欄位的原始字串；沒有這個欄位回 None。"""
     match = FRONTMATTER.match(text)
     if not match:
         return None
-    pattern = re.compile(rf"^{re.escape(key)}:\s*(.*?)\s*$", re.MULTILINE)
+    pattern = re.compile(rf"^{re.escape(key)}:[ \t]*(.*?)[ \t]*\r?$", re.MULTILINE)
     found = pattern.search(match.group(1))
     return found.group(1) if found else None
 

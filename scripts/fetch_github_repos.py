@@ -35,6 +35,7 @@ from runtime_config import runtime_env
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 import xkb_index
+from xkb_frontmatter import parse as extract_frontmatter
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
     llm_call as _llm_call, SOURCE_LABELS, gbrain_put as _gbrain_put,
@@ -114,29 +115,6 @@ def load_index() -> dict:
     if INDEX_FILE.exists():
         return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
     return {"version": "1.1", "items": []}
-
-
-def save_index(data: dict) -> None:
-    """索引不再由這裡修補——寫完檔案之後，讓 builder 從檔案重算。
-
-    參數保留是為了不動呼叫端：呼叫端在這之前已經把卡片寫進磁碟了，而重算的
-    結果由磁碟上的檔案決定，不是由這份記憶體中的 dict 決定。這正是重點——
-    八個寫入者各自修補，索引才會慢慢跟檔案說的不一樣。
-    """
-    del data  # 由檔案決定，不由呼叫端手上的副本決定
-    xkb_index.rebuild()
-
-
-def extract_frontmatter(card: str) -> dict:
-    m = re.match(r"^---\n(.*?)\n---", card, re.DOTALL)
-    if not m:
-        return {}
-    result = {}
-    for line in m.group(1).splitlines():
-        if ":" in line:
-            k, _, v = line.partition(":")
-            result[k.strip()] = v.strip()
-    return result
 
 
 # extract_summary imported from _card_prompt
@@ -290,7 +268,7 @@ def main():
     api_key = "" if args.dry_run else load_env_key()
     if not api_key and not args.dry_run:
         print("[ERROR] LLM_API_KEY not found")
-        sys.exit(1)
+        return 1
 
     # Build dedup key set from existing index
     index_data = load_index()
@@ -328,10 +306,10 @@ def main():
         total += n
         all_new_items.extend(items)
 
-    # Batch merge into index — one write at the end
+    # Rebuild once from the cards on disk.
     if all_new_items and not args.dry_run:
-        index_data["items"].extend(all_new_items)
-        save_index(index_data)
+        if not xkb_index.finish_ingest(len(all_new_items)):
+            return 1
         print(f"\n✅ 完成：共新增 {total} 張 GitHub 知識卡片，已寫入索引")
         print("💡 執行以下指令更新語意索引：")
         print("   python3 scripts/build_vector_index.py --incremental")
@@ -339,11 +317,11 @@ def main():
         print(f"\n✅ 完成：共新增 {total} 張 GitHub 知識卡片")
 
     # Exit code 2 = new cards added (for run_github_sync.sh to detect)
-    sys.exit(2 if total > 0 and not args.dry_run else 0)
+    return 2 if total > 0 and not args.dry_run else 0
 
 
 import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
 
 if __name__ == "__main__":
     xkb_usage.record(__file__)
-    main()
+    raise SystemExit(main())

@@ -1,48 +1,46 @@
 #!/bin/bash
-# search_bookmarks.sh - 搜尋書籤功能（優先使用 search_index.json）
-
+# Search bookmarks using the same configured paths and index builder as ingestion.
 set -euo pipefail
-
-WORKSPACE_DIR="${WORKSPACE_DIR:-${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}}"
-# skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BOOKMARKS_DIR="${BOOKMARKS_DIR:-$WORKSPACE_DIR/memory/bookmarks}"
-INDEX_FILE="${INDEX_FILE:-$BOOKMARKS_DIR/search_index.json}"
-SEARCH_TERM="${1:-}"
-
-if [[ -z "$SEARCH_TERM" ]]; then
-    echo "用法: $0 <關鍵字>"
-    echo "範例: $0 seedance"
-    echo "範例: $0 openclaw seo"
-    exit 1
-fi
-
-echo "🔍 搜尋: $SEARCH_TERM"
-echo "================================"
-echo ""
-
-# 先嘗試靜默增量更新索引（可關閉：AUTO_INDEX_UPDATE=0）
-AUTO_INDEX_UPDATE="${AUTO_INDEX_UPDATE:-1}"
-if [[ "$AUTO_INDEX_UPDATE" == "1" ]] && [[ -x ""/scripts/build_search_index.sh"" ]]; then
-    "/scripts/build_search_index.sh" --incremental >/dev/null 2>&1 || true
-fi
-
-# 若索引仍不存在，再做一次全量建立
-if [[ ! -f "$INDEX_FILE" ]] && [[ -x ""/scripts/build_search_index.sh"" ]]; then
-    "/scripts/build_search_index.sh" >/dev/null 2>&1 || true
-fi
-
-if [[ -f "$INDEX_FILE" ]]; then
-    python3 - "$INDEX_FILE" "$SEARCH_TERM" <<'PY'
+exec python3 - "$SKILL_DIR" "$@" <<'PY'
+import contextlib
 import json
+import os
 import sys
+from pathlib import Path
 
-index_file = sys.argv[1]
-query = sys.argv[2]
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+import xkb_index
+import xkb_paths
+
+query = " ".join(sys.argv[2:]).strip()
+if not query:
+    print("Usage: search_bookmarks.sh <keywords>", file=sys.stderr)
+    sys.exit(1)
+print(f"Search: {query}\n================================\n")
+index_file = xkb_paths.INDEX_FILE
+if os.environ.get("AUTO_INDEX_UPDATE", "1") == "1" or not index_file.exists():
+    with contextlib.redirect_stdout(sys.stderr):
+        rebuilt = xkb_index.rebuild()
+    if not rebuilt:
+        print("[WARN] Index rebuild failed; results may be incomplete.", file=sys.stderr)
+
+if not index_file.exists():
+    # Preserve the full-text fallback when no derived index is available.
+    matches = []
+    for path in sorted(xkb_paths.BOOKMARKS_DIR.rglob("*.md")):
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if query.lower() in content.lower():
+            matches.append(path)
+            print(path)
+    print(f"{len(matches)} matching bookmark files (full-text fallback)")
+    sys.exit(0)
+
 terms = [t.lower() for t in query.split() if t.strip()]
-
-with open(index_file, 'r', encoding='utf-8') as f:
-    data = json.load(f)
+data = json.loads(index_file.read_text(encoding="utf-8"))
 
 items = data.get('items', [])
 matches = []
@@ -96,33 +94,3 @@ for i, item in enumerate(matches[:30], start=1):
 print("================================")
 print(f"✅ 共找到 {len(matches)} 個相關書籤（索引模式）")
 PY
-    exit 0
-fi
-
-# fallback: 沒索引就直接 grep
-RESULTS=$(grep -r -i "$SEARCH_TERM" "$BOOKMARKS_DIR" --include="*.md" -l 2>/dev/null || echo "")
-
-if [[ -z "$RESULTS" ]]; then
-    echo "❌ 沒有找到相關書籤"
-    exit 0
-fi
-
-COUNT=0
-while read -r file; do
-    [[ -z "$file" ]] && continue
-    ((COUNT++)) || true
-
-    title=$(grep "^title:" "$file" 2>/dev/null | head -1 | sed 's/title: *"\(.*\)"/\1/' || basename "$file")
-    category=$(grep "^category:" "$file" 2>/dev/null | head -1 | sed 's/category: *//' || echo "general")
-    snippet=$(grep -i -A1 "$SEARCH_TERM" "$file" 2>/dev/null | head -3 | tr '\n' ' ')
-
-    echo "📄 [$COUNT] $title"
-    echo "   分類: $category"
-    echo "   檔案: ${file#$BOOKMARKS_DIR/}"
-    echo "   內容: ${snippet:0:100}..."
-    echo ""
-
-done <<< "$RESULTS"
-
-echo "================================"
-echo "✅ 共找到 $COUNT 個相關書籤（全文模式）"

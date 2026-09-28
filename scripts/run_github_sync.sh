@@ -17,8 +17,8 @@ WORKSPACE="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}"
 # skill 目錄由腳本自身位置推導——不要拿資料路徑去推程式路徑（那是 VPS 的擺法）
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$SKILL_DIR/scripts/fetch_github_repos.py"
-LOG_FILE="/tmp/xkb-github-sync.log"
-LOCK_FILE="/tmp/xkb-github-sync.lock"
+LOG_FILE="${XKB_GITHUB_LOG:-/tmp/xkb-github-sync.log}"
+LOCK_FILE="${XKB_GITHUB_LOCK:-/tmp/xkb-github-sync.lock}"
 
 # Do not let a slow API/embedding run overlap the next scheduled run.
 exec 9>"$LOCK_FILE"
@@ -44,8 +44,17 @@ fi
 cd "$WORKSPACE" || { echo "[ERROR] workspace not found: $WORKSPACE" >&2; exit 1; }
 test -f "$SCRIPT" || { echo "[ERROR] fetch script not found: $SCRIPT" >&2; exit 1; }
 read -r -a FLAG_ARGS <<< "$FLAGS"
+# Status 2 means successful ingestion; capture both pipeline statuses before
+# errexit can treat that status as a failure.
+set +e
 python3 "$SCRIPT" "${FLAG_ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
-EXIT_CODE=${PIPESTATUS[0]}
+SYNC_STATUS=("${PIPESTATUS[@]}")
+set -e
+EXIT_CODE=${SYNC_STATUS[0]}
+if [ "${SYNC_STATUS[1]}" -ne 0 ]; then
+    echo "[ERROR] Could not write GitHub sync log." >&2
+    exit 1
+fi
 
 # Exit code 2 = new cards were added — update vector index
 if [ "$EXIT_CODE" -eq 2 ]; then

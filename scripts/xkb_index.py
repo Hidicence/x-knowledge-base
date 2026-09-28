@@ -188,3 +188,27 @@ def rebuild(*, incremental: bool = True, timeout: int = 900) -> bool:
     if tail:
         print(tail[-1])
     return True
+
+
+def finish_ingest(saved_count: int) -> bool:
+    """Complete an ingest only after the saved cards are searchable."""
+    if rebuild():
+        return True
+    print(
+        f"[ERROR] {saved_count} card(s) saved, but the search index rebuild failed. "
+        "Keep the cards and repair the index with the same data configuration: "
+        "python3 scripts/xkb_index.py --rebuild",
+        file=sys.stderr,
+    )
+    return False
+
+
+if __name__ == "__main__":
+    import argparse
+    import xkb_usage
+
+    parser = argparse.ArgumentParser(description="Rebuild the search index from saved cards")
+    parser.add_argument("--rebuild", action="store_true", required=True)
+    parser.parse_args()
+    xkb_usage.record(__file__)
+    raise SystemExit(0 if rebuild() else 1)

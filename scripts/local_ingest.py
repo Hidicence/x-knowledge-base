@@ -25,147 +25,33 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import xkb_index
-import xkb_text
+import xkb_frontmatter
 from _card_prompt import gbrain_put as _gbrain_put
-from _card_prompt import condense_long_content
+from _card_prompt import (
+    build_prompt, condense_long_content, extract_summary, find_related_context,
+    llm_call,
+)
+from xkb_frontmatter import parse as extract_frontmatter
 from category_classifier import classify_content, apply_category
 import xkb_paths
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-WORKSPACE_DIR = Path(os.getenv("OPENCLAW_WORKSPACE",
-    os.getenv("WORKSPACE_DIR", str(Path.home() / ".openclaw" / "workspace"))))
-BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 CARDS_DIR = xkb_paths.CARDS_DIR
 INDEX_FILE = xkb_paths.INDEX_FILE
 
-# ── Unified LLM helper ────────────────────────────────────────────────────────
-_SKILL_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_SKILL_DIR / "scripts"))
-from _llm import call as _llm_backend
-
-CARD_CATEGORIES = [
-    "ai-tools", "developer-tools", "workflows", "data",
-    "startup", "design", "tech", "learning", "research", "other"
-]
-
-MAX_CONTENT_CHARS = 4000   # truncate long files before sending to LLM
-SUPPORTED_EXTS    = {".md", ".txt", ".markdown"}
-
-SYSTEM_PROMPT = """\
-You are a knowledge card generator for a personal learning base. \
-Given the content of an academic paper or local document, output one structured knowledge card in Traditional Chinese.
-
-Strict rules:
-- Leave sections empty with "無" if uncertain — never hallucinate
-- Use only information from the provided content
-- Do NOT use the reader's personal name in any section
-
-Quality principles: conservative > hallucination, understanding > summary, structured > verbose"""
-
-CARD_PROMPT = """\
-以下是一篇論文或本地文件的內容，請生成一張 9-section 知識卡片。
-
-檔名: {filename}
-來源: {source_url}
-分類: {category}
-
-內容:
-{content}
-
-{related_section}
-請輸出以下格式（YAML frontmatter + Markdown）：
-
----
-id: {card_id}
-type: knowledge-card
-source_type: local-paper
-source_url: {source_url}
-category: {category}
-tags: [tag1, tag2, tag3]
-sensitivity: public
-confidence: medium
----
-
-# <論文標題，保留英文原名或簡短繁體中文翻譯>
-
-## 1. 核心問題與結論
-- **提問**：這篇論文試圖解答什麼問題？（一句話）
-- **結論**：作者給出的答案是什麼？（一句話）
-- **可信度說明**：這個結論有沒有數據/實驗/引用支撐？
-
-## 2. Claim 等級
-- **等級**：[Attested | Scholarship | Inference]
-  - Attested：原文直接引用、有具體數據或實驗結果
-  - Scholarship：作者/領域的分析觀點，有明確來源依據
-  - Inference：LLM 推論、尚未驗證的假設
-- **主要主張**：（一句話說明核心主張）
-- **依據**：（為什麼是這個等級？）
-
-## 3. 關鍵論點
-- 論點一
-- 論點二
-- 論點三
-
-## 4. False Friends（如有）
-這篇涉及哪些看起來像普通詞彙但有特定技術含義的術語？
-- term: （術語名稱）
-  common_misunderstanding: （多數人誤以為是...）
-  actual_meaning: （在此領域/文章中實際指的是...）
-如果沒有：無
-
-## 5. 驚訝點
-讀者讀完這篇後，可能感到意外或需要重新思考的是什麼？
-（如果沒有明顯驚訝點，填「無」）
-
-## 6. 與現有知識的關係
-{related_cards_placeholder}
-
-## 7. 雙語摘要（搜尋索引用）
-ZH: <20-40字繁體中文摘要，說明核心發現>
-EN: <15-30 word English summary of the core finding>
-
-## 8. 對使用者的價值
-- 可追蹤的研究方向
-- 可執行的應用場景
-- 與現有工作流程的關聯
-
-## 9. 原始來源
-- 來源: {source_url}
-- Links: (list DOI or other URLs found in content)
-"""
-
-
-def load_env_key() -> str:
-    return ""  # auth handled by _llm.py via openclaw CLI
-
-
-def llm_call(prompt: str, api_key: str = "", system: str | None = None) -> str:
-    return _llm_backend(system or "", prompt)
+SUPPORTED_EXTS = {".md", ".txt", ".markdown"}
 
 
 def load_index() -> dict:
     if INDEX_FILE.exists():
         return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
     return {"version": "1.1", "items": []}
-
-
-def save_index(data: dict) -> None:
-    """索引不再由這裡修補——寫完檔案之後，讓 builder 從檔案重算。
-
-    參數保留是為了不動呼叫端：呼叫端在這之前已經把卡片寫進磁碟了，而重算的
-    結果由磁碟上的檔案決定，不是由這份記憶體中的 dict 決定。這正是重點——
-    八個寫入者各自修補，索引才會慢慢跟檔案說的不一樣。
-    """
-    del data  # 由檔案決定，不由呼叫端手上的副本決定
-    xkb_index.rebuild()
 
 
 def file_hash(path: Path) -> str:
@@ -181,74 +67,12 @@ def card_id_for_file(path: Path) -> str:
     return f"local-{stem}-{h}"
 
 
-def extract_frontmatter(card: str) -> dict:
-    m = re.match(r"^---\n(.*?)\n---", card, re.DOTALL)
-    if not m:
-        return {}
-    result = {}
-    for line in m.group(1).splitlines():
-        if ":" in line:
-            k, _, v = line.partition(":")
-            result[k.strip()] = v.strip()
-    return result
-
-
-def extract_summary(card: str) -> str:
-    # New format: ## 7. 雙語摘要 with ZH:/EN: lines
-    bilingual = re.search(r"##\s+7\.\s*雙語摘要[^\n]*\n(.+?)(?=\n##|\Z)", card, re.DOTALL)
-    if bilingual:
-        block = bilingual.group(1)
-        zh_m = re.search(r"^ZH:\s*(.+)$", block, re.MULTILINE)
-        en_m = re.search(r"^EN:\s*(.+)$", block, re.MULTILINE)
-        parts = [m.group(1).strip() for m in [zh_m, en_m] if m and m.group(1).strip()]
-        if parts:
-            return " | ".join(parts)
-    # Legacy fallback
-    zh = re.search(r"##\s*📝 一句話摘要\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
-    en = re.search(r"##\s*📝 English Summary\s*\n+(.+?)(\n##|\Z)", card, re.DOTALL)
-    parts = [x.group(1).strip() for x in [zh, en] if x]
-    if parts:
-        return " | ".join(parts)
-    lines = [l.strip() for l in card.splitlines()
-             if l.strip() and not l.startswith("#") and not l.startswith("---")]
-    return lines[0] if lines else ""
-
-
 def pmc_url_from_filename(filename: str) -> str:
     """Extract PMC ID from filename and return NCBI URL."""
     m = re.match(r"(PMC\d+)", filename, re.IGNORECASE)
     if m:
         return f"https://www.ncbi.nlm.nih.gov/pmc/articles/{m.group(1)}/"
     return ""
-
-
-def find_related_context(content: str, existing_items: list[dict], top_k: int = 3) -> str:
-    """Keyword search against existing index to find related cards for section 6."""
-    # 斷詞只有一個定義：xkb_text。這裡原本各自帶一份只切 2-gram、
-    # 而且把整串中文吃成一個 token 的正則。
-    query_tokens = set(xkb_text.tokenize(content[:1000], xkb_text.STOPWORDS))
-    if not query_tokens:
-        return "（無相關既有卡片）"
-
-    scored = []
-    for item in existing_items:
-        combined = " ".join([
-            (item.get("title") or "").lower(),
-            (item.get("summary") or "").lower(),
-            " ".join(item.get("tags") or []).lower(),
-        ])
-        score = sum(1 for t in query_tokens if t in combined)
-        if score > 0:
-            scored.append((item, score))
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    if not scored:
-        return "（無相關既有卡片）"
-
-    lines = []
-    for item, _ in scored[:top_k]:
-        lines.append(f"- **{item.get('title', '(untitled)')}**：{(item.get('summary') or '')[:80]}")
-    return "\n".join(lines)
 
 
 def collect_files(input_path: Path) -> list[Path]:
@@ -287,36 +111,27 @@ def process_file(
         print(f"  [SKIP] 空檔案：{path.name}")
         return None
 
-    # 長文 map-reduce（TODOS 2026-07-13）：取代硬截斷，保留全文重點；失敗自動退回截斷
-    if len(content) > MAX_CONTENT_CHARS:
-        truncated = condense_long_content(content, verbose=True)
-    else:
-        truncated = content
-
-    print(f"  📄 {path.name} ({len(content)} 字元)")
-
+    print(f"  {path.name} ({len(content)} characters)")
     if dry_run:
         return None
 
-    source_url = pmc_url_from_filename(path.name)
-    classification = classify_content(
-        content, source_type="local-paper", current_category=force_category or "research"
-    )
-    category = classification["category"]
-    related_ctx = find_related_context(content, existing_items)
-    related_section = f"相關既有卡片（供 Section 6 參考）：\n{related_ctx}\n" if related_ctx else ""
+    truncated = condense_long_content(content, verbose=True)
 
-    prompt = CARD_PROMPT.format(
-        filename=path.name,
-        content=truncated,
+    source_url = pmc_url_from_filename(path.name)
+    category = force_category or classify_content(
+        content, source_type="local-paper", current_category="research"
+    )["category"]
+    related_ctx = find_related_context(content, existing_items)
+    prompt = build_prompt(
+        content=f"Filename: {path.name}\n\n{truncated}",
         card_id=card_id,
+        source_type="local-paper",
         source_url=source_url or str(path),
         category=category,
-        related_section=related_section,
-        related_cards_placeholder=related_ctx,
+        related_context=related_ctx,
     )
     try:
-        card_content = llm_call(prompt, api_key, system=SYSTEM_PROMPT)
+        card_content = llm_call(prompt, api_key)
     except Exception as e:
         print(f"     ❌ LLM 失敗：{e}")
         return None
@@ -325,14 +140,18 @@ def process_file(
     if "---\n" in card_content and "id:" not in card_content:
         card_content = card_content.replace("---\n", f"---\nid: {card_id}\n", 1)
 
-    # Override category if specified
-    if force_category:
-        card_content = re.sub(
-            r"^category:.*$", f"category: {force_category}",
-            card_content, flags=re.MULTILINE
+    card_content = apply_category(card_content, category)
+    if extra_tags:
+        # Preserve the original YAML elements, including quoted commas. Only
+        # encode the new values; splitting/re-encoding would change existing tags.
+        tags_raw = (xkb_frontmatter.get(card_content, "tags") or "").strip()
+        if tags_raw.startswith("[") and tags_raw.endswith("]"):
+            tags_raw = tags_raw[1:-1].strip()
+        added = ", ".join(json.dumps(tag, ensure_ascii=False) for tag in dict.fromkeys(extra_tags))
+        separator = ", " if tags_raw else ""
+        card_content = xkb_frontmatter.set_field(
+            card_content, "tags", f"[{tags_raw}{separator}{added}]"
         )
-    else:
-        card_content = apply_category(card_content, category)
 
     # Save card
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -341,31 +160,12 @@ def process_file(
     _gbrain_put(card_path, card_id)
     print(f"     💾 cards/{card_id}.md")
 
-    # Build index item
+    # Context for subsequent cards; the search index is derived from the files.
     fm = extract_frontmatter(card_content)
-    summary = extract_summary(card_content)
-
-    # Parse tags (supports both "a, b, c" and "[a, b, c]" formats)
-    tags_raw = fm.get("tags", "").strip("[]")
-    tags = list({t.strip() for t in tags_raw.split(",") if t.strip()})
-    tags.extend(extra_tags)
-    if force_category:
-        fm["category"] = force_category
-
     return {
-        "path": str(card_path),
-        "relative_path": f"cards/{card_id}.md",
         "title": fm.get("title", path.stem),
-        "category": fm.get("category", category),
-        "tags": list(set(tags)),
-        "summary": summary,
-        "source_url": source_url,
-        "source_type": "local-paper",
-        "source_file": str(path),
-        "searchable": f"{path.name} {fm.get('title','')} {summary} {' '.join(tags)}",
-        "mtime": datetime.now(timezone.utc).isoformat(),
-        "size": card_path.stat().st_size,
-        "enriched": True,
+        "tags": [t.strip().strip("\"'") for t in fm.get("tags", "").strip("[]").split(",") if t.strip()],
+        "summary": extract_summary(card_content),
     }
 
 
@@ -409,10 +209,12 @@ def main() -> int:
         )
         if result:
             new_items.append(result)
+            existing_items.append(result)
+            existing_keys.add(f"local|{card_id_for_file(path)}")
 
     if new_items and not args.dry_run:
-        index_data["items"].extend(new_items)
-        save_index(index_data)
+        if not xkb_index.finish_ingest(len(new_items)):
+            return 1
         print(f"\n✅ 完成：新增 {len(new_items)} 張知識卡片")
         print("💡 下一步：python3 scripts/sync_cards_to_wiki.py --apply --limit 20")
     elif args.dry_run:
