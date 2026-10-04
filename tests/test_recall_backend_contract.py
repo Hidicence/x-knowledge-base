@@ -34,6 +34,22 @@ class StructuredBackend(unittest.TestCase):
         self.assertTrue(any('judge' in w and 'unverified' in w for w in packet['warnings']))
         self.assertEqual(packet['count'],1)
 
+    def test_unreadable_local_provenance_preserves_remote_hits(self):
+        import tempfile
+        import xkb_paths
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'broken.md').write_bytes(b'\xff')
+            hits = [{'slug': 'broken', 'chunk_text': 'Source URL: https://example.test/source', 'score': .9},
+                    {'slug': 'other', 'chunk_text': 'Remote evidence', 'score': .8}]
+            with mock.patch.object(xkb_paths, 'CARDS_DIR', root), \
+                 mock.patch.object(xkb_paths, 'BOOKMARKS_DIR', root), \
+                 mock.patch.object(xb, '_resolve_gbrain_dir', return_value=root), \
+                 mock.patch.object(xb.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(hits), '')):
+                rows = xb.xbrain_query('natural question')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['source_url'], 'https://example.test/source')
+
     def test_query_uses_lossless_operation_transport(self):
         hit={'slug':'fixture','title':'Complete title','chunk_text':'evidence '*80,'score':.91}
         envelope=[hit]

@@ -278,10 +278,15 @@ def _source_url(item: dict) -> str:
     for root in roots:
         leaf = slug.removeprefix("youtube-") if root.name == "youtube" else slug
         candidate = root / (leaf + ".md")
-        if candidate.is_file() and candidate.resolve().is_relative_to(root.resolve()):
-            value = xkb_frontmatter.parse(candidate.read_text(encoding="utf-8")).get("source_url")
-            if value:
-                return str(value).strip("\"'")
+        try:
+            if candidate.is_file() and candidate.resolve().is_relative_to(root.resolve()):
+                value = xkb_frontmatter.parse(candidate.read_text(encoding="utf-8")).get("source_url")
+                if value:
+                    return str(value).strip("\"'")
+        except (OSError, UnicodeError):
+            # Local provenance is optional; a damaged local copy must not erase
+            # otherwise valid remote search hits.
+            continue
     return _extract_source_url(item.get("chunk_text", "")) or _url_from_slug(slug)
 
 
