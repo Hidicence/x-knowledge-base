@@ -1587,7 +1587,7 @@ class Store:
             reset()
         skipped = self._skip_reason(query)
         if skipped:
-            return {
+            packet = {
                 "schema": SCHEMA, "query": query, "namespace": namespace,
                 "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
                 "records": [], "count": 0, "unfiltered_count": 0,
@@ -1598,6 +1598,8 @@ class Store:
                 "semantic_backend": {"status": "not_attempted"},
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
+            packet["quality"] = recall_quality(packet)
+            return packet
         knowledge = self.catalog.search(query, limit, namespace, **({"options": opts} if options is not None else {}))
         conversation_state = {"backend": "conversation_keyword", "attempted": opts["conversations"],
                               "used": False, "status": "disabled"}

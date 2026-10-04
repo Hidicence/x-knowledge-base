@@ -26,7 +26,7 @@ import xkb_text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import xkb_failures
 import xkb_paths
-from gbrain_publish import PublicationBatch
+from gbrain_publish import PublicationBatch, retry_pending
 from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -397,9 +397,19 @@ def main() -> int:
     if args.dry_run:
         todo = todo[:args.limit]
 
+    batch = PublicationBatch(_gbrain_put)
+    if not args.dry_run:
+        if not batch.ready():
+            return 1
+        retry_pending(batch.recovery_limit, batch=batch)
+        batch.recover_saved((path, path.stem) for path in xkb_paths.card_files())
+        if batch.blocked:
+            batch.finish(indexer=lambda count: _sync_enriched_index())
+            return 1
+
     if not todo:
         print("✅ No todo items found")
-        return 0
+        return 0 if args.dry_run or batch.finish(indexer=lambda count: _sync_enriched_index()) else 1
 
     total_todo = len([i for i in items if i["status"] == "todo"])
     print(f"📋 Processing {len(todo)}/{total_todo} todo items  [worker: {args.worker}]")
@@ -422,9 +432,6 @@ def main() -> int:
         print("\n✅ dry-run complete; queue unchanged")
         return 0
 
-    batch = PublicationBatch(_gbrain_put)
-    if not batch.ready():
-        return 1
     generated_attempts = recovered_attempts = 0
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):

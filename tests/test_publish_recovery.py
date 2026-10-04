@@ -160,15 +160,95 @@ class CheckedPublication(unittest.TestCase):
         self.assertEqual(batch.verified, 1)
         self.assertEqual(publisher.call_count, 2)
 
-    def test_recovery_is_bounded_independently_of_new_work(self):
-        from unittest.mock import Mock
-        publisher = Mock(return_value='verified')
-        batch = self.pub.PublicationBatch(publisher, recovery_limit=1)
-        self.assertTrue(batch.existing(self.card, 'old1'))
-        self.assertTrue(batch.existing(self.card, 'old2'))
-        self.assertTrue(batch.publish(self.card, 'new', generated=True))
-        self.assertEqual((batch.generated, batch.verified, batch.deferred), (1, 1, 1))
-        self.assertEqual(publisher.call_count, 2)
+    def test_background_recovery_rotates_and_explicit_inputs_are_all_checked(self):
+        cards = []
+        for i in range(3):
+            card = self.root / f"saved{i}.md"
+            card.write_text(f"# Card {i}", encoding='utf-8')
+            cards.append((card, f"saved{i}"))
+        with patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')) as run:
+            first = self.pub.PublicationBatch(recovery_limit=2)
+            first.recover_saved(cards)
+            self.assertEqual(first.deferred, 1)
+            second = self.pub.PublicationBatch(recovery_limit=2)
+            second.recover_saved(cards)
+            with self.pub._db() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM outbox').fetchone()[0], 3)
+            explicit = self.pub.PublicationBatch(recovery_limit=1)
+            for card, slug in cards:
+                self.assertTrue(explicit.existing(card, slug))
+            self.assertEqual(explicit.verified, 3)
+
+    def test_index_failure_remains_retryable_after_publication_succeeded(self):
+        with patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')):
+            first = self.pub.PublicationBatch()
+            first.publish(self.card, 'card', generated=True)
+            self.index.return_value = False
+            self.assertFalse(first.finish())
+            self.assertEqual(self.row(), ('pending', 'index'))
+            self.index.return_value = True
+            retry = self.pub.PublicationBatch()
+            self.assertEqual(self.pub.retry_pending(batch=retry), {'attempted': 1, 'failed': 0})
+            self.assertTrue(retry.finish())
+            self.assertEqual(self.index.call_count, 2)
+            self.assertEqual(self.row(), ('verified', 'verified'))
+
+    def test_scan_discovers_saved_card_without_outbox_receipt(self):
+        import run_scan_worker as scan
+        with patch.object(scan.xkb_paths, 'card_files', return_value=[self.card]), \
+             patch.object(scan, 'CARDS_DIR', self.root), \
+             patch.object(scan, '_get_api_key', return_value='fixture'), \
+             patch.object(scan, 'scan_missing', return_value=[]), \
+             patch.object(scan, '_call_llm') as llm, \
+             patch.object(self.pub, 'check_backend'), \
+             patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')), \
+             patch.object(sys, 'argv', ['scan', '--limit', '1']):
+            self.assertEqual(scan.main(), 0)
+        llm.assert_not_called()
+        self.assertEqual(self.row(), ('verified', 'verified'))
+        self.index.assert_called_once_with(1)
+
+    def test_bookmark_recovers_when_queue_reconciliation_already_marked_done(self):
+        import run_bookmark_worker as worker
+        with self.pub._db() as db:
+            db.execute('INSERT INTO outbox VALUES (?,?,?,?,?,0,?)',
+                       ('card', str(self.card), '', 'pending', 'embed', 0))
+        with patch.object(worker.xkb_paths, 'card_files', return_value=[self.card]), \
+             patch.object(worker, 'CARDS_DIR', self.root), \
+             patch.object(worker, '_sync_queue'), \
+             patch.object(worker, '_load_queue', return_value={'items': [{'id': 'card', 'status': 'done'}]}), \
+             patch.object(worker, '_sync_enriched_index', return_value=True) as index, \
+             patch.object(worker, '_call_llm') as llm, \
+             patch.object(self.pub, 'check_backend'), \
+             patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')), \
+             patch.object(sys, 'argv', ['bookmark', '--limit', '1']):
+            self.assertEqual(worker.main(), 0)
+        llm.assert_not_called()
+        index.assert_called_once()
+        self.assertEqual(self.row(), ('verified', 'verified'))
+
+    def test_bookmark_item_failure_continues_but_backend_failure_stops_generation(self):
+        import run_bookmark_worker as worker
+        for unavailable, expected in [(False, 2), (True, 1)]:
+            with self.subTest(unavailable=unavailable):
+                cards = self.root / str(unavailable)
+                items = [{'id': str(i), 'status': 'todo', 'source_path': f'{i}.md'} for i in range(2)]
+                with patch.object(worker.xkb_paths, 'card_files', return_value=[]), \
+                     patch.object(worker, 'CARDS_DIR', cards), \
+                     patch.object(worker, '_sync_queue'), patch.object(worker, '_save_queue'), \
+                     patch.object(worker, '_load_queue', return_value={'items': items}), \
+                     patch.object(worker, '_read_bookmark', return_value='source'), \
+                     patch.object(worker, '_find_related_context', return_value=''), \
+                     patch.object(worker, '_call_llm', return_value='# Saved') as llm, \
+                     patch.object(worker, '_sync_enriched_index', return_value=True) as index, \
+                     patch.object(worker, '_gbrain_put', side_effect=[self.pub.PublicationError('verify', unavailable=unavailable), 'published']), \
+                     patch.object(self.pub, 'check_backend'), \
+                     patch.object(sys, 'argv', ['bookmark', '--limit', '2']):
+                    self.assertEqual(worker.main(), 1)
+                self.assertEqual(llm.call_count, expected)
+                index.assert_called_once()
+                if unavailable:
+                    self.assertEqual(items[1]['status'], 'todo')
 
     def test_preflight_unavailable_spends_nothing(self):
         import local_ingest as local

@@ -74,4 +74,5 @@ class Transport(unittest.TestCase):
             with patch.object(j,'runtime_env',return_value={}),patch.object(j.urllib.request,'urlopen') as call:
                 self.assertIsNone(j.judge('s',{'q':{'type':'noul'}}));call.assert_not_called()
 
-if __name__=='__main__': unittest.main()
+if __name__ == "__main__":
+    unittest.main()

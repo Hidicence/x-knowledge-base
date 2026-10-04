@@ -201,17 +201,34 @@ class PublicationBatch:
         """Existing cards never consume the new-generation budget."""
         if not Path(path).is_file():
             return False
-        if slug not in self._seen:
-            if self.revisited < self.recovery_limit and not self.blocked:
-                self.revisited += 1
-                self.publish(path, slug)
-            else:
-                self.deferred += 1
+        if slug not in self._seen and not self.blocked:
+            self.revisited += 1
+            self.publish(path, slug)
         return True
+
+    def recover_saved(self, cards) -> None:
+        """Rotate background verification; also discover files without receipts."""
+        with _db() as db:
+            updated = dict(db.execute("SELECT slug,updated FROM outbox"))
+        candidates = sorted(((Path(path), slug) for path, slug in cards
+                             if slug not in self._seen and Path(path).is_file()),
+                            key=lambda item: (updated.get(item[1], 0), item[1]))
+        available = max(0, self.recovery_limit - self.revisited)
+        self.deferred += max(0, len(candidates) - available)
+        for path, slug in candidates[:available]:
+            if self.blocked:
+                break
+            self.revisited += 1
+            self.publish(path, slug)
 
     def finish(self, indexer=None) -> bool:
         # Saved evidence remains searchable locally even if publication failed.
         indexed = (indexer or xkb_index.finish_ingest)(self.saved) if self.saved else True
+        if not indexed:
+            # Index completion is part of recovery, not an ephemeral exit code.
+            with _db() as db:
+                db.executemany("UPDATE outbox SET status='pending',stage='index',updated=? WHERE slug=?",
+                               [(time.time(), slug) for slug in self._seen])
         print(json.dumps({key: getattr(self, key) for key in
                           ("generated", "recovered", "verified", "failed", "deferred", "blocked")}))
         return bool(indexed and not self.failed and not self.blocked)
@@ -235,6 +252,8 @@ def retry_pending(limit=20, *, batch=None):
 
 
 if __name__ == "__main__":
+    import xkb_usage
+    xkb_usage.record(__file__)
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=20)

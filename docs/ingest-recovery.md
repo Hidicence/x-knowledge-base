@@ -5,8 +5,8 @@ owns verification, repair receipts and batch completion for local files, GitHub,
 YouTube and both bookmark workers.
 
 For a saved card, the publisher first checks the **current** GBrain database in a
-read-only transaction. A matching body and source identity, with embeddings on all
-chunks, skips `put` and `embed`. A confirmed mismatch permits repair; a failed
+read-only transaction. A matching body, timeline, declared metadata and complete text chunks, with
+embeddings on all stored chunks, skips `put` and `embed`. A confirmed mismatch permits repair; a failed
 verification connection never authorizes a write. This check does not certify the
 embedding model version or semantic retrieval quality.
 
@@ -23,10 +23,13 @@ probe and embedding credential check run before a generation batch; this cannot
 guarantee that an embedding provider stays available later in the batch.
 
 New-generation limits exclude saved-card recovery. Batch summaries distinguish
-`generated`, `recovered`, `verified`, `failed`, and `deferred`. The local search
+`generated`, `recovered`, `verified`, `failed`, and `deferred`. Explicit saved
+inputs are all verified; background workers rotate up to 20 saved cards by their
+last attempt, including cards without an outbox receipt. Pending publication is
+recovered even when bookmark reconciliation already marked enrichment done. The local search
 index is rebuilt once after saved cards were handled, even if publication failed.
 A batch exits unsuccessfully when publication or index completion fails; saved
-cards remain on disk. Local/GitHub exit code 2 continues to mean new cards were
+cards remain on disk. Failed index completion stays pending in the outbox. Local/GitHub exit code 2 continues to mean new cards were
 generated, while recovery-only success returns 0.
 
 ## Recall quality

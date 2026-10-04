@@ -214,6 +214,7 @@ def main() -> int:
         if not batch.ready():
             return 1
         retry_pending(batch.recovery_limit, batch=batch)
+        batch.recover_saved((path, path.stem) for path in xkb_paths.card_files())
         if batch.blocked:
             batch.finish()
             return 1

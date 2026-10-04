@@ -46,4 +46,5 @@ class StructuredBackend(unittest.TestCase):
         self.assertEqual(payload,{'query':'natural question','limit':7,'expand':False})
         self.assertEqual(rows[0]['score_scale'],'card_hybrid')
 
-if __name__=='__main__':unittest.main()
+if __name__ == "__main__":
+    unittest.main()

@@ -28,6 +28,17 @@ class QueueSyncTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.worker = importlib.import_module("run_bookmark_worker")
 
+    def setUp(self):
+        import contextlib
+        import tempfile
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.stack.enter_context(mock.patch.object(self.worker, 'CARDS_DIR', root / 'cards'))
+        self.stack.enter_context(mock.patch.dict('os.environ', {'XKB_PUBLISH_OUTBOX': str(root / 'q.sqlite')}))
+        self.stack.enter_context(mock.patch('gbrain_publish.check_backend'))
+        self.stack.enter_context(mock.patch.object(self.worker.xkb_paths, 'card_files', return_value=[]))
+
     def _main_with(self, argv: list[str]):
         calls: list[bool] = []
         with mock.patch.object(self.worker, "_sync_queue", side_effect=lambda: calls.append(True) or True), \
