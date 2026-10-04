@@ -179,6 +179,32 @@ class CheckedPublication(unittest.TestCase):
                 self.assertTrue(explicit.existing(card, slug))
             self.assertEqual(explicit.verified, 3)
 
+    def test_unreadable_unreceipted_files_cannot_starve_other_saved_cards(self):
+        broken = self.root / 'bad.md'
+        broken.write_bytes(b'\xff')
+        cards = [(broken, 'bad'), (self.card, 'card')]
+        first = self.pub.PublicationBatch(recovery_limit=1)
+        first.recover_saved(cards)
+        self.assertEqual(first.failed, 1)
+        with self.pub._db() as db:
+            self.assertEqual(db.execute("SELECT stage FROM outbox WHERE slug='bad'").fetchone()[0], 'read saved card')
+        with patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')) as run:
+            second = self.pub.PublicationBatch(recovery_limit=1)
+            second.recover_saved(cards)
+        run.assert_called_once()
+        self.assertEqual(second.verified, 1)
+
+    def test_pending_failures_share_budget_with_receiptless_discovery(self):
+        with self.pub._db() as db:
+            db.execute('INSERT INTO outbox VALUES (?,?,?,?,?,0,?)',
+                       ('missing', str(self.root / 'missing.md'), '', 'pending', 'read saved card', 1))
+        with patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')) as run:
+            batch = self.pub.PublicationBatch(recovery_limit=1)
+            batch.recover_saved([(self.card, 'newly-discovered')])
+        run.assert_called_once()
+        self.assertEqual(batch.verified, 1)
+        self.assertEqual(batch.deferred, 1)
+
     def test_index_failure_remains_retryable_after_publication_succeeded(self):
         with patch.object(self.pub.subprocess, 'run', return_value=self.result('verified')):
             first = self.pub.PublicationBatch()

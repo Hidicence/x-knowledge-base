@@ -36,7 +36,7 @@ try {
           if (!isDeepStrictEqual(p[0].frontmatter[key], JSON.parse(JSON.stringify(value)))) return false;
         }
         const tags = await tx`SELECT tag FROM tags WHERE page_id=${p[0].id} ORDER BY tag`;
-        if (!isDeepStrictEqual(tags.map(t => t.tag), [...new Set(expected.tags)].sort())) return false;
+        if (!isDeepStrictEqual(tags.map(t => t.tag).sort(), [...new Set(expected.tags)].sort())) return false;
         const chunks = await tx`SELECT chunk_index,chunk_text,chunk_source,embedding IS NOT NULL AS embedded FROM content_chunks WHERE page_id=${p[0].id} ORDER BY chunk_index`;
         if (!chunks.length || chunks.some(c => !c.embedded)) return false;
         // Reproduce canonical text chunking. Extra fenced-code chunks are allowed,

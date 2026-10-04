@@ -105,8 +105,8 @@ def publish(card_path: Path, slug: str) -> str:
         # Rotate unreadable receipts so one missing file cannot starve recovery.
         try:
             with _db() as db:
-                db.execute("UPDATE outbox SET status='pending',stage='read saved card',attempts=attempts+1,updated=? WHERE slug=?",
-                           (time.time(), slug))
+                db.execute("INSERT INTO outbox VALUES (?,?,?,'pending','read saved card',1,?) ON CONFLICT(slug) DO UPDATE SET path=excluded.path,status='pending',stage='read saved card',attempts=attempts+1,updated=excluded.updated",
+                           (slug, str(card_path), "", time.time()))
         except (OSError, sqlite3.Error):
             raise PublicationError("outbox", unavailable=True) from None
         raise PublicationError("read saved card") from None
@@ -209,9 +209,12 @@ class PublicationBatch:
     def recover_saved(self, cards) -> None:
         """Rotate background verification; also discover files without receipts."""
         with _db() as db:
-            updated = dict(db.execute("SELECT slug,updated FROM outbox"))
-        candidates = sorted(((Path(path), slug) for path, slug in cards
-                             if slug not in self._seen and Path(path).is_file()),
+            receipts = db.execute("SELECT path,slug,updated,status FROM outbox").fetchall()
+        updated = {slug: attempted for _, slug, attempted, _ in receipts}
+        # Pending work and newly discovered files share one fair retry budget.
+        paths = {slug: Path(path) for path, slug, _, status in receipts if status == "pending"}
+        paths.update({slug: Path(path) for path, slug in cards if Path(path).is_file()})
+        candidates = sorted(((path, slug) for slug, path in paths.items() if slug not in self._seen),
                             key=lambda item: (updated.get(item[1], 0), item[1]))
         available = max(0, self.recovery_limit - self.revisited)
         self.deferred += max(0, len(candidates) - available)

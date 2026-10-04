@@ -33,7 +33,7 @@ from category_classifier import apply_category, classify_content
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
-from gbrain_publish import PublicationBatch, retry_pending
+from gbrain_publish import PublicationBatch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_failures
@@ -213,7 +213,6 @@ def main() -> int:
     if not args.dry_run:
         if not batch.ready():
             return 1
-        retry_pending(batch.recovery_limit, batch=batch)
         batch.recover_saved((path, path.stem) for path in xkb_paths.card_files())
         if batch.blocked:
             batch.finish()
