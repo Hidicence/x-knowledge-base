@@ -144,11 +144,10 @@ def xbrain_query(
     state.update(available=True, attempted=True)
 
     cmd = [BUN, "run", str(gbrain_dir / "src" / "cli.ts")]
-    cmd += ["query", query, "--json"]
-    if no_expand:
-        cmd += ["--no-expand"]
-    if limit != 20:
-        cmd += ["--limit", str(limit)]
+    # The human CLI ignores --json and truncates evidence to 100 characters.
+    # The operation surface returns the same search as lossless JSON.
+    cmd += ["call", "query", json.dumps({"query": query, "limit": limit,
+                                        "expand": not no_expand})]
 
     try:
         result = subprocess.run(
@@ -209,17 +208,14 @@ def xbrain_query(
     for item in items:
         chunk = item.get("chunk_text", "")
         slug = item.get("slug", "")
-        source_url = (
-            item.get("source_url")
-            or _extract_source_url(chunk)
-            or _url_from_slug(slug)
-        )
+        source_url = _source_url(item)
         results.append({
             "slug": slug,
             "title": item.get("title", ""),
             "type": item.get("type", ""),
             "chunk_text": chunk,
             "score": item.get("score", 0.0),
+            "score_scale": "card_hybrid",
             "source_url": source_url,
             "stale": item.get("stale", False),
         })
@@ -265,6 +261,30 @@ def _parse_line_format(raw: str) -> list[dict[str, Any]]:
     return items
 
 
+def _source_url(item: dict) -> str:
+    """Prefer exact metadata, then canonical frontmatter; never guess GitHub."""
+    for metadata in (item, item.get("frontmatter") or {}):
+        if metadata.get("source_url"):
+            return str(metadata["source_url"])
+    slug = item.get("slug", "")
+    if slug.startswith("xkb-case-"):
+        try:
+            slug = bytes.fromhex(slug.removeprefix("xkb-case-")).decode("utf-8")
+        except (ValueError, UnicodeError):
+            pass
+    import xkb_paths
+    import xkb_frontmatter
+    roots = (xkb_paths.CARDS_DIR, xkb_paths.BOOKMARKS_DIR / "youtube")
+    for root in roots:
+        leaf = slug.removeprefix("youtube-") if root.name == "youtube" else slug
+        candidate = root / (leaf + ".md")
+        if candidate.is_file() and candidate.resolve().is_relative_to(root.resolve()):
+            value = xkb_frontmatter.parse(candidate.read_text(encoding="utf-8")).get("source_url")
+            if value:
+                return str(value).strip("\"'")
+    return _extract_source_url(item.get("chunk_text", "")) or _url_from_slug(slug)
+
+
 def _extract_source_url(text: str) -> str:
     """Extract source URL from card content (multiple patterns)."""
     import re
@@ -295,10 +315,8 @@ def _url_from_slug(slug: str) -> str:
     m = re.match(r"youtube-([A-Za-z0-9_\-]{11})$", slug)
     if m:
         return f"https://www.youtube.com/watch?v={m.group(1)}"
-    # GitHub slugs: github_fork-owner-repo or github_star-owner-repo
-    m = re.match(r"github_(?:fork|star)-(.+)-([^-]+)$", slug)
-    if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
+    # GitHub owner/repo both allow hyphens: this encoding is irreversible.
+    # Never manufacture a provenance URL from it.
     return ""
 
 

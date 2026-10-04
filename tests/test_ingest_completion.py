@@ -49,6 +49,7 @@ class IngestCompletion(unittest.TestCase):
         self.source.write_text("Some source evidence.", encoding="utf-8")
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
+        self.stack.enter_context(mock.patch("gbrain_publish.check_backend"))
         self.stdout, self.stderr = io.StringIO(), io.StringIO()
         self.stack.enter_context(contextlib.redirect_stdout(self.stdout))
         self.stack.enter_context(contextlib.redirect_stderr(self.stderr))
@@ -84,6 +85,8 @@ class IngestCompletion(unittest.TestCase):
         for module, args, card, success_code in cases:
             for rebuilt in (False, True):
                 with self.subTest(module=module.__name__, rebuilt=rebuilt):
+                    if card.exists():
+                        card.unlink()
                     self.stdout.seek(0)
                     self.stdout.truncate()
                     self.stderr.seek(0)
@@ -130,6 +133,10 @@ class IngestCompletion(unittest.TestCase):
             ("['research, methods', original]", "['research, methods', original, \"personal\"]"),
         ):
             with self.subTest(tags=tags):
+                # Each subcase is a fresh ingest; saved cards now retry publication
+                # instead of being silently regenerated.
+                for old_card in self.cards.glob("*.md"):
+                    old_card.unlink()
                 self.local_llm.return_value = CARD.replace("tags: [original]", f"tags: {tags}\nsensitivity: public")
                 local_ingest.process_file(self.source, "", set(), [], "learning", ["personal"], False)
                 content = next(self.cards.iterdir()).read_text(encoding="utf-8")

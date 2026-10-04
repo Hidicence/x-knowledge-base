@@ -82,6 +82,40 @@ class RecallTransports(unittest.TestCase):
         with urlopen(req, timeout=5) as response:
             return json.load(response)
 
+    def test_partial_judge_agrees_across_http_mcp_doctor_and_usage(self):
+        self.judge.side_effect = lambda query, candidates: {
+            key: .9 for key, text in candidates if "blue green" in text}
+        packet = probe("Aurora deployment", env={**self.env, "XKB_MEMORY_SERVICE_URL": self.url})
+        self.assertEqual(packet["judge"]["status"], "partial")
+        self.assertEqual(packet["judge"]["unjudged"], 1)
+        self.assertEqual({r["id"] for r in packet["records"]}, {"answer", "noise"})
+        self.assertEqual(packet["quality"]["status"], "degraded")
+        normal = assess(packet)
+        strict = assess(packet, require_judge=True)
+        self.assertEqual(normal["quality"], packet["quality"])
+        self.assertEqual(normal["status"], "degraded")
+        self.assertEqual(strict["status"], "failed")
+        self.assertIn("incomplete: partial", strict["problems"][0])
+        with self.store.connect() as db:
+            rows = {row["record_id"]: dict(row) for row in db.execute("SELECT * FROM recall_usage")}
+        self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "noise"))]["judged_count"], 0)
+        self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "noise"))]["returned_count"], 1)
+        self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "answer"))]["judged_count"], 1)
+
+    def test_doctor_detects_incomplete_judge_even_with_healthy_semantic_backend(self):
+        packet = {"records": [{"id": "x"}], "count": 1, "retrieval_mode": "xbrain_hybrid",
+                  "semantic_backend": {"used": True}, "backends": {}}
+        for status in ("partial", "no_text", "off", "unavailable", "error", "not_attempted"):
+            with self.subTest(status=status):
+                packet["judge"] = {"status": status}
+                self.assertEqual(assess(packet)["status"], "degraded")
+                self.assertFalse(assess(packet, require_judge=True)["ok"])
+        packet["judge"] = {"status": "judged"}
+        self.assertEqual(assess(packet, require_judge=True)["status"], "ready")
+        packet.update(records=[], count=0, judge={"status": "no_records"})
+        self.assertEqual(assess(packet)["status"], "ready")
+        self.assertFalse(assess(packet, require_judge=True)["ok"])
+
     def test_local_mcp_and_http_return_the_same_full_packet(self):
         expected = self.http()
         actual = probe("Aurora deployment", env=self.env)

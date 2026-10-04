@@ -23,7 +23,7 @@ from pathlib import Path
 
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
-import xkb_index
+from gbrain_publish import PublicationBatch
 from xkb_frontmatter import parse as extract_frontmatter
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
@@ -192,6 +192,16 @@ def main():
     videos = get_playlist_videos(args.playlist)
     print(f"   共 {len(videos)} 支影片")
 
+    batch = PublicationBatch(_gbrain_put)
+    if not args.dry_run and not batch.ready():
+        return 1
+    # Publication retries are independent of generation/index deduplication.
+    if not args.dry_run:
+        for video in videos:
+            saved = YOUTUBE_DIR / f"{video['id']}.md"
+            if saved.exists():
+                batch.existing(saved, f"youtube-{video['id']}")
+                existing_ids.add(video['id'])
     # Filter new videos
     new_videos = [v for v in videos if v["id"] not in existing_ids]
     print(f"   新影片：{len(new_videos)} 支（已跳過 {len(videos) - len(new_videos)} 支）")
@@ -207,12 +217,14 @@ def main():
 
     if not new_videos:
         print("✅ 沒有新影片需要處理")
-        return 0
+        return 0 if batch.finish() else 1
 
     processed = 0
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         for v in new_videos:
+            if batch.blocked:
+                break
             vid_id = v["id"]
             title  = v["title"]
             dur    = v["duration"]
@@ -247,7 +259,7 @@ def main():
             # 結果又會覆蓋前一次——同一支影片可能得到兩個不同的分類。
             md_path = YOUTUBE_DIR / f"{vid_id}.md"
             md_path.write_text(card_content, encoding="utf-8")
-            _gbrain_put(md_path, f"youtube-{vid_id}")
+            batch.publish(md_path, f"youtube-{vid_id}", generated=True)
             print(f"   💾 儲存：youtube/{vid_id}.md")
 
             # Parse and add to index
@@ -275,7 +287,7 @@ def main():
             existing_items_list.append(new_item)  # keep related context fresh
             processed += 1
 
-    if processed > 0 and not xkb_index.finish_ingest(processed):
+    if not batch.finish():
         return 1
 
     print(f"\n✅ 完成：新增 {processed} 張 YouTube 知識卡片")

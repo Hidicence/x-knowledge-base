@@ -33,6 +33,7 @@ from category_classifier import apply_category, classify_content
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
+from gbrain_publish import PublicationBatch, retry_pending
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_failures
@@ -191,7 +192,7 @@ def scan_missing(limit: int, category_filter: str = "") -> list[tuple[Path, str,
     return results
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Scan-mode bookmark enrichment worker")
     parser.add_argument("--limit",      type=int, default=20,    help="Max items to process (default: 20)")
     parser.add_argument("--worker",     default="scan-worker",   help="Worker name")
@@ -208,12 +209,20 @@ def main() -> None:
         print("❌ LLM_API_KEY not found. Set process env or XKB_ENV_FILE.")
         sys.exit(1)
 
+    batch = PublicationBatch(_gbrain_put)
+    if not args.dry_run:
+        if not batch.ready():
+            return 1
+        retry_pending(batch.recovery_limit, batch=batch)
+        if batch.blocked:
+            batch.finish()
+            return 1
     missing = scan_missing(args.limit, args.category)
     total_missing = len(scan_missing(9999, args.category))
 
     if not missing:
         print("✅ All bookmarks already enriched")
-        return
+        return 0 if args.dry_run or batch.finish() else 1
 
     print(f"📋 Found {total_missing} unenriched bookmarks  |  Processing {len(missing)} [worker: {args.worker}]")
     if args.local_only:
@@ -226,6 +235,8 @@ def main() -> None:
     results = {"done": 0, "skipped": 0, "failed": 0}
 
     for filepath, content, card_id, source_url, category in missing:
+        if batch.blocked:
+            break
         label = str(filepath.relative_to(BOOKMARKS_DIR))
         print(f"  → {label}", end="  ", flush=True)
 
@@ -250,19 +261,27 @@ def main() -> None:
             text = apply_category(text, classified["category"])
             card_path = CARDS_DIR / f"{card_id}.md"
             card_path.write_text(text, encoding="utf-8")
-            _gbrain_put(card_path, card_id)
+            if not batch.publish(card_path, card_id, generated=True):
+                results["failed"] += 1
+                continue
             results["done"] += 1
             print("✓ done")
         except Exception as exc:
             results["failed"] += 1
             print(f"✗ {exc}")
 
+    if not args.dry_run and not batch.finish():
+        return 1
+    if results["failed"]:
+        return 1
     remaining = len(scan_missing(9999, args.category))
     print(f"\n📊 done={results['done']}  skipped={results['skipped']}  failed={results['failed']}  remaining={remaining}")
+
+    return 0
 
 
 import xkb_usage  # noqa: E402  — 量測誰在跑，見 scripts/xkb_usage.py
 
 if __name__ == "__main__":
     xkb_usage.record(__file__)
-    main()
+    raise SystemExit(main())

@@ -42,6 +42,7 @@ DEFAULT_ANCHORS = {
     "wiki_semantic": 0.72,
     "memory_semantic": 0.72,
     "card": 0.88,
+    "card_hybrid": 0.88,         # Same GBrain hybrid score, now with structured provenance.
     "bookmark": 0.88,
     # 卡片被實測成餘弦之後（xkb_relevance 的 rewrite_score）就不再是 RRF，
     # 0.88 那個錨點是照 RRF 量的。餘弦有自己的區間，跟 wiki 語意同一段。
@@ -87,6 +88,7 @@ DEFAULT_WEIGHTS = {
     "memory_semantic": 1.0,
     "wiki_keyword": 1.0,
     "card": 0.96,
+    "card_hybrid": 0.96,
     "bookmark": 0.96,
     "card_semantic": 0.96,
     "card_keyword": 0.96,

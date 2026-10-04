@@ -57,6 +57,32 @@ def validate_packet(packet: object) -> dict:
     return packet
 
 
+def judge_quality(judge: dict) -> dict:
+    """Interpret coverage separately from relevance: unknown is not rejection."""
+    status = judge.get("status", "not_attempted")
+    complete = status == "judged"
+    degraded = status not in {"judged", "no_records"}
+    warning = ""
+    if degraded:
+        warning = f"relevance judge: {status}; returned candidates may be unverified"
+    return {"complete": complete, "has_verdicts": status in {"judged", "partial"},
+            "degraded": degraded, "warning": warning}
+
+
+def recall_quality(packet: dict) -> dict:
+    """Shared packet/doctor interpretation, including older remote packets."""
+    mode = packet.get("retrieval_mode", "unknown")
+    judge = judge_quality(packet.get("judge", {}))
+    semantic = packet.get("semantic_backend", {}).get("used", mode in {"xbrain_hybrid", "wiki_semantic"})
+    degraded = mode != "skipped" and (
+        (not semantic and mode not in {"keyword", "conversation_only"})
+        or judge["degraded"]
+        or any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
+               for s in packet.get("backends", {}).values()))
+    return {"status": "degraded" if degraded else "ready", "judge_complete": judge["complete"],
+            "warning": judge["warning"] if mode != "skipped" else ""}
+
+
 def run_configured(message: str, limit: int = 10, *, env_file=None, script=None, options=None) -> dict:
     """Resolve runtime settings before importing path/provider modules in a worker."""
     if not isinstance(message, str) or not message.strip():

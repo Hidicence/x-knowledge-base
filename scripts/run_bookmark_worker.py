@@ -26,6 +26,7 @@ import xkb_text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import xkb_failures
 import xkb_paths
+from gbrain_publish import PublicationBatch
 from runtime_config import runtime_env
 
 WORKSPACE = xkb_paths.WORKSPACE
@@ -123,40 +124,7 @@ EN: <15-30 word English summary of the core finding>
 Quality principles: conservative > hallucination, understanding > summary, structured > verbose"""
 
 
-def _gbrain_put(card_path: Path, slug: str) -> bool:
-    """Push a card to gbrain database and trigger embedding. Returns True on success."""
-    if not _GBRAIN_AVAILABLE:
-        return False
-    try:
-        import subprocess as _sp
-        content = card_path.read_text(encoding="utf-8")
-        result = _sp.run(
-            ["bun", "run", _GBRAIN_CLI, "put", slug],
-            input=content,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            env=_GBRAIN_ENV,
-            cwd=str(_GBRAIN_DIR),
-            timeout=30,
-        )
-        if result.returncode != 0:
-            print(f"    [gbrain] put failed: {result.stderr.strip()[:120]}", flush=True)
-            return False
-        # Trigger embedding for this card
-        _sp.run(
-            ["bun", "run", _GBRAIN_CLI, "embed", slug],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            env=_GBRAIN_ENV,
-            cwd=str(_GBRAIN_DIR),
-            timeout=60,
-        )
-        return True
-    except Exception as e:
-        print(f"    [gbrain] error: {e}", flush=True)
-        return False
+from _card_prompt import gbrain_put as _gbrain_put
 
 
 def _find_related_context(bookmark_content: str, top_k: int = 3) -> str:
@@ -296,8 +264,16 @@ def _read_bookmark(source_path: str) -> str:
     return ""
 
 
-def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
+def _process_item(item: dict, api_key: str, dry_run: bool, publication=None) -> tuple[str, str]:
     """Returns (status, error). status: done | skipped | failed"""
+    saved = CARDS_DIR / f"{item['id']}.md"
+    if saved.exists() and not dry_run:
+        if publication is not None:
+            if not publication.publish(saved, item['id']):
+                return 'failed', 'publication pending'
+        else:
+            _gbrain_put(saved, item['id'])
+        return "done", ""
     bookmark_content = _read_bookmark(item["source_path"])
     if not bookmark_content:
         return "failed", "bookmark file not found"
@@ -320,11 +296,11 @@ def _process_item(item: dict, api_key: str, dry_run: bool) -> tuple[str, str]:
     card_path = CARDS_DIR / f"{item['id']}.md"
     card_path.write_text(text, encoding="utf-8")
 
-    # Sync to gbrain (non-blocking: failure doesn't abort the queue item)
-    if _GBRAIN_AVAILABLE:
-        ok = _gbrain_put(card_path, item["id"])
-        if ok:
-            print("    [gbrain] ✓ synced", end="", flush=True)
+    if publication is not None:
+        if not publication.publish(card_path, item["id"], generated=True):
+            return "failed", "publication pending"
+    else:
+        _gbrain_put(card_path, item["id"])
 
     return "done", ""
 
@@ -418,7 +394,8 @@ def main() -> int:
     todo = [i for i in items if i["status"] == "todo"]
     if args.category:
         todo = [i for i in todo if args.category in i.get("category", "")]
-    todo = todo[:args.limit]
+    if args.dry_run:
+        todo = todo[:args.limit]
 
     if not todo:
         print("✅ No todo items found")
@@ -445,6 +422,10 @@ def main() -> int:
         print("\n✅ dry-run complete; queue unchanged")
         return 0
 
+    batch = PublicationBatch(_gbrain_put)
+    if not batch.ready():
+        return 1
+    generated_attempts = recovered_attempts = 0
     id_to_indices: dict[str, list[int]] = defaultdict(list)
     for idx, it in enumerate(items):
         id_to_indices[it["id"]].append(idx)
@@ -452,6 +433,17 @@ def main() -> int:
     results = {"done": 0, "skipped": 0, "failed": 0}
 
     for item in todo:
+        if batch.blocked:
+            break
+        saved = (CARDS_DIR / f"{item['id']}.md").exists()
+        if saved:
+            if recovered_attempts >= batch.recovery_limit:
+                continue
+            recovered_attempts += 1
+        else:
+            if generated_attempts >= args.limit:
+                continue
+            generated_attempts += 1
         print(f"  → {item['id']}  [{item.get('category', '')}]", end="  ", flush=True)
 
         indices = id_to_indices[item["id"]]
@@ -460,7 +452,7 @@ def main() -> int:
         _save_queue(data)
 
         try:
-            status, error = _process_item(item, api_key, args.dry_run)
+            status, error = _process_item(item, api_key, args.dry_run, batch)
 
             title_update = {}
             if status == "done" and not args.dry_run:
@@ -486,10 +478,8 @@ def main() -> int:
     remaining = len([i for i in data["items"] if i["status"] == "todo"])
     print(f"\n📊 done={results['done']}  skipped={results['skipped']}  failed={results['failed']}  remaining todo={remaining}")
 
-    if not args.dry_run and results["done"]:
-        if not _sync_enriched_index():
-            print("❌ enriched index sync failed after cards were written", file=sys.stderr, flush=True)
-            return 1
+    if not batch.finish(indexer=lambda count: _sync_enriched_index()):
+        return 1
 
     if results["failed"]:
         return 1

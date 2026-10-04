@@ -34,7 +34,7 @@ from runtime_config import runtime_env
 
 # ── Shared card prompt module ─────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
-import xkb_index
+from gbrain_publish import PublicationBatch
 from xkb_frontmatter import parse as extract_frontmatter
 from _card_prompt import (
     build_prompt, extract_summary, find_related_context,
@@ -133,7 +133,7 @@ def make_dedup_key(url: str, action_type: str) -> str:
 
 def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
                   existing_keys: set, limit: int,
-                  existing_items: list[dict] | None = None) -> tuple[int, list[dict]]:
+                  existing_items: list[dict] | None = None, publication=None) -> tuple[int, list[dict]]:
     """
     Returns (count_processed, new_index_items).
     Does NOT write to index — caller batches and saves once.
@@ -144,18 +144,28 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
 
     new_items = []
     processed = 0
+    attempted = 0
+    batch = publication or PublicationBatch(_gbrain_put)
 
     for repo in repos:
-        if limit and processed >= limit:
+        if batch.blocked:
             break
 
         full_name = repo.get("full_name", "")
         url = repo.get("html_url", f"https://github.com/{full_name}")
         dedup_key = make_dedup_key(url, action_type)
 
+        card_id = f"{action_type}-{full_name.replace('/', '-')}"
+        saved = CARDS_DIR / f"{card_id}.md"
+        if not dry_run and batch.existing(saved, card_id):
+            continue
         if dedup_key in existing_keys:
             print(f"  [SKIP] 已存在：{full_name} ({action_type})")
             continue
+
+        if limit and attempted >= limit:
+            continue
+        attempted += 1
 
         description = repo.get("description") or "(no description)"
         language = repo.get("language") or "unknown"
@@ -221,7 +231,7 @@ def process_repos(repos: list, action_type: str, dry_run: bool, api_key: str,
         # Save LLM card to memory/cards/
         card_path = CARDS_DIR / f"{card_id}.md"
         card_path.write_text(card_content, encoding="utf-8")
-        _gbrain_put(card_path, card_id)
+        batch.publish(card_path, card_id, generated=True)
         print(f"     💾 memory/cards/{card_id}.md")
 
         # Build index item
@@ -278,6 +288,9 @@ def main():
         for item in existing_items_list
     }
 
+    batch = PublicationBatch(_gbrain_put)
+    if not args.dry_run and not batch.ready():
+        return 1
     all_new_items: list[dict] = []
     total = 0
 
@@ -286,12 +299,12 @@ def main():
         repos = gh_api("user/repos?type=fork&per_page=100")
         print(f"   Found {len(repos)} forks")
         n, items = process_repos(repos, "github_fork", args.dry_run, api_key,
-                                 existing_keys, args.limit, existing_items_list)
+                                 existing_keys, args.limit, existing_items_list, batch)
         print(f"   ✅ Processed {n} fork cards")
         total += n
         all_new_items.extend(items)
 
-    if args.stars:
+    if args.stars and not batch.blocked:
         print("\n⭐ Fetching stars...")
         repos = gh_api("user/starred?per_page=100")
         if not args.no_filter:
@@ -301,15 +314,15 @@ def main():
         else:
             print(f"   Found {len(repos)} stars (no filter)")
         n, items = process_repos(repos, "github_star", args.dry_run, api_key,
-                                 existing_keys, args.limit, existing_items_list)
+                                 existing_keys, args.limit, existing_items_list, batch)
         print(f"   ✅ Processed {n} star cards")
         total += n
         all_new_items.extend(items)
 
     # Rebuild once from the cards on disk.
-    if all_new_items and not args.dry_run:
-        if not xkb_index.finish_ingest(len(all_new_items)):
-            return 1
+    if not args.dry_run and not batch.finish():
+        return 1
+    if total and not args.dry_run:
         print(f"\n✅ 完成：共新增 {total} 張 GitHub 知識卡片，已寫入索引")
         print("💡 執行以下指令更新語意索引：")
         print("   python3 scripts/build_vector_index.py --incremental")

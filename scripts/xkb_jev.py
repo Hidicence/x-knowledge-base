@@ -23,9 +23,9 @@ jev 不是聊天模型，所以 `_llm.call` 打不到它——它沒有 `/v1/cha
 「食品展的客戶通常怎麼找」這種問題的正確答案就落在 0.480，被丟掉了。餘弦分不
 出「講同一個主題」跟「回答了這個問題」，jev 的 noul 正好就是後者。
 
-**這支不做決定。** 它只回答。要不要照它的答案丟掉候選，由呼叫端決定，而目前
-呼叫端跑的是影子模式：餘弦照常決定，jev 的答案存起來比對。門檻要從真實分布
-校準，不是我挑一個數字——這個專案在手調門檻上犯過的錯有紀錄在案。
+**這支不做決定。** 它只回答。現行 Knowledge Service 預設在合併點採用判斷；
+`XKB_JEV_DECIDE=0` 才停用，影子比較另由 `XKB_JEV_SHADOW` 控制。
+既有相關性政策由呼叫端管理，本 adapter 不另設門檻。
 
 **失敗一律開放通過。** 判斷不出來時回 None，而不是 0。這兩件事差很多：0 是
 「jev 說不相關」，None 是「jev 沒跑」。把它們寫成同一件事，就會變成 jev 一掛掉
@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -78,8 +80,17 @@ def available() -> bool:
     return bool(settings.get("LLM_API_URL") and settings.get("LLM_API_KEY"))
 
 
+MAX_BODY_BYTES = 32 * 1024
+
+
+def _body(state: str, questions: dict) -> bytes:
+    return json.dumps({"model": judge_model(), "state": state,
+                       "questions": questions}, ensure_ascii=False,
+                      separators=(",", ":")).encode("utf-8")
+
+
 def judge(state: str, questions: dict[str, dict],
-          *, timeout: int = TIMEOUT_SECONDS) -> dict | None:
+          *, timeout: float = TIMEOUT_SECONDS) -> dict | None:
     """問 jev 一組問題。回 answers；判斷不出來回 None。
 
     None 與「答案是 0」是兩件不同的事，呼叫端必須分開處理——見模組說明。
@@ -88,8 +99,10 @@ def judge(state: str, questions: dict[str, dict],
         return None
     settings = runtime_env()
     url = settings["LLM_API_URL"].rstrip("/") + JUDGE_PATH
-    body = json.dumps({"model": judge_model(), "state": state,
-                       "questions": questions}).encode("utf-8")
+    body = _body(state, questions)
+    if len(body) > MAX_BODY_BYTES:
+        xkb_failures.note("jev budget", ValueError("request exceeds 32 KiB"))
+        return None
     request = urllib.request.Request(
         url, data=body, method="POST",
         headers={"Content-Type": "application/json",
@@ -101,16 +114,22 @@ def judge(state: str, questions: dict[str, dict],
             ValueError) as err:
         xkb_failures.note("jev judge", err, detail=url)
         return None
+    if not isinstance(payload, dict):
+        return None
     answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        data = payload.get("data")
+        answers = data.get("answers") if isinstance(data, dict) else None
     return answers if isinstance(answers, dict) else None
 
 
 def relevance(query: str, candidates: list[tuple[str, str]],
-              *, timeout: int = TIMEOUT_SECONDS) -> dict[str, float] | None:
+              *, timeout: float = TIMEOUT_SECONDS) -> dict[str, float] | None:
     """每個候選有沒有回答這個問題。回 {key: 0~1}；判斷不出來回 None。
 
-    一次呼叫評估全部候選——questions 是平行評估的，所以 N 個候選跟 1 個一樣快。
-    逐一呼叫的話 10 個候選要 18 秒，比召回本身還慢，這條路就不可行了。
+    以最終序列化 UTF-8 bytes 分批，每批含 model/state 不超過 32 KiB。
+    小批維持一次呼叫；大批最多四路並行，共用 timeout deadline。
+    缺失或失敗批次不產生否定答案，呼叫端保留並警告未判斷項目。
 
     候選文字會被截斷：instructions 是判斷準則，不是整篇文件，而卡片可以很長。
     標題加摘要足以判斷「有沒有回答這個問題」——真要整篇才判斷得出來的情況，
@@ -134,9 +153,33 @@ def relevance(query: str, candidates: list[tuple[str, str]],
         }
     if not questions:
         return None
-    answers = judge(f"使用者的問題：{_trim(query, 600)}", questions,
-                    timeout=timeout)
-    if answers is None:
+    state = f"使用者的問題：{_trim(query, 600)}"
+    batches, batch = [], {}
+    for slot, question in questions.items():
+        proposed = {**batch, slot: question}
+        if len(_body(state, proposed)) > MAX_BODY_BYTES:
+            if batch:
+                batches.append(batch)
+            batch = {slot: question}
+        else:
+            batch = proposed
+    if batch:
+        batches.append(batch)
+    # A shared deadline bounds queued work; small requests stay one call.
+    deadline = time.monotonic() + timeout
+    def run(batch):
+        remaining = deadline - time.monotonic()
+        return judge(state, batch, timeout=remaining) if remaining > 0 else None
+    if len(batches) == 1:
+        results = [run(batches[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
+            results = list(pool.map(run, batches))
+    answers = {}
+    for result in results:
+        if result is not None:
+            answers.update(result)
+    if not answers:
         return None
     out: dict[str, float] = {}
     for slot, key in slots.items():
@@ -144,13 +187,13 @@ def relevance(query: str, candidates: list[tuple[str, str]],
         if not isinstance(answer, dict):
             continue
         value = answer.get("noul")
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
             out[key] = float(value)
     # 一個都對不上就是回應的形狀跟預期不同——那是「沒跑成」，不是「全部不相關」。
     return out or None
 
 
-def needs_recall(query: str, *, timeout: int = TIMEOUT_SECONDS) -> float | None:
+def needs_recall(query: str, *, timeout: float = TIMEOUT_SECONDS) -> float | None:
     """這句話需不需要去查知識庫。回 0~1；判斷不出來回 None。
 
     問的是「需不需要查」，不是「這是不是問題」。「推上去吧」「好 繼續吧」是完整

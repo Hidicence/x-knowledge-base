@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import xkb_index
+from gbrain_publish import PublicationBatch
 import xkb_frontmatter
 from _card_prompt import gbrain_put as _gbrain_put
 from _card_prompt import (
@@ -98,10 +98,20 @@ def process_file(
     force_category: str | None,
     extra_tags: list[str],
     dry_run: bool,
+    publication=None,
 ) -> dict | None:
     card_id = card_id_for_file(path)
     dedup_key = f"local|{card_id}"
 
+    saved = CARDS_DIR / f"{card_id}.md"
+    if saved.exists() and not dry_run:
+        if publication is not None:
+            publication.existing(saved, card_id)
+            return None
+        _gbrain_put(saved, card_id)
+        text = saved.read_text(encoding="utf-8")
+        return {"title": extract_frontmatter(text).get("title", path.stem),
+                "tags": [], "summary": extract_summary(text)}
     if dedup_key in existing_keys:
         print(f"  [SKIP] 已存在：{path.name}")
         return None
@@ -157,7 +167,10 @@ def process_file(
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     card_path = CARDS_DIR / f"{card_id}.md"
     card_path.write_text(card_content, encoding="utf-8")
-    _gbrain_put(card_path, card_id)
+    if publication is None:
+        _gbrain_put(card_path, card_id)
+    else:
+        publication.publish(card_path, card_id, generated=True)
     print(f"     💾 cards/{card_id}.md")
 
     # Context for subsequent cards; the search index is derived from the files.
@@ -188,8 +201,6 @@ def main() -> int:
         print("沒有找到可匯入的檔案。")
         return 0
 
-    if args.limit:
-        files = files[: args.limit]
 
     print(f"📂 找到 {len(files)} 個檔案")
 
@@ -201,20 +212,34 @@ def main() -> int:
         if item.get("source_type") in ("local", "local-paper")
     }
 
+    batch = PublicationBatch(_gbrain_put)
+    if not args.dry_run and not batch.ready():
+        return 1
+    attempted = 0
     new_items: list[dict] = []
     for path in files:
+        if batch.blocked:
+            break
+        saved = CARDS_DIR / f"{card_id_for_file(path)}.md"
+        if not args.dry_run and batch.existing(saved, card_id_for_file(path)):
+            continue
+        if args.limit and attempted >= args.limit:
+            continue
+        if f"local|{card_id_for_file(path)}" in existing_keys:
+            continue
+        attempted += 1
         result = process_file(
             path, api_key, existing_keys, existing_items,
-            args.category, args.tags, args.dry_run
+            args.category, args.tags, args.dry_run, batch
         )
         if result:
             new_items.append(result)
             existing_items.append(result)
             existing_keys.add(f"local|{card_id_for_file(path)}")
 
+    if not args.dry_run and not batch.finish():
+        return 1
     if new_items and not args.dry_run:
-        if not xkb_index.finish_ingest(len(new_items)):
-            return 1
         print(f"\n✅ 完成：新增 {len(new_items)} 張知識卡片")
         print("💡 下一步：python3 scripts/sync_cards_to_wiki.py --apply --limit 20")
     elif args.dry_run:

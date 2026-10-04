@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from runtime_config import runtime_env
-from xkb_recall import validate_packet
+from xkb_recall import validate_packet, recall_quality
 
 SERVER = Path(__file__).resolve().parent / "xkb_recall_server.py"
 
@@ -65,23 +65,20 @@ def assess(packet: dict, *, expect_ids: list[str] = (), require_semantic: bool =
     if require_semantic and not semantic_used:
         problems.append("semantic retrieval was not used")
     judge = packet.get("judge", {"status": "not_attempted"})
-    if require_judge and judge.get("status") != "judged":
-        problems.append("relevance judge did not run")
+    quality = recall_quality(packet)
+    if require_judge and not quality["judge_complete"]:
+        problems.append("relevance judge incomplete: " + judge.get("status", "not_attempted"))
     warnings = list(packet.get("warnings", []))
-    degraded = packet["retrieval_mode"] != "skipped" and (
-        (not semantic_used and packet["retrieval_mode"] not in {"keyword", "conversation_only"})
-        or judge.get("status") in {"unavailable", "error", "off"}
-        or any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
-               for s in packet.get("backends", {}).values()))
-    if judge.get("status") in {"unavailable", "error", "off"}:
-        warnings.append("relevance judge: " + judge["status"])
+    degraded = quality["status"] == "degraded"
+    if quality["warning"] and quality["warning"] not in warnings:
+        warnings.append(quality["warning"])
     if packet["count"] == 0 and packet["retrieval_mode"] != "skipped":
         warnings.append("connection works, but this query returned no evidence; use --expect-id to verify a known item")
     return {"ok": not problems, "status": "failed" if problems else "degraded" if degraded else "ready",
             "checks": {"initialize": True, "tools_list": True,
             "tools_call": True}, "connection": packet.get("connection"),
             "retrieval_mode": packet["retrieval_mode"], "judge": judge, "backends": packet.get("backends", {}),
-            "count": packet["count"], "record_ids": ids, "warnings": warnings,
+            "count": packet["count"], "record_ids": ids, "warnings": warnings, "quality": quality,
             "problems": problems,
             "scope": "fresh MCP subprocess; does not prove an already-open agent refreshed its tools"}
 

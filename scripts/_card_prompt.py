@@ -37,28 +37,10 @@ except ImportError:
     _GBRAIN_ENV = {**os.environ}
 
 
-def gbrain_put(card_path: Path, slug: str) -> bool:
-    """Push a card to gbrain and trigger embedding. Returns True on success."""
-    if not _GBRAIN_AVAILABLE or not _GBRAIN_DIR or not _GBRAIN_CLI:
-        return False
-    try:
-        import subprocess as _sp
-        content = card_path.read_text(encoding="utf-8")
-        r = _sp.run(
-            ["bun", "run", _GBRAIN_CLI, "put", slug],
-            input=content, capture_output=True, text=True,
-            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=30,
-        )
-        if r.returncode != 0:
-            return False
-        _sp.run(
-            ["bun", "run", _GBRAIN_CLI, "embed", slug],
-            capture_output=True, text=True,
-            encoding="utf-8", env=_GBRAIN_ENV, cwd=str(_GBRAIN_DIR), timeout=60,
-        )
-        return True
-    except Exception:
-        return False
+def gbrain_put(card_path: Path, slug: str) -> str:
+    """Checked publication; failures remain in the durable outbox and raise."""
+    from gbrain_publish import publish
+    return publish(card_path, slug)
 
 # ── Shared system prompt ──────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\

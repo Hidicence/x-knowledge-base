@@ -333,10 +333,12 @@ class XKBMemoryServiceTests(unittest.TestCase):
         source = (Path(module.__file__).parent / "xkb_memory_service.py").read_text(
             encoding="utf-8")
         expected = {
-            '"retrieval": "xbrain_hybrid"': "card",
             '"retrieval": "wiki_semantic"': "wiki_semantic",
             '"record_type": "conversation_trace"': "conversation",
         }
+        # GBrain declares its scale at the adapter boundary; the service must
+        # preserve it. Runtime coverage is in test_recall_backend_contract.
+        self.assertIn('"score_scale": hit.get("score_scale", "card")', source)
         for marker, scale in expected.items():
             idx = source.index(marker)
             window = source[max(0, idx - 700):idx + 300]

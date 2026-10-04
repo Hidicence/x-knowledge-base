@@ -45,7 +45,7 @@ import xkb_relevance
 import xkb_text
 import xkb_score
 from xkb_evidence import fields, record_id, render_context, identity_key, IDENTITY_PREFIX
-from xkb_recall import recall_options
+from xkb_recall import recall_options, judge_quality, recall_quality
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -347,7 +347,9 @@ def judge_relevance(query: str, records: list[dict[str, Any]], *,
         item["judge"] = float(score)
         if score >= floor:
             kept.append(item)
-    return kept, {"status": "judged", "floor": floor,
+    judged = sum(verdicts.get(str(id(item))) is not None for item in records)
+    return kept, {"status": "judged" if judged == len(records) else "partial", "floor": floor,
+                  "judged": judged, "unjudged": len(records) - judged,
                   "considered": len(records), "kept": len(kept),
                   "dropped": len(records) - len(kept)}
 
@@ -603,13 +605,21 @@ class KnowledgeCatalog:
                 "score": hit.get("score", 0.0),
                 # gbrain 的混合 RRF。source_type 這裡是資料種類（會回給
                 # 用戶），跟分數的尺度是兩件事。
-                "score_scale": "card",
+                "score_scale": hit.get("score_scale", "card"),
                 "retrieval": "xbrain_hybrid",
             })
         # The semantic backend does not report which knowledge layer a hit came
         # from, so ACL drops here can only be attributed to the channel.
         self._stats = filter_stats(semantic=filtered)
-        records, self._irrelevant = self._drop_irrelevant(query, records)
+        # GBrain owns this candidate order. The legacy JSON vector index has
+        # different coverage and embeddings; using it here demotes newly
+        # published cards solely because they are absent from that side index.
+        # Keep its filter only for legacy adapters without the explicit contract.
+        hybrid = [r for r in records if r["score_scale"] == "card_hybrid"]
+        legacy = [r for r in records if r["score_scale"] != "card_hybrid"]
+        if legacy:
+            legacy, self._irrelevant = self._drop_irrelevant(query, legacy)
+        records = hybrid + legacy
         state.update(candidate_count=len(records), filtered_count=filtered)
         state["used"] = bool(records)
         if state["status"] == "used" and not records:
@@ -1175,7 +1185,7 @@ class Store:
         with self.lock, self.connect() as db:
             for key, items in groups.items():
                 scores = [i.get("judge") for i in items]
-                known = [s for s in scores if type(s) in (int, float)] if judge.get("status") == "judged" else []
+                known = [s for s in scores if type(s) in (int, float)] if judge_quality(judge)["has_verdicts"] else []
                 relevant = any(s >= judge.get("floor", JUDGE_FLOOR) for s in known)
                 judged = bool(known) and (relevant or len(known) == len(scores))
                 db.execute("""INSERT INTO recall_usage(namespace, record_id, considered_count,
@@ -1632,7 +1642,7 @@ class Store:
                 judge_note = {"status": "error"}
         relevant_ids = {identity_key(item) for item in records
                         if type(item.get("judge")) in (int, float)
-                        and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_note.get("status") == "judged" else set()
+                        and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_quality(judge_note)["has_verdicts"] else set()
         tag_demoted(records, lambda: self.demoted_ids(namespace=namespace), relevant_ids=relevant_ids)
         records = xkb_score.rank(records)
         # Quotas apply after identity fusion, before the global response limit.
@@ -1663,10 +1673,13 @@ class Store:
         # 就是這樣漏出去的。
         warnings = [w for w in (_recall_warnings({**knowledge, "backends": backends}, filtered_counts)
                                 + [_unverified_warning(records)]) if w]
+        quality_warning = judge_quality(judge_note)["warning"]
+        if quality_warning:
+            warnings.append(quality_warning)
         for item in records:
             item.pop("index_unreadable", None)
         context = render_context(records[:limit])
-        return {
+        packet = {
             "schema": SCHEMA,
             "query": query,
             "namespace": namespace,
@@ -1687,6 +1700,8 @@ class Store:
             "backends": backends, "options": opts,
             "warnings": warnings,
         }
+        packet["quality"] = recall_quality(packet)
+        return packet
 
 
 class Handler(BaseHTTPRequestHandler):
