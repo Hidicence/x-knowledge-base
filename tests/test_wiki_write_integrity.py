@@ -79,6 +79,23 @@ class WikiWriteIntegrity(unittest.TestCase):
             self.assertEqual(governance.main(), 0)
         self.assertEqual(self.files(), before)
 
+    def test_health_does_not_report_missing_topics_as_ready_to_promote(self):
+        self.topic.unlink()
+        health = governance.governance_health_counts(ttl_days=9999)
+        preview = governance.governance_batch(dry_run=True, ttl_days=9999)
+        self.assertEqual(health["safe_promotion"], preview["stats"]["promoted"])
+        self.assertEqual(health["safe_promotion"], 0)
+
+    def test_health_classifies_against_the_same_pool_as_governance(self):
+        original = governance.load_candidates()[0]
+        self.source.write_text(FIXTURE + "\n" + FIXTURE.replace("Candidate 7", "Candidate 8"), encoding="utf-8")
+        governance.write_registry([original], self.governed / "candidate-registry.jsonl", {original.candidate_id})
+        health = governance.governance_health_counts(ttl_days=9999)
+        preview = governance.governance_batch(dry_run=True, ttl_days=9999)
+        self.assertEqual(health["pending"], 1)
+        self.assertEqual(health["safe_promotion"], preview["stats"]["promoted"])
+        self.assertEqual(health["safe_promotion"], 0)
+
     def test_interrupted_topic_write_resumes_registry_without_duplicates(self):
         original = self.topic.read_bytes()
         real_write = governance._atomic_write

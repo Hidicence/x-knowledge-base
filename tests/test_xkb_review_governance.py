@@ -249,6 +249,8 @@ class GovernanceTests(unittest.TestCase):
 
 
     def test_health_counts_include_actionable_queues_without_writes(self):
+        xkb_review.TOPICS_DIR.mkdir()
+        (xkb_review.TOPICS_DIR / "topic-a.md").write_text("# Topic A\n", encoding="utf-8")
         text = FIXTURE + FIXTURE.replace("Candidate 1", "Candidate 2").replace("topic-a", "[NEW: proposed]").replace("high", "low")
         temp, staging, old = self.with_staging(text)
         try:

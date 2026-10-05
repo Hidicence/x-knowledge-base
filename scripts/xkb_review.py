@@ -693,8 +693,8 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     # never clear stops being read.
     registry = GOVERNANCE_DIR / "candidate-registry.jsonl"
     staged = [c for c in load_candidates(classify=False) if c.status == "pending"]
+    _classify_relations(staged)
     candidates = _eligible(staged, registry)
-    _classify_relations(candidates)
     # 導向要在計數之前，跟 governance_batch 同一個順序。少了這一步，一個
     # 會被導向 general 的候選在這裡仍算成提案——報 1，實際 0。
     _route_new_topics(candidates, _proposed_counts(candidates))
@@ -716,7 +716,7 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
         if _expired(candidate, ttl_days, today):
             result["quarantine"] += 1
             result["overdue"] += 1
-        elif _safe_promotable(candidate):
+        elif _would_promote(candidate, ttl_days, today):
             result["safe_promotion"] += 1
     return result
 
@@ -792,10 +792,10 @@ def main() -> int:
     if args.apply: return apply_approved()
     if args.rollback:
         print(json.dumps(rollback_batch(args.rollback), ensure_ascii=False, indent=2)); return 0
-    candidates = load_candidates()
     if args.governance:
         print(json.dumps(governance_batch(args.limit, args.dry_run or not args.write_governance, args.ttl_days),
                          ensure_ascii=False, indent=2)); return 0
+    candidates = load_candidates()
     if args.stats or not args.do_list: print_stats(candidates); return 0
     pending = [c for c in candidates if c.status == "pending" and (args.include_duplicates or not c.duplicate_of) and (not args.topic or c.topic == args.topic)]
     batch = pending[:args.limit]
