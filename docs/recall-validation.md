@@ -21,6 +21,12 @@ messages, and passes recent dialogue on prompt submission. Without supplied
 dialogue, turn-start uses completed turns from that same session only. MCP alone
 does not create automatic invocation; the calling agent must notice conversational
 needs and invoke the tool. Refresh tool discovery after a schema update.
+The prompt hook allows 40 seconds for turn-start recall, matching the HTTP recall
+client, while ordinary session/capture requests retain their 6-second timeout.
+`XKB_HOOK_RECALL_TIMEOUT` overrides recall; `XKB_HOOK_TIMEOUT` overrides both when
+no recall-specific value is supplied. The installer gives the hook 50 seconds
+overall. Existing installations need their XKB hook entries refreshed as well as
+the script update; a shorter outer timeout still terminates the hook early.
 
 Run `python scripts/xkb_eval.py --cases evals/conversation-cases.json` for the
 offline conversational checkpoints. These preserve statements and follow-ups

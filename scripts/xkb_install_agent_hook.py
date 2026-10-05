@@ -28,7 +28,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 HOOK_SCRIPT = SCRIPTS_DIR / "xkb_agent_hook.py"
 HOOK_CONFIG = SCRIPTS_DIR / "xkb-agent-hook-config.json"
 EVENTS = ("UserPromptSubmit", "Stop")
-TIMEOUT_SECONDS = 15
+TIMEOUT_SECONDS = 50  # session-open (6s) + recall (40s) + process overhead
 
 
 def agent_home() -> Path:

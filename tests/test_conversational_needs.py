@@ -2,7 +2,10 @@
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -43,6 +46,29 @@ class ConversationalNeeds(unittest.TestCase):
         self.assertTrue(all(len(m["content"]) == 600 for m in recent))
         with self.assertRaises(ValueError):
             recall.conversation_messages([{"role": "tool", "content": "tool output"}])
+
+    def test_hook_allows_recall_to_finish_after_metadata_request_budget(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                time.sleep(.1)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"retrieval":{"records":[]}}')
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch.object(hook, 'TIMEOUT_SECONDS', .01), \
+                 mock.patch.object(hook, 'RECALL_TIMEOUT_SECONDS', 1):
+                result = hook.call('/v1/turns/start', {'query': 'It still changes between shots.'},
+                                   {'url': f'http://127.0.0.1:{server.server_port}', 'token': ''})
+            self.assertEqual(result['retrieval']['records'], [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_core_uses_context_for_statements_but_suppresses_acknowledgement(self):
         store = service.Store(self.root / "knowledge.sqlite")

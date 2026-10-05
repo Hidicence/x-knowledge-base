@@ -37,6 +37,7 @@ from xkb_recall import conversation_messages
 
 DEFAULT_URL = "http://127.0.0.1:18972"
 TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_TIMEOUT", "6"))
+RECALL_TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_RECALL_TIMEOUT", os.getenv("XKB_HOOK_TIMEOUT", "40")))
 STATE_DIR = Path(os.getenv("XKB_HOOK_STATE", str(Path.home() / ".xkb-runtime" / "hook-state")))
 MAX_CONTEXT_CHARS = 4000
 MAX_ANSWER_CHARS = 4000
@@ -75,7 +76,8 @@ def call(path: str, payload: dict, cfg: dict) -> dict:
     if cfg["token"]:
         headers["Authorization"] = f"Bearer {cfg['token']}"
     request = urllib.request.Request(cfg["url"].rstrip("/") + path, data=body, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+    timeout = RECALL_TIMEOUT_SECONDS if path == "/v1/turns/start" else TIMEOUT_SECONDS
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
 
 
