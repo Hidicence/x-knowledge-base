@@ -1,0 +1,20 @@
+{
+  "description": "Conversational needs without question rewriting. Each checkpoint carries the actual preceding dialogue. Synthetic transport tests are not a semantic benchmark.",
+  "fixtures": {
+    "cards": [
+      {"id": "character-anchor", "title": "Seedance 角色一致性", "summary": "Seedance 同一人物換鏡頭臉會改變，先建立角色參考圖，分開人物、場景、構圖並固定角色錨點。", "source_url": "https://example.test/character", "category": "video"},
+      {"id": "review-backpressure", "title": "草稿佇列上限與人工審核", "summary": "自動產稿遇到待審草稿堆積，先設定待審上限，以人工審核能力限制產稿速度；保留人工發布關卡。", "source_url": "https://example.test/drafts", "category": "agents"},
+      {"id": "carbon-evidence", "title": "碳盤查資料證據鏈", "summary": "碳盤查原始資料要保留來源、期間、單位、排放係數版本與人工覆核，才能追溯計算結果。", "source_url": "https://example.test/carbon", "category": "carbon"}
+    ]
+  },
+  "cases": [
+    {"id": "video-plan", "query": "這次打算用 Seedance 做同一人物的連續鏡頭", "need": "在製作前主動帶回角色一致性的做法", "expected_delivery": "evidence", "expected_ids": ["character-anchor"], "limit": 3},
+    {"id": "video-obstacle", "query": "同一人物換鏡頭臉就會改變", "conversation": [{"role": "user", "content": "這次打算用 Seedance 做同一人物的連續鏡頭"}], "need": "辨識陳述中的製作障礙", "expected_delivery": "evidence", "expected_ids": ["character-anchor"], "limit": 3},
+    {"id": "video-followup", "query": "先把這個固定住，後面再往下做", "conversation": [{"role": "user", "content": "同一人物換鏡頭臉就會改變"}, {"role": "assistant", "content": "我們正在处理 Seedance 角色一致性，先建立人物參考圖。"}], "need": "依前文理解沒有名詞的接續需求", "expected_delivery": "evidence", "expected_ids": ["character-anchor"], "limit": 3},
+    {"id": "draft-backlog", "query": "自動產稿一直跑，但待審草稿越積越多", "need": "從狀況陳述辨識審核吞吐瓶頸", "expected_delivery": "evidence", "expected_ids": ["review-backpressure"], "limit": 3},
+    {"id": "draft-constraint", "query": "我每天能處理的量有限，先讓它停在那裡", "conversation": [{"role": "user", "content": "自動產稿一直跑，但待審草稿越積越多"}, {"role": "assistant", "content": "目前瓶頸是人工審核，待審草稿還沒有發布。"}], "need": "把新限制連回人工審核與待審上限", "expected_delivery": "evidence", "expected_ids": ["review-backpressure"], "limit": 3},
+    {"id": "carbon-plan", "query": "準備整理碳盤查原始資料，之後要能追溯每筆計算結果", "need": "在整理前帶回證據鏈與單位要求", "expected_delivery": "evidence", "expected_ids": ["carbon-evidence"], "limit": 3},
+    {"id": "ack-after-work", "query": "好，收到。", "conversation": [{"role": "user", "content": "準備整理碳盤查原始資料"}, {"role": "assistant", "content": "先保留來源、單位與係數版本。"}], "need": "普通確認不重複打擾", "expected_delivery": "none", "expected_ids": [], "retrieval_mode": "skipped"},
+    {"id": "greeting", "query": "早安", "need": "單純問候不注入知識", "expected_delivery": "none", "expected_ids": [], "retrieval_mode": "skipped"}
+  ]
+}

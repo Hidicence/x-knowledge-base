@@ -132,7 +132,7 @@ def relevance(query: str, candidates: list[tuple[str, str]],
     缺失或失敗批次不產生否定答案，呼叫端保留並警告未判斷項目。
 
     候選文字會被截斷：instructions 是判斷準則，不是整篇文件，而卡片可以很長。
-    標題加摘要足以判斷「有沒有回答這個問題」——真要整篇才判斷得出來的情況，
+    標題加摘要足以判斷「能否推進當前需求」——真要整篇才判斷得出來的情況，
     那筆本來就不該直接注入。
     """
     if not query or not candidates:
@@ -148,12 +148,15 @@ def relevance(query: str, candidates: list[tuple[str, str]],
         slots[slot] = key
         questions[slot] = {
             "type": "noul",
-            "instructions": ("這段知識有沒有回答使用者的問題。"
+            "instructions": ("這段知識能否提供推進當前需求的做法、限制或經驗；"
+                             "只匹配過去話題而無助於當前需求不算相關。"
                              f"知識內容：{_trim(text)}"),
         }
     if not questions:
         return None
-    state = f"使用者的問題：{_trim(query, 600)}"
+    state = ("判斷證據能否推進使用者當前需求，陳述計畫、困難或限制也可能需要知識。"
+             "前文只協助理解指代；當前發言改變方向時，以當前需求為準。\n"
+             f"對話情境：{_trim(query, 4096)}")
     batches, batch = [], {}
     for slot, question in questions.items():
         proposed = {**batch, slot: question}

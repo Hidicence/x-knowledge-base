@@ -1,5 +1,45 @@
 # Shared recall and connection checks
 
+XKB's intended behavior is proactive reuse during conversation. A user can reveal
+a need by stating a plan, describing a difficulty, adding a constraint, or changing
+direction. Question answering alone does not validate that behavior.
+
+`xkb_recall` accepts optional `conversation` messages (`role`: `user`/`assistant`,
+`content`: text), in chronological order, excluding the current `message`. HTTP
+recall/context accepts the same field. Inputs accept at most eight messages; the
+runtime retains the last four eligible messages, up to 600 characters each. The
+current utterance stays separate in captured turns and takes precedence over prior
+goals. Responses acknowledge the normalized context with `conversation_fingerprint`
+and `conversation_messages`; a client refuses an older server that ignores it.
+Current-message retrieval and contextual retrieval each keep their candidate
+budget, so a long previous topic cannot crowd out current-message candidates
+before judging. Ranking fuses their evidence identities after Jev; contextual
+backend diagnostics are reported separately in `context_retrieval`.
+
+The Claude hook reads a bounded transcript tail, omits tool output and harness
+messages, and passes recent dialogue on prompt submission. Without supplied
+dialogue, turn-start uses completed turns from that same session only. MCP alone
+does not create automatic invocation; the calling agent must notice conversational
+needs and invoke the tool. Refresh tool discovery after a schema update.
+
+Run `python scripts/xkb_eval.py --cases evals/conversation-cases.json` for the
+offline conversational checkpoints. These preserve statements and follow-ups
+instead of converting them to questions. `need` describes the intended assistance;
+`expected_delivery` distinguishes useful evidence from a turn that should stay
+quiet. `expected_any_ids` accepts equivalent sources for one evidence requirement.
+It measures coverage of labelled requirements, not exhaustive corpus recall.
+Unexpected records still fail precision checks. The offline corpus exposes weak
+keyword overlaps; it does not certify semantic usefulness or the answering agent's
+actual use of evidence. Live suites and full responses for a private library should
+stay outside the public repository, with labels frozen before requests and any
+later review recorded separately.
+
+For live acceptance, include non-question plans and obstacles, context-dependent
+follow-ups, new constraints, explicit topic changes, and ordinary acknowledgements.
+Inspect timing and evidence content, including contradictions and irrelevant or
+repeated advice. A complete judge response is a readiness check, not proof that the
+agent recognized the user's need or used the evidence well.
+
 MCP (`xkb_recall`), the default `recall_router.py` and `xkb_ask.py` CLIs,
 and HTTP (`POST /v1/recall`) use
 `Store.knowledge_recall`: cards, wiki and conversation evidence go through the
@@ -242,7 +282,7 @@ separate questions for validation rather than tuning and reporting on the same s
 [TypeSafe's model reference](https://docs.typesafe.ai/models) documents 64k tokens
 for state plus all questions, and 32k for state plus the longest question.
 Question count and JSON byte count are not token counts. The XKB adapter trims
-queries to 600 characters and each candidate to 900 characters before adding
+queries to 600 characters at the time of that audit and each candidate to 900 characters before adding
 instructions; these are character caps, not a token-budget guarantee.
 
 A read-only copy of the VPS conversation database was used to reproduce the
@@ -262,3 +302,8 @@ can produce more input; any future batching must account for both total input
 and state-plus-longest-question budgets, including instructions. A previous
 small JSON payload producing a provider body-size error must not be described
 as proof that the official context limit was reached.
+
+Current implementation: conversational judge input is capped at 4,096 characters
+to retain the bounded current utterance and all four context messages. Each
+serialized request remains capped at 32 KiB; batches share a deadline. These
+character and byte limits are not claims about the provider's token limits.

@@ -32,7 +32,11 @@ TOOL_DEF = {
     "name": "xkb_recall",
     "description": (
         "Recall relevant evidence from the shared XKB knowledge service before "
-        "answering substantive questions. Returns cards, wiki topics and conversation "
+        "responding to substantive conversation: plans, difficulties, constraints, "
+        "decisions and follow-ups, even without a question or search request. "
+        "Provide recent conversation when the current message depends on it. "
+        "Surface evidence only when it advances the current need; avoid repeating "
+        "already-settled advice. Returns cards, wiki topics and conversation "
         "evidence with provenance. Uses the same retrieval, ACL, relevance judge and "
         "ranking as the HTTP API. Inspect retrieval_mode, judge and warnings: "
         "keyword fallback or an unavailable judge are not semantic success. "
@@ -46,6 +50,11 @@ TOOL_DEF = {
                 "type": "string",
                 "description": "The user's current message to check for recall triggers.",
             },
+            "conversation": {"type": "array", "maxItems": 8,
+                             "description": "Recent user/assistant messages in chronological order, excluding the current message. Keep the active task and constraints.",
+                             "items": {"type": "object", "properties": {
+                                 "role": {"type": "string", "enum": ["user", "assistant"]},
+                                 "content": {"type": "string"}}, "required": ["role", "content"]}},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
         },
         "required": ["message"],
@@ -75,10 +84,10 @@ def _failure(reason: str) -> dict:
             )}
 
 
-def _run_recall_structured(message: str, limit: int = 10) -> dict:
+def _run_recall_structured(message: str, limit: int = 10, conversation=None) -> dict:
     """Expose the common runtime boundary through MCP's explicit error contract."""
     try:
-        return compatibility_aliases(run_configured(message, limit, script=RECALL_SCRIPT))
+        return compatibility_aliases(run_configured(message, limit, script=RECALL_SCRIPT, **({"conversation": conversation} if conversation is not None else {})))
     except Exception as exc:
         return _failure(str(exc))
 
@@ -132,7 +141,7 @@ def handle(req: dict):
             return
 
         message = arguments.get("message", "")
-        structured = _run_recall_structured(message, arguments.get("limit", 10))
+        structured = _run_recall_structured(message, arguments.get("limit", 10), arguments.get("conversation"))
         # formatted_text for human-readable context injection
         text_output = structured.get("formatted_text", "")
         # 提示放在回傳內容裡，不只放在 tool description——description 可能被截斷或忽略，

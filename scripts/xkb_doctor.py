@@ -17,7 +17,7 @@ from xkb_recall import validate_packet, recall_quality
 SERVER = Path(__file__).resolve().parent / "xkb_recall_server.py"
 
 
-def probe(query: str, *, env: dict | None = None, limit: int = 10) -> dict:
+def probe(query: str, *, env: dict | None = None, limit: int = 10, conversation=None) -> dict:
     """Use the real stdio server, not an import of its implementation."""
     requests = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -26,7 +26,8 @@ def probe(query: str, *, env: dict | None = None, limit: int = 10) -> dict:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "xkb_recall", "arguments": {"message": query, "limit": limit}}},
+            "name": "xkb_recall", "arguments": {"message": query, "limit": limit,
+                **({"conversation": conversation} if conversation is not None else {})}}},
     ]
     child_env = dict(runtime_env() if env is None else env)
     child_env.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
@@ -85,7 +86,7 @@ def assess(packet: dict, *, expect_ids: list[str] = (), require_semantic: bool =
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--query", required=True, help="A question about a known item in your library")
+    parser.add_argument("--query", required=True, help="A conversational utterance with a known knowledge need")
     parser.add_argument("--expect-id", action="append", default=[])
     parser.add_argument("--require-semantic", action="store_true")
     parser.add_argument("--require-judge", action="store_true")

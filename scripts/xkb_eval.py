@@ -52,14 +52,21 @@ def score_case(case: dict, packet: dict) -> dict:
         raise ValueError("label_unit must be document or evidence")
     actual = set(evidence_keys if label_unit == "evidence" else record_ids)
     expected = set(case["expected_ids"])
-    allowed = set(case.get("allowed_ids", case["expected_ids"]))
+    alternatives = set(case.get("expected_any_ids", []))
+    allowed = set(case.get("allowed_ids", expected | alternatives))
     missing = sorted(expected - actual)
     unexpected = sorted(actual - allowed)
     errors = []
     if missing:
         errors.append("missing: " + ", ".join(missing))
+    if alternatives and not alternatives.intersection(actual):
+        errors.append("missed required evidence group")
     if unexpected:
         errors.append("unexpected: " + ", ".join(unexpected))
+    if case.get("expected_delivery") == "none" and packet["records"]:
+        errors.append("unnecessary interruption")
+    if case.get("expected_delivery") == "evidence" and not packet["records"]:
+        errors.append("missed conversational need")
     if case.get("retrieval_mode") and packet["retrieval_mode"] != case["retrieval_mode"]:
         errors.append("wrong retrieval mode")
     identified = [key for key in evidence_keys if key]
@@ -69,11 +76,14 @@ def score_case(case: dict, packet: dict) -> dict:
         errors.append("unidentified evidence")
     return {"id": case["id"], "ok": not errors, "errors": errors,
             "record_ids": record_ids, "evidence_keys": evidence_keys, "label_unit": label_unit,
-            "recall_at_k": len(expected & actual) / len(expected) if expected else None,
+            "recall_at_k": ((len(expected & actual) + bool(alternatives & actual)) /
+                            (len(expected) + bool(alternatives))) if expected or alternatives else None,
             "precision_at_k": len(allowed & actual) / len(actual) if actual else None,
-            "no_answer": not expected, "false_positive_count": len(unexpected),
+            "no_answer": not expected and not alternatives, "false_positive_count": len(unexpected),
             "retrieval_mode": packet["retrieval_mode"],
-            "judge_status": packet.get("judge", {}).get("status", "not_attempted")}
+            "judge_status": packet.get("judge", {}).get("status", "not_attempted"),
+            "expected_delivery": case.get("expected_delivery"),
+            "need": case.get("need", ""), "conversation_messages": packet.get("conversation_messages", 0)}
 
 
 def run_cases(cases: list[dict], env: dict | None = None, *, require_semantic: bool = False,
@@ -87,7 +97,8 @@ def run_cases(cases: list[dict], env: dict | None = None, *, require_semantic: b
             child_env = dict(runtime_env() if env is None else env)
             if "namespace" in case:
                 child_env["XKB_NAMESPACE"] = case["namespace"]
-            packet = probe(case["query"], env=child_env, limit=case.get("limit", 10))
+            packet = probe(case["query"], env=child_env, limit=case.get("limit", 10),
+                           **({"conversation": case["conversation"]} if "conversation" in case else {}))
             row = score_case(case, packet)
             readiness = assess(packet, require_semantic=require_semantic, require_judge=require_judge)
             row["errors"].extend(readiness["problems"])
@@ -95,8 +106,8 @@ def run_cases(cases: list[dict], env: dict | None = None, *, require_semantic: b
         except Exception as exc:
             row = {"id": case["id"], "ok": False, "errors": [str(exc)],
                    "retrieval_mode": "failed", "judge_status": "not_attempted",
-                   "recall_at_k": 0.0 if case["expected_ids"] else None,
-                   "precision_at_k": None, "no_answer": not case["expected_ids"]}
+                   "recall_at_k": 0.0 if case["expected_ids"] or case.get("expected_any_ids") else None,
+                   "precision_at_k": None, "no_answer": not case["expected_ids"] and not case.get("expected_any_ids")}
         row["elapsed_ms"] = round((time.monotonic() - started) * 1000)
         rows.append(row)
     latencies = sorted(r["elapsed_ms"] for r in rows)
@@ -135,11 +146,19 @@ def main() -> int:
                     or not isinstance(case["expected_ids"], list)
                     or not all(isinstance(x, str) for x in case["expected_ids"])):
                 raise ValueError("each case needs a query and expected_ids list")
+            from xkb_recall import conversation_messages
+            if "conversation" in case:
+                conversation_messages(case["conversation"])
+            if case.get("expected_delivery") not in {None, "none", "evidence"}:
+                raise ValueError("expected_delivery must be none or evidence")
+            alternatives = case.get("expected_any_ids", [])
+            if not isinstance(alternatives, list) or not all(isinstance(x, str) for x in alternatives):
+                raise ValueError("expected_any_ids must be a list of equivalent evidence ids")
             if case.get("label_unit", "document") not in {"document", "evidence"}:
                 raise ValueError("label_unit must be document or evidence")
-            allowed = case.get("allowed_ids", case["expected_ids"])
+            allowed = case.get("allowed_ids", case["expected_ids"] + alternatives)
             if (not isinstance(allowed, list) or not all(isinstance(x, str) for x in allowed)
-                    or not set(case["expected_ids"]).issubset(allowed)):
+                    or not set(case["expected_ids"] + alternatives).issubset(allowed)):
                 raise ValueError("allowed_ids must be a list containing all expected_ids")
         if args.live:
             report = run_cases(cases, require_semantic=args.require_semantic, require_judge=args.require_judge)

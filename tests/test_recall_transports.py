@@ -82,6 +82,21 @@ class RecallTransports(unittest.TestCase):
         with urlopen(req, timeout=5) as response:
             return json.load(response)
 
+    def test_mcp_http_preserves_statement_context_and_rejects_silent_old_server(self):
+        from xkb_recall import conversation_fingerprint, recall
+        history = [{"role": "user", "content": "Aurora deployment"}]
+        packet = probe("Keep that release reversible.", conversation=history,
+                       env={**self.env, "XKB_MEMORY_SERVICE_URL": self.url})
+        self.assertEqual(packet["query"], "Keep that release reversible.")
+        self.assertEqual(packet["conversation_fingerprint"], conversation_fingerprint(history))
+        self.assertIn("answer", {r["id"] for r in packet["records"]})
+        self.assertNotIn("secret", {r["id"] for r in packet["records"]})
+        legacy = {key: value for key, value in packet.items() if not key.startswith("conversation_")}
+        with mock.patch.object(self.store, "knowledge_recall", return_value=legacy), \
+             mock.patch.dict(os.environ, {"XKB_MEMORY_SERVICE_URL": self.url}):
+            with self.assertRaisesRegex(RuntimeError, "did not acknowledge conversation"):
+                recall("Keep that release reversible.", conversation=history)
+
     def test_partial_judge_agrees_across_http_mcp_doctor_and_usage(self):
         self.judge.side_effect = lambda query, candidates: {
             key: .9 for key, text in candidates if "blue green" in text}

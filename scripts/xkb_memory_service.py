@@ -45,7 +45,7 @@ import xkb_relevance
 import xkb_text
 import xkb_score
 from xkb_evidence import fields, record_id, render_context, identity_key, IDENTITY_PREFIX
-from xkb_recall import recall_options, judge_quality, recall_quality
+from xkb_recall import recall_options, judge_quality, recall_quality, conversation_messages, conversation_fingerprint, contextual_query
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -1392,9 +1392,20 @@ class Store:
                 if session_namespace != (db.execute("SELECT namespace FROM sessions WHERE session_id=?", (existing["session_id"],)).fetchone() or {"namespace": None})["namespace"]:
                     raise ValueError("turn_id conflicts with existing session")
                 retrieval = json.loads(existing["retrieval_json"] or "{}")
+                if "conversation" in body and retrieval.get("conversation_fingerprint") != conversation_fingerprint(conversation_messages(body["conversation"])):
+                    raise ValueError("turn_id conflicts with existing conversation context")
                 return {"schema": SCHEMA, "turn_id": turn_id, "session_id": existing["session_id"], "episode_id": existing["episode_id"], "resumed": True, "source_memory_ids": [item.get("id") for item in retrieval.get("records", [])], "retrieval": retrieval}
             retrieval_limit = bounded_int(body.get("retrieval_limit"), name="retrieval_limit", default=10, minimum=1, maximum=50)
-            retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace)
+            if "conversation" in body:
+                recent = conversation_messages(body["conversation"])
+            else:
+                previous = db.execute(
+                    "SELECT query,answer FROM turns WHERE session_id=? AND status='succeeded' "
+                    "ORDER BY started_at DESC, rowid DESC LIMIT 2", (session_id,)).fetchall()
+                recent = conversation_messages([
+                    {"role": role, "content": row[column]} for row in reversed(previous)
+                    for role, column in (("user", "query"), ("assistant", "answer")) if row[column]])
+            retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace, conversation=recent)
             db.execute(
                 "INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
                 (turn_id, session_id, query, "started", json.dumps(retrieval, ensure_ascii=False), now()),
@@ -1570,13 +1581,17 @@ class Store:
         """
         return _noise_kind(query)
 
-    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None) -> dict[str, Any]:
+    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
         if not isinstance(namespace, str) or not namespace.strip():
             raise ValueError("namespace is required")
         opts = recall_options(options)
+        recent = conversation_messages(conversation)
+        context_receipt = {"conversation_fingerprint": conversation_fingerprint(recent),
+                           "conversation_messages": len(recent)}
+        search_query = contextual_query(query, recent)
         # 每次召回從乾淨的統計開始。少了這一步，某些路徑（例如語意後端不在時
         # 提早回傳的那條）會沿用同一條執行緒上一個請求的數字，回應裡的
         # 「為什麼結果這麼少」就會是別人的答案。
@@ -1588,7 +1603,7 @@ class Store:
         skipped = self._skip_reason(query)
         if skipped:
             packet = {
-                "schema": SCHEMA, "query": query, "namespace": namespace,
+                "schema": SCHEMA, "query": query, "namespace": namespace, **context_receipt,
                 "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
                 "records": [], "count": 0, "unfiltered_count": 0,
                 "filtered_counts": filter_stats(), "context": "",
@@ -1600,13 +1615,22 @@ class Store:
             }
             packet["quality"] = recall_quality(packet)
             return packet
-        knowledge = self.catalog.search(query, limit, namespace, **({"options": opts} if options is not None else {}))
+        # Keep current-utterance candidates even when old dialogue is longer or
+        # contains stronger keywords. The second retrieval resolves references;
+        # neither branch consumes the other's pre-judge candidate budget.
+        search_options = {"options": opts} if options is not None else {}
+        knowledge = self.catalog.search(query, limit, namespace, **search_options)
+        context_knowledge = self.catalog.search(search_query, limit, namespace, **search_options) if recent else None
+        if context_knowledge is not None:
+            knowledge = {**knowledge, "records": knowledge["records"] + context_knowledge["records"]}
         conversation_state = {"backend": "conversation_keyword", "attempted": opts["conversations"],
                               "used": False, "status": "disabled"}
         conversation = {"memories": []}
         if opts["conversations"]:
             try:
                 conversation = self.recall(query, limit, namespace)
+                if recent:
+                    conversation = {"memories": conversation["memories"] + self.recall(search_query, limit, namespace)["memories"]}
                 conversation_state.update(used=bool(conversation["memories"]),
                                           status="used" if conversation["memories"] else "empty")
             except sqlite3.Error as err:
@@ -1638,7 +1662,7 @@ class Store:
         judge_note: dict[str, Any] = {"status": "off"}
         if os.getenv("XKB_JEV_DECIDE", "1") != "0":
             try:
-                records, judge_note = judge_relevance(query, records)
+                records, judge_note = judge_relevance(contextual_query(query, recent, for_judge=True), records)
             except Exception as err:  # noqa: BLE001
                 xkb_failures.note("jev judge", err)
                 judge_note = {"status": "error"}
@@ -1678,11 +1702,14 @@ class Store:
         quality_warning = judge_quality(judge_note)["warning"]
         if quality_warning:
             warnings.append(quality_warning)
+        if context_knowledge is not None:
+            warnings.extend("conversation context retrieval: " + warning for warning in
+                            _recall_warnings(context_knowledge, context_knowledge.get("filtered_counts", filter_stats())) if warning)
         for item in records:
             item.pop("index_unreadable", None)
         context = render_context(records[:limit])
         packet = {
-            "schema": SCHEMA,
+            "schema": SCHEMA, **context_receipt,
             "query": query,
             "namespace": namespace,
             "request_namespace": namespace,
@@ -1700,6 +1727,9 @@ class Store:
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
             "backends": backends, "options": opts,
+            "context_retrieval": ({key: context_knowledge.get(key) for key in
+                                   ("retrieval_mode", "semantic_backend", "backends", "filtered_counts")}
+                                  if context_knowledge is not None else None),
             "warnings": warnings,
         }
         packet["quality"] = recall_quality(packet)
@@ -1859,10 +1889,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, self.store.complete_turn(turn_id, body)); return
             if parsed.path == "/v1/recall":
                 self.authorize(principal, READ_SCOPE)
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"))); return
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"), conversation=body.get("conversation"))); return
             if parsed.path == "/v1/context":
                 self.authorize(principal, READ_SCOPE)
-                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"))); return
+                self.send_json(200, self.store.knowledge_recall(text(body.get("query")), bounded_int(body.get("limit"), name="limit", default=10, minimum=1, maximum=50), self.namespace(principal, text(body.get("namespace"))), options=body.get("options"), conversation=body.get("conversation"))); return
             if parsed.path == "/v1/ingest/status":
                 self.authorize(principal, READ_SCOPE)
                 self.send_json(200, self.store.catalog.pipeline_status()); return

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from conversation_state_parser import is_harness_text
 from xkb_evidence import fields
+from xkb_recall import conversation_messages
 
 DEFAULT_URL = "http://127.0.0.1:18972"
 TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_TIMEOUT", "6"))
@@ -171,6 +172,39 @@ def last_assistant_message(transcript: str) -> str:
     return ""
 
 
+def recent_conversation(transcript: str, current_prompt: str) -> list[dict[str, str]]:
+    """Read a bounded transcript tail without including tools or the current turn twice."""
+    if not transcript:
+        return []
+    try:
+        with Path(transcript).open("rb") as stream:
+            stream.seek(0, 2)
+            stream.seek(max(0, stream.tell() - 65536))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    messages = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        message = entry.get("message", entry)
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "\n".join(p["text"] for p in content if isinstance(p, dict)
+                                and p.get("type") == "text" and isinstance(p.get("text"), str))
+        if isinstance(content, str) and content.strip() and not is_harness_text(content):
+            messages.append({"role": message["role"], "content": content.strip()})
+    if messages and messages[-1] == {"role": "user", "content": current_prompt.strip()}:
+        messages.pop()
+    return conversation_messages(messages[-4:])
+
+
 def on_prompt(event: dict, cfg: dict) -> None:
     prompt = str(event.get("prompt") or event.get("user_prompt") or "").strip()
     if not prompt:
@@ -196,10 +230,12 @@ def on_prompt(event: dict, cfg: dict) -> None:
     }, cfg)
     ordinal = next_ordinal(key)
     current = turn_id(key, prompt, ordinal)
+    recent = recent_conversation(str(event.get("transcript_path") or ""), prompt)
     turn = call("/v1/turns/start", {
         "session_id": session["session_id"],
         "turn_id": current,
         "query": prompt,
+        **({"conversation": recent} if recent else {}),
     }, cfg)
 
     # Remember which turn is open so Stop can close this exact one.

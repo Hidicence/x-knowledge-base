@@ -33,6 +33,17 @@ class RecallEvaluation(unittest.TestCase):
         self.assertFalse(xkb_eval.score_case(case, self.packet(["noise"]))["ok"])
         self.assertTrue(xkb_eval.score_case(case, self.packet([]))["ok"])
 
+    def test_conversational_need_accepts_equivalent_evidence_but_not_unrelated_hits(self):
+        case = {"id": "statement", "expected_ids": [], "expected_any_ids": ["card", "wiki"],
+                "expected_delivery": "evidence", "need": "Resolve the current obstacle"}
+        hit = xkb_eval.score_case(case, self.packet(["wiki"]))
+        self.assertTrue(hit["ok"])
+        self.assertFalse(hit["no_answer"])
+        self.assertEqual(hit["recall_at_k"], 1)
+        miss = xkb_eval.score_case(case, self.packet(["unrelated"]))
+        self.assertFalse(miss["ok"])
+        self.assertEqual(miss["recall_at_k"], 0)
+
     def test_distinct_sections_are_not_duplicates_and_document_precision_is_consistent(self):
         packet = self.packet(["guide", "guide", "noise"])
         for record, section in zip(packet["records"], ["setup", "recovery", ""]):

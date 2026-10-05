@@ -27,6 +27,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
 import xkb_provenance
+import xkb_frontmatter
 from xkb_provenance import annotate
 
 STAGING_DIR = xkb_paths.WIKI_DIR / "_staging"
@@ -87,6 +88,8 @@ class Candidate:
     proposed_topic: str = ""
     episode_count: int = 1
     source_count: int = 1
+    original_topic: str = ""
+    topic_resolution: str = ""
 
 
 def _field(block: str, name: str, default: str = "") -> str:
@@ -122,10 +125,34 @@ def _split_candidates(content: str) -> list[tuple[int, str]]:
     return [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts), 2)]
 
 
+def load_topic_resolutions() -> dict:
+    resolution_path = GOVERNANCE_DIR / "topic-resolutions.json"
+    resolutions = json.loads(resolution_path.read_text(encoding="utf-8")) if resolution_path.exists() else {}
+    if not isinstance(resolutions, dict):
+        raise ValueError("topic resolutions must be an object")
+    return resolutions
+
+
+def resolved_topic(resolutions: dict, candidate_id: str, content: str, original: str) -> tuple[str, str]:
+    resolution = resolutions.get(candidate_id)
+    if resolution is None:
+        return original, ""
+    if not isinstance(resolution, dict):
+        raise ValueError("candidate topic resolution must be an object")
+    if resolution.get("fingerprint") != hashlib.sha256(normalize(content).encode("utf-8")).hexdigest():
+        raise ValueError(f"stale topic resolution: {candidate_id}")
+    target = resolution.get("topic")
+    if (not isinstance(target, str) or not target.strip() or target != target.strip()
+            or any(c in target for c in '/\\:') or target in {".", ".."}):
+        raise ValueError(f"invalid resolved topic: {candidate_id}")
+    return target, str(resolution.get("reason", ""))
+
+
 def load_candidates(classify: bool = True) -> list[Candidate]:
     if not STAGING_DIR.exists():
         return []
     out: list[Candidate] = []
+    resolutions = load_topic_resolutions()
     for path in sorted(STAGING_DIR.rglob("*.md")):
         try:
             content = path.read_text(encoding="utf-8")
@@ -157,6 +184,11 @@ def load_candidates(classify: bool = True) -> list[Candidate]:
                 episode_count=max(1, int(_field(block, "Episode count", "1") or 1)),
                 source_count=max(1, int(_field(block, "Source count", "1") or 1)),
             )
+            target, reason = resolved_topic(resolutions, candidate.candidate_id, text, topic)
+            if candidate.candidate_id in resolutions:
+                candidate.original_topic = candidate.topic
+                candidate.topic = candidate.topic_key = target
+                candidate.topic_resolution = reason
             out.append(candidate)
     if classify:
         _classify_relations(out)
@@ -318,9 +350,20 @@ def _safe_promotable(candidate: Candidate) -> bool:
 
 def _topic_available(candidate: Candidate) -> bool:
     """A gated candidate is promotable only when its existing topic exists."""
-    return bool(candidate.topic_key and not candidate.topic.startswith("[NEW:")
-                and ((TOPICS_DIR / f"{candidate.topic_key}.md").exists()
-                     or (candidate.topic_key == GENERAL_TOPIC and candidate.proposed_topic)))
+    if not candidate.topic_key or candidate.topic.startswith("[NEW:"):
+        return False
+    path = TOPICS_DIR / f"{candidate.topic_key}.md"
+    return (topic_accepts_candidates(path) if path.exists() else
+            bool(candidate.topic_key == GENERAL_TOPIC and candidate.proposed_topic))
+
+
+def topic_accepts_candidates(path: Path) -> bool:
+    """Archived and redirect pages stay readable, but are not new-write destinations."""
+    if not path.is_file():
+        return False
+    content = path.read_text(encoding="utf-8")
+    status = (xkb_frontmatter.get(content, "status") or "").strip("\"'").lower()
+    return status not in {"archived", "redirect"} and not re.search(r"(?mi)^# Redirect:", content)
 
 
 def _promoted_ids(path: Path) -> set[str]:

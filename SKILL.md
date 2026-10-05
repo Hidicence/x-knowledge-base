@@ -383,6 +383,17 @@ python3 scripts/migrate_schema.py             # 執行
 - Data quality first — 先保品質再追覆蓋率
 - Knowledge cards 要服務回用，不只是保存
 
+## Recall during conversation
+
+In normal conversation, use XKB when a plan, obstacle, constraint, comparison or
+decision could benefit from existing evidence, even without a question or search
+request. Pass the current utterance and relevant recent dialogue to `xkb_recall`.
+Do not rewrite the user's statement into an invented question. Evaluate whether
+the returned evidence advances the current need; a retrieval hit is not proof of
+usefulness. Keep ordinary acknowledgements quiet and avoid repeating advice the
+conversation has already settled. The MCP tool requires an agent to invoke it;
+the Claude prompt hook automates invocation.
+
 ## Before you push
 
 Run `/code-review high <base>..HEAD` over the diff, and act on what comes back.

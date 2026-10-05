@@ -34,6 +34,16 @@ was introduced need to be generated and reviewed again. LLM absorb failures are
 recorded as `unavailable`, so they are distinguishable from an actual rejection.
 Malformed decision files stop the run and remain untouched.
 
+Reviewed candidate routing can be stored in the private governance directory as
+`topic-resolutions.json`: an object keyed by candidate ID, with `fingerprint`,
+`topic`, and `reason`. The fingerprint must match the staged candidate content;
+stale decisions fail visibly. Routing preserves the staging text and candidate ID,
+and records the original topic and review reason in the registry. It does not
+override confidence, provenance, duplicate, or age checks. Archived and redirect
+pages remain readable but cannot receive new candidates. New distillation prompts
+list only writable topics; an unknown output slug is a proposal, not an apparently
+existing destination.
+
 The fixture tests in `test_wiki_write_integrity.py` exercise interruption,
 recovery, rollback conflicts, repeated synthesis, and the decision gate without
 paid model calls or production knowledge writes.

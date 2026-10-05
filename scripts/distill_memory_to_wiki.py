@@ -48,7 +48,8 @@ def llm_call(system: str, user: str, api_key: str = "") -> str:
 
 
 def load_topic_slugs() -> list[str]:
-    return [p.stem for p in TOPICS_DIR.glob("*.md")] if TOPICS_DIR.exists() else []
+    from xkb_review import topic_accepts_candidates
+    return [p.stem for p in TOPICS_DIR.glob("*.md") if topic_accepts_candidates(p)] if TOPICS_DIR.exists() else []
 
 
 def append_log(entry: str) -> None:
@@ -374,8 +375,10 @@ def write_staging(insights: list[dict], date_str: str, label: str = "") -> Path:
         "",
     ]
 
+    existing_topics = set(load_topic_slugs())
     for i, ins in enumerate(insights, 1):
-        slug = ins.get("topic_slug") or f"[NEW: {ins.get('topic_suggestion', '?')}]"
+        proposed = str(ins.get("topic_slug") or ins.get("topic_suggestion") or "?").strip()
+        slug = proposed if proposed in existing_topics else f"[NEW: {proposed}]"
         lines += [
             f"## Candidate {i}",
             f"- **Topic:** {slug}",
@@ -407,13 +410,20 @@ def apply_staging_file(
       others still require manual [x] approve in the staging file
     """
     content = staging_path.read_text(encoding="utf-8")
-    from xkb_review import _split_candidates, stable_candidate_id
+    from xkb_review import (_split_candidates, stable_candidate_id, _body, _field,
+                            load_topic_resolutions, resolved_topic)
     from xkb_provenance import candidate_marker
     blocks = _split_candidates(content)
     try:
         source_file = staging_path.resolve().relative_to(STAGING_DIR.resolve()).as_posix()
     except ValueError:
         source_file = staging_path.resolve().as_posix()
+    resolutions = load_topic_resolutions()
+    # Validate every override before the first write, using the same identity
+    # and content guard as governance. Never rewrite the source Topic field.
+    resolved = {number: resolved_topic(resolutions, stable_candidate_id(source_file, number),
+                                      _body(block), _field(block, "Topic"))[0]
+                for number, block in blocks}
     applied = 0
     skipped = 0
     updated_slugs: list[str] = []
@@ -431,7 +441,7 @@ def apply_staging_file(
             skipped += 1
             continue
 
-        slug = (topic_m.group(1).strip() if topic_m else "").strip()
+        slug = resolved[number]
         section = section_m.group(1).strip() if section_m else "核心概念"
         source_date = source_m.group(1).strip() if source_m else "unknown"
 
@@ -474,9 +484,10 @@ def apply_staging_file(
 
 def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str,
                         *, marker: str = "") -> bool:
+    from xkb_review import topic_accepts_candidates
     topic_path = TOPICS_DIR / f"{slug}.md"
-    if not topic_path.exists():
-        print(f"  [SKIP] Topic {slug} does not exist")
+    if not topic_accepts_candidates(topic_path):
+        print(f"  [SKIP] Topic {slug} is missing, archived or a redirect")
         return False
 
     content = topic_path.read_text(encoding="utf-8")

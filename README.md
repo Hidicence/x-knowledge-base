@@ -8,9 +8,15 @@
 
 # XKB · Knowledge your agents can return to
 
-**Turn saved sources into a searchable knowledge base, and let your AI agents retrieve the evidence from it.**
+**Bring useful knowledge into an ongoing conversation—even when the user has not asked a question or requested a search.**
 
 XKB keeps source-linked Markdown cards, wiki topics and captured conversation traces under your control. MCP, HTTP and the default CLI clients use one recall core, so connected agents can search the same library with the same access rules and relevance checks.
+
+The goal is timely knowledge reuse: notice a plan, obstacle, constraint or decision,
+then bring back evidence that helps with that need. Recent dialogue can accompany
+the current utterance so follow-ups retain their meaning. The Claude hook does this
+on prompt submission; MCP clients must invoke recall proactively as part of their
+conversation workflow. Connecting the tool alone does not make an agent use it.
 
 [Try it](#try-it-without-api-keys) · [Use your own sources](#build-your-library) · [Connect an agent](#connect-your-agents) · [How recall works](#how-recall-works)
 
