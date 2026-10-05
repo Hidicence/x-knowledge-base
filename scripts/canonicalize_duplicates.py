@@ -34,27 +34,7 @@ WORKSPACE = xkb_paths.WORKSPACE
 BOOKMARKS_DIR = xkb_paths.BOOKMARKS_DIR
 INDEX_FILE = xkb_paths.INDEX_FILE
 
-LOW_SIGNAL_SUMMARIES = {"", "（待整理）", "待整理", "todo", "tbd", "n/a"}
-
-
-def clean_summary(text: str) -> str:
-    text = (text or "").strip()
-    text = re.sub(r"^#+\s*", "", text)
-    text = re.sub(r"^一句話摘要\s*", "", text)
-    text = re.sub(r"^[-•]\s*", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def is_valid_source_url(url: str) -> bool:
-    url = (url or "").strip()
-    if not url.startswith(("http://", "https://")):
-        return False
-    x_status = re.search(r"https?://(?:x|twitter)\.com/[^\s/]+/status/(\d{15,20})(?:\b|/|\?)", url)
-    x_i_status = re.search(r"https?://x\.com/i/status/(\d{15,20})(?:\b|/|\?)", url)
-    if ("x.com" in url or "twitter.com" in url) and not (x_status or x_i_status):
-        return False
-    return True
+from normalize_index_quality import LOW_SIGNAL_SUMMARIES, clean_summary, is_valid_source_url
 
 
 def entry_score(item: dict[str, Any]) -> tuple:
@@ -67,7 +47,7 @@ def entry_score(item: dict[str, Any]) -> tuple:
     has_human_title = 1
     if not title or re.fullmatch(r"\d{15,20}", title) or re.fullmatch(r"tweet\s+\d{15,20}", title.lower()):
         has_human_title = 0
-    in_cards = 1 if rel_path.startswith("memory/cards/") else 0
+    in_cards = 1 if rel_path.startswith(("cards/", "memory/cards/")) else 0
     not_excluded = 1 if not item.get("excluded") else 0
     non_legacy = 1 if "legacy-" not in rel_path else 0
     title_len = min(len(title), 120)

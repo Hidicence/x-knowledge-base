@@ -132,18 +132,14 @@ def llm_absorb_judgment(
         if json_match:
             parsed = json.loads(json_match.group())
         else:
-            # Fallback: infer from plain-text keywords in response
-            text_lower = response.lower()
-            include_fallback = "include: true" in text_lower or '"include": true' in text_lower
-            dimension_fallback = "none"
-            for dim in ("new_concept", "new_case", "contradiction"):
-                if dim in text_lower:
-                    dimension_fallback = dim
-                    break
-            parsed = {"include": include_fallback, "dimension": dimension_fallback, "reason": "text-parsed fallback"}
-        include = bool(parsed.get("include", False))
-        dimension = str(parsed.get("dimension", "none"))
-        reason = str(parsed.get("reason", ""))
+            raise ValueError("absorb gate did not return JSON")
+        if not isinstance(parsed, dict) or type(parsed.get("include")) is not bool:
+            raise ValueError("absorb gate include must be boolean")
+        include = parsed["include"]
+        dimension = parsed.get("dimension")
+        reason = parsed.get("reason", "")
+        if dimension not in {"new_case", "new_concept", "contradiction", "none"} or not isinstance(reason, str):
+            raise ValueError("absorb gate returned invalid fields")
         result = (include, dimension, reason)
     except Exception as e:
         # 判斷不了就不放行。
@@ -204,17 +200,15 @@ def load_review_file() -> dict:
     """Load the full review-decisions.json, initializing missing keys."""
     if not REVIEW_DECISIONS_PATH.exists():
         return {"decisions": {}, "topics": {}}
-    try:
-        data = load_json(REVIEW_DECISIONS_PATH)
-        if not isinstance(data, dict):
-            data = {}
-        if "decisions" not in data:
-            data["decisions"] = {}
-        if "topics" not in data:
-            data["topics"] = {}
-        return data
-    except Exception:
-        return {"decisions": {}, "topics": {}}
+    data = load_json(REVIEW_DECISIONS_PATH)
+    if not isinstance(data, dict):
+        raise ValueError("review decisions must be an object; original file preserved")
+    for key in ("decisions", "topics"):
+        if key not in data:
+            data[key] = {}
+        elif not isinstance(data[key], dict):
+            raise ValueError(f"review decisions {key} must be an object; original file preserved")
+    return data
 
 
 def load_review_decisions() -> dict:
@@ -467,7 +461,7 @@ def update_topic_file(
     frontmatter["last_updated"] = datetime.now(timezone.utc).date().isoformat()
     rebuilt = render_frontmatter(frontmatter) + "\n\n" + body.lstrip("\n")
     rebuilt = SOURCES_SECTION_RE.sub(
-        "\n## 來源\n" + new_source_block.rstrip() + "\n", rebuilt
+        lambda _: "\n## 來源\n" + new_source_block.rstrip() + "\n", rebuilt
     )
 
     if apply:
@@ -708,6 +702,9 @@ def cmd_force_absorb(url: str, topic_override: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    global _llm_failures
+    _llm_failures = 0
+    _llm_cache.clear()
     parser = argparse.ArgumentParser(
         description="Sync x-knowledge-base cards into wiki (v4: LLM absorb gate + explainability)"
     )
@@ -763,6 +760,7 @@ def main() -> int:
         "candidates": 0,
         "approved": 0,
         "skipped_llm": 0,
+        "unavailable": 0,
         "skipped_manual": 0,
         "manual_allow": 0,
         "no_llm_passthrough": 0,
@@ -784,7 +782,8 @@ def main() -> int:
                     include, dimension, reason = llm_absorb_judgment(
                         card, topic, wiki_content, card_content, api_key
                     )
-                    verdict = "INCLUDE" if (include and dimension != "none") else "SKIP"
+                    verdict = ("UNAVAILABLE" if dimension == "gate_unavailable" else
+                               "INCLUDE" if (include and dimension != "none") else "SKIP")
                     print(f"  [{verdict}] {card.title[:60]}")
                     print(f"    dim: {dimension} | {reason}")
                     print(f"    url: {card.url}")
@@ -825,10 +824,11 @@ def main() -> int:
                 else:
                     lbl = "low-value" if dimension == "none" else "skip"
                     print(f"  {lbl} [{dimension}] {card.title[:55]}")
-                    stats["skipped_llm"] += 1
+                    stats["unavailable" if dimension == "gate_unavailable" else "skipped_llm"] += 1
                     decision_records.append({
                         "url": card.url, "topic": topic,
-                        "decision": "skip", "dimension": dimension, "reason": reason,
+                        "decision": "unavailable" if dimension == "gate_unavailable" else "skip",
+                        "dimension": dimension, "reason": reason,
                     })
             else:
                 approved.append(card)
@@ -851,6 +851,7 @@ def main() -> int:
     print(f"  Approved (LLM)       : {stats['approved']}")
     print(f"  Manual allow         : {stats['manual_allow']}")
     print(f"  Skipped (LLM gate)   : {stats['skipped_llm']}")
+    print(f"  Gate unavailable     : {stats['unavailable']}")
     if stats["no_llm_passthrough"]:
         print(f"  Pass-through (no-LLM): {stats['no_llm_passthrough']}")
     total_approved = stats["approved"] + stats["manual_allow"] + stats["no_llm_passthrough"]

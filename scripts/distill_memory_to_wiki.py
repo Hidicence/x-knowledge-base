@@ -407,12 +407,15 @@ def apply_staging_file(
       others still require manual [x] approve in the staging file
     """
     content = staging_path.read_text(encoding="utf-8")
-    blocks = re.split(r"\n## Candidate \d+\n", content)[1:]
+    from xkb_review import _split_candidates, stable_candidate_id
+    from xkb_provenance import candidate_marker
+    blocks = _split_candidates(content)
+    source_file = staging_path.resolve().relative_to(STAGING_DIR.resolve()).as_posix()
     applied = 0
     skipped = 0
     updated_slugs: list[str] = []
 
-    for block in blocks:
+    for number, block in blocks:
         topic_m = re.search(r"\*\*Topic:\*\* (.+)", block)
         section_m = re.search(r"\*\*Section:\*\* (.+)", block)
         status_m = re.search(r"\*\*Status:\*\* \[x\] approve", block, re.IGNORECASE)
@@ -445,7 +448,10 @@ def apply_staging_file(
             skipped += 1
             continue
 
-        upsert_wiki_section(slug, section, entry_text, source_date)
+        marker = candidate_marker(stable_candidate_id(source_file, number))
+        if not upsert_wiki_section(slug, section, entry_text, source_date, marker=marker):
+            skipped += 1
+            continue
         applied += 1
         if slug not in updated_slugs:
             updated_slugs.append(slug)
@@ -463,13 +469,18 @@ def apply_staging_file(
     return applied, skipped, updated_slugs
 
 
-def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -> None:
+def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str,
+                        *, marker: str = "") -> bool:
     topic_path = TOPICS_DIR / f"{slug}.md"
     if not topic_path.exists():
         print(f"  [SKIP] Topic {slug} does not exist")
-        return
+        return False
 
-    content = topic_path.read_text(encoding="utf-8", errors="replace")
+    content = topic_path.read_text(encoding="utf-8")
+    if marker and marker in content:
+        return False
+    if marker:
+        entry += f" <!-- {marker} -->"
     section_header = f"## {section}"
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -485,6 +496,7 @@ def upsert_wiki_section(slug: str, section: str, entry: str, source_date: str) -
     content = re.sub(r"(last_updated:\s*)\S+", f"\\g<1>{today}", content)
     topic_path.write_text(content, encoding="utf-8")
     print(f"  [OK] {slug} / {section}")
+    return True
 
 
 def main() -> None:

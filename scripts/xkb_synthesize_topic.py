@@ -97,60 +97,56 @@ GENERATED_HEADINGS = (CONCLUSIONS_HEADING, UNDIGESTED_HEADING,
                       DIGESTED_HEADING, SOURCES_HEADING)
 
 
-def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
-    """拆成 (人寫的部分, 既有結論, 尚未消化的條列, 出處)。
-
-    消化寫出來的區塊要認得出來，否則再跑一次就會把結論當成素材，再壓一次
-    結論——原本那些具體細節就是這樣消失的。而「尚未消化」相反：它們本來
-    就在等下一次，所以要重新交出去。
-    """
-    positions = [text.index(h) for h in GENERATED_HEADINGS if h in text]
-    if not positions:
-        return text, "", [], []
-
-    human, tail = text[: min(positions)], text[min(positions) :]
+def _owned_sections(text: str) -> tuple[str, dict[str, list[str]]]:
+    """Only synthesis-specific headings establish ownership; preserve foreign text."""
+    human: list[str] = []
     blocks: dict[str, list[str]] = {}
-    # 治理在消化之後還會往檔尾追加知識（### 標題加一段文字），那些行落在
-    # 我們的區塊後面，卻不屬於任何一個。原本它們被歸進最後一個區塊、只留
-    # 「- 」開頭的行，於是既看不到、也在下次 --apply 時被整段刪掉。
-    foreign: list[str] = []
-    current: str | None = None
-    for line in tail.splitlines():
-        if line.strip() in GENERATED_HEADINGS:
-            current = line.strip()
-            blocks[current] = []
-        elif line.startswith("#") and not line.strip().startswith("####"):
-            # 出現了不是我們寫的標題：從這裡開始都不是我們的東西。
+    current = None
+    owned = False
+    for line in text.splitlines():
+        heading = line.strip()
+        if heading in GENERATED_HEADINGS and (heading != SOURCES_HEADING or owned):
+            owned = True
+            current = heading
+            blocks.setdefault(current, []).append("")
+        elif line.startswith("#") and not line.startswith("####"):
             current = None
-            foreign.append(line)
-        elif current is not None:
-            blocks[current].append(line)
+            human.append(line)
+        elif current is None:
+            human.append(line)
         else:
-            foreign.append(line)
+            blocks[current].append(line)
+    return "\n".join(human), blocks
 
-    def bullets_of(heading: str) -> list[str]:
-        return [l.strip() for l in blocks.get(heading, []) if l.strip().startswith("- ")]
 
-    conclusions = "\n".join(blocks.get(CONCLUSIONS_HEADING, [])).strip("\n")
-    # 別人寫的東西併回人寫的那一半，這樣它會被保留，而且下次會被當成素材。
-    extra = "\n".join(foreign).strip("\n")
-    if extra:
-        human = human.rstrip() + "\n\n" + extra + "\n"
-    return human, conclusions, bullets_of(UNDIGESTED_HEADING), bullets_of(SOURCES_HEADING)
+def _note_blocks(lines: list[str]) -> list[str]:
+    """Keep complete notes and their continuation lines, including non-bullet prose."""
+    blocks: list[list[str]] = []
+    for line in lines:
+        if line.startswith("- ") or not blocks:
+            blocks.append([])
+        blocks[-1].append(line)
+    return ["\n".join(block).strip("\n") for block in blocks if "\n".join(block).strip()]
+
+
+def split_generated(text: str) -> tuple[str, str, list[str], list[str]]:
+    human, blocks = _owned_sections(text)
+    links, extra = [], []
+    for line in blocks.get(SOURCES_HEADING, []):
+        if LINK_ONLY.match(line):
+            links.append(line.strip())
+        else:
+            extra.append(line)
+    if any(line.strip() for line in extra):
+        human += "\n\n" + SOURCES_HEADING + "\n" + "\n".join(extra)
+    return (human, "\n".join(blocks.get(CONCLUSIONS_HEADING, [])).strip("\n"),
+            _note_blocks(blocks.get(UNDIGESTED_HEADING, [])), links)
 
 
 def prior_digested(text: str) -> list[str]:
-    """上一輪已經消化、原文保留在頁面上的筆記。
-
-    undigested() 刻意不回傳這些（否則每次 --apply 都會把同一批重新消化一次），
-    所以併回去的時候要另外讀一次，不然它們會在這一輪被寫掉——那就又變成「消化
-    會丟東西」，只是晚一輪發生。
-    """
-    marker = DIGESTED_HEADING + "\n"
-    if marker not in text:
-        return []
-    section = text.split(marker, 1)[1].split("\n## ", 1)[0]
-    return [l.strip() for l in section.splitlines() if l.strip().startswith("- ")]
+    """Read archived notes with the same section ownership rules as ingestion."""
+    _, blocks = _owned_sections(text)
+    return _note_blocks(blocks.get(DIGESTED_HEADING, []))
 
 
 def undigested(text: str) -> tuple[str, list[str], list[str], str]:
@@ -289,7 +285,7 @@ def digest(bullets: list[str]) -> str:
     return hashlib.sha256(joined).hexdigest()[:16]
 
 
-def read_draft(review: pathlib.Path, bullets: list[str]) -> str | None:
+def read_draft(review: pathlib.Path, bullets: list[str], source_text: str | None = None) -> str | None:
     """讀回審閱稿的結論；指紋對不上就回 None。
 
     對不上代表頁面在你審閱之後又長了新東西，那份稿子已經不是這一頁的
@@ -298,6 +294,10 @@ def read_draft(review: pathlib.Path, bullets: list[str]) -> str | None:
     if not review.exists():
         return None
     text = review.read_text(encoding="utf-8", errors="replace")
+    if source_text is not None:
+        page_digest = re.search(r"<!-- source-page-digest: ([0-9a-f]+) -->", text)
+        if not page_digest or page_digest.group(1) != digest([source_text]):
+            return None
     found = DIGEST_LINE.search(text)
     if not found or found.group(1) != digest(bullets):
         return None
@@ -321,11 +321,11 @@ def draft_lost(review: pathlib.Path) -> list[str]:
     if UNDIGESTED_HEADING + "\n" not in text:
         return []
     section = text.split(UNDIGESTED_HEADING + "\n", 1)[1].split("\n## ", 1)[0]
-    return [line.strip() for line in section.splitlines() if line.strip().startswith("- ")]
+    return [block for block in _note_blocks(section.splitlines()) if block.startswith("- ")]
 
 
 def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str],
-           lost: list[str] | None = None) -> str:
+           lost: list[str] | None = None, source_text: str | None = None) -> str:
     stamp = datetime.now(timezone.utc).isoformat()
     return "\n".join([
         f"# {topic} — 消化後",
@@ -333,6 +333,7 @@ def render(topic: str, synthesis: str, links: list[str], bullets_text: list[str]
         f"> 由 {len(bullets_text)} 條累積筆記消化而成，{stamp}。",
         "> 這是審閱稿：確認無誤後再用 --apply 併回主題頁。",
         f"<!-- source-digest: {digest(bullets_text)} -->",
+        *([f"<!-- source-page-digest: {digest([source_text])} -->"] if source_text is not None else []),
         f"<!-- lost-bullets: {len(lost or [])} -->",
         "",
         "## 結論",
@@ -378,7 +379,7 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
     print(f"  {topic}：{len(bullets)} 條敘述、{len(links)} 條連結")
 
     review = REVIEW_DIR / f"{topic}-synthesis.md"
-    synthesis = None if regenerate else read_draft(review, bullets)
+    synthesis = None if regenerate else read_draft(review, bullets, text)
     lost: list[str] = draft_lost(review) if synthesis else []
     if synthesis:
         print(f"  沿用既有審閱稿：{review.name}")
@@ -416,7 +417,7 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
               f"留在「尚未消化」區，下次再試。")
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    review.write_text(render(topic, synthesis, links, bullets, lost),
+    review.write_text(render(topic, synthesis, links, bullets, lost, text),
                       encoding="utf-8")
     print(f"  審閱稿：{review}")
 
@@ -426,7 +427,10 @@ def cmd_topic(topic: str, apply: bool, regenerate: bool = False) -> int:
 
     # 備份還是留著。現在消化不會刪掉筆記，但它仍然會重排整頁，而「重排一頁
     # 我手寫的東西」值得有一份退路。
-    backup = path.with_suffix(f".md.before-synthesis-{datetime.now().strftime('%Y%m%d-%H%M')}")
+    backup = path.with_suffix(f".md.before-synthesis-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}")
+    if path.read_text(encoding="utf-8") != text:
+        print("Topic changed during synthesis; draft retained, topic left untouched.", file=sys.stderr)
+        return 3
     shutil.copy2(path, backup)
 
     # 這次併回去的是「結論 + 原始筆記」，不是「結論取代原始筆記」。

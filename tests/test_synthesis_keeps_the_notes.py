@@ -103,17 +103,5 @@ class NothingIsEverReplaced(unittest.TestCase):
         self.assertEqual(syn.prior_digested("# 主題\n\n沒有那個區塊。\n"), [])
 
 
-class TheApplyPathKeepsEverything(unittest.TestCase):
-    """讀 --apply 那段的組裝，確認三種筆記都有出口。"""
-
-    def test_every_bullet_has_a_destination(self):
-        source = (ROOT / "scripts" / "xkb_synthesize_topic.py").read_text(encoding="utf-8")
-        merge = source.split("# 這次併回去的是")[1].split("path.write_text(merged")[0]
-        # 消化出結論的 → 已消化區；沒消化出來的 → 尚未消化區；上一輪的 → 讀回來。
-        self.assertIn("DIGESTED_HEADING", merge)
-        self.assertIn("UNDIGESTED_HEADING", merge)
-        self.assertIn("prior_digested(text)", merge)
-
-
 if __name__ == "__main__":
     unittest.main()

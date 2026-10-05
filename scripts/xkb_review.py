@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import unicodedata
+import uuid
 from datetime import date, timedelta
 from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
@@ -272,24 +273,6 @@ slug: general
 """
 
 
-def _ensure_general_topic() -> bool:
-    """確保 general 這一頁存在。回傳它現在是否可用。
-
-    wiki 是資料不是程式，不在版控裡，所以這一頁不會隨 repo 散佈。少了它，
-    導向會把每一條提案變成 missing_topic 扣留——提案數歸零、看起來修好了，
-    實際上什麼都沒吸收。
-    """
-    page = TOPICS_DIR / f"{GENERAL_TOPIC}.md"
-    if page.exists():
-        return True
-    try:
-        page.parent.mkdir(parents=True, exist_ok=True)
-        page.write_text(GENERAL_PAGE.format(today=date.today()), encoding="utf-8")
-        return True
-    except OSError:
-        return False
-
-
 def _route_new_topics(candidates: list[Candidate], counts: dict[str, int]) -> int:
     """把只出現過一兩次的新主題導向 general，保留原本提議的名字。
 
@@ -297,9 +280,6 @@ def _route_new_topics(candidates: list[Candidate], counts: dict[str, int]) -> in
     命名。累積到門檻的仍然留作提案，因為決定要不要開一頁是領域判斷。
     """
     routed = 0
-    if any(c.topic.startswith("[NEW:") for c in candidates) and not _ensure_general_topic():
-        # 送到一個不存在的頁面，比讓它們留在提案區更糟：看起來被處理了。
-        return 0
     for candidate in candidates:
         if not candidate.topic.startswith("[NEW:") or not candidate.topic_key:
             continue
@@ -339,7 +319,8 @@ def _safe_promotable(candidate: Candidate) -> bool:
 def _topic_available(candidate: Candidate) -> bool:
     """A gated candidate is promotable only when its existing topic exists."""
     return bool(candidate.topic_key and not candidate.topic.startswith("[NEW:")
-                and (TOPICS_DIR / f"{candidate.topic_key}.md").exists())
+                and ((TOPICS_DIR / f"{candidate.topic_key}.md").exists()
+                     or (candidate.topic_key == GENERAL_TOPIC and candidate.proposed_topic)))
 
 
 def _promoted_ids(path: Path) -> set[str]:
@@ -356,44 +337,69 @@ def _promoted_ids(path: Path) -> set[str]:
     return promoted
 
 
-def _promote_topics(candidates: list[Candidate], snapshot_dir: Path) -> list[dict[str, str]]:
+def _topic_updates(candidates: list[Candidate]) -> tuple[dict[Path, tuple[bytes | None, bytes]], list[dict[str, str]]]:
+    """Plan topic writes without touching the wiki; existing markers reconcile lifecycle."""
+    updates: dict[Path, tuple[bytes | None, bytes]] = {}
     changes = []
-    # 一頁只快照一次。原本快照在迴圈裡、以檔名為鍵，所以同一頁放行 N 條時，
-    # 備份是「已經寫了 N-1 條」的版本——rollback 會把你還原到一個從來沒有
-    # 存在過的狀態，而且回報「完整還原」。會說謊的保險比沒有保險更糟。
-    snapshotted: set[str] = set()
     for candidate in candidates:
         if not _safe_promotable(candidate) or not _topic_available(candidate):
             continue
-        topic_path = TOPICS_DIR / f"{candidate.topic_key}.md"
+        topic = TOPICS_DIR / f"{candidate.topic_key}.md"
+        if topic in updates:
+            original, current = updates[topic]
+        else:
+            original = topic.read_bytes() if topic.exists() else None
+            current = original if original is not None else GENERAL_PAGE.format(today=date.today()).encode("utf-8")
+        content = current.decode("utf-8")
         marker = xkb_provenance.candidate_marker(candidate.candidate_id)
-        content = topic_path.read_text(encoding="utf-8")
-        if marker in content:
-            continue
-        backup = snapshot_dir / "topics" / topic_path.name
-        if topic_path.name not in snapshotted:
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(topic_path, backup)
-            snapshotted.add(topic_path.name)
-        # Promotion used to append a bare bullet at end of file, so every
-        # promoted claim joined whatever the last section happened to be. The
-        # indexer caps a section at 4,000 characters, and two of the target
-        # pages were already at that cap: the text reached the wiki and never
-        # reached a vector. Giving each claim its own heading makes it its own
-        # section and its own vector, which also stops page length from
-        # mattering at all.
-        heading = re.sub(r"\s+", " ", candidate.text).strip()[:60].rstrip()
-        # Distilled from Pan's own notes, so it carries the self-derived
-        # marker and takes the recall penalty. Without it these outrank the
-        # external sources they were reasoned from.
-        provenance = annotate(f"{candidate.source_file}#{candidate.source_position}")
-        addition = (
-            f"\n\n### {heading or candidate.candidate_id[:12]}\n"
-            f"{candidate.text} <!-- {marker} --> {provenance}\n"
-        )
-        topic_path.write_text(content.rstrip() + addition, encoding="utf-8")
-        changes.append({"candidate_id": candidate.candidate_id, "topic": str(topic_path), "snapshot": str(backup)})
-    return changes
+        if marker not in content:
+            heading = re.sub(r"\s+", " ", candidate.text).strip()[:60].rstrip()
+            provenance = annotate(f"{candidate.source_file}#{candidate.source_position}")
+            content = (content.rstrip() + f"\n\n### {heading or candidate.candidate_id[:12]}\n"
+                       f"{candidate.text} <!-- {marker} --> {provenance}\n")
+        updates[topic] = (original, content.encode("utf-8"))
+        changes.append({"candidate_id": candidate.candidate_id, "topic": str(topic)})
+    return updates, changes
+
+
+def _hash_file(path: Path) -> str | None:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(data)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _save_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    _atomic_write(path, (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+
+
+def _finish_batch(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Resume immutable planned writes, refusing to overwrite intervening edits."""
+    writes = manifest["rollback"]["restores"]
+    # Preflight the whole batch before writing any remaining artifact.
+    for item in writes:
+        current = _hash_file(Path(item["artifact"]))
+        if current not in (item["before_hash"], item["after_hash"]):
+            raise RuntimeError(f"governance recovery conflict: {item['artifact']}")
+        if _hash_file(Path(item["prepared"])) != item["after_hash"]:
+            raise RuntimeError(f"governance prepared data damaged: {item['prepared']}")
+    for item in writes:
+        artifact = Path(item["artifact"])
+        current = _hash_file(artifact)
+        if current not in (item["before_hash"], item["after_hash"]):
+            raise RuntimeError(f"governance recovery conflict: {artifact}")
+        if current == item["before_hash"]:
+            _atomic_write(artifact, Path(item["prepared"]).read_bytes())
+    manifest["completion_status"] = "completed"
+    _save_manifest(path, manifest)
+    return manifest["result"]
 
 
 def rollback_batch(batch_id: str) -> dict[str, Any]:
@@ -401,29 +407,44 @@ def rollback_batch(batch_id: str) -> dict[str, Any]:
     if not manifest_path.exists():
         raise FileNotFoundError(f"unknown governance batch: {batch_id}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    restored = 0
-    for item in manifest.get("rollback", {}).get("restores", []):
-        artifact = Path(item["artifact"])
-        snapshot = Path(item["snapshot"])
-        if item.get("existed") and snapshot.exists():
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(snapshot, artifact)
-        elif not item.get("existed") and artifact.exists():
-            artifact.unlink()
-        restored += 1
-    for item in manifest.get("topic_changes", []):
-        snapshot = Path(item["snapshot"])
-        topic = Path(item["topic"])
-        if snapshot.exists():
-            shutil.copy2(snapshot, topic)
-            restored += 1
+    if manifest.get("completion_status") == "rolled_back":
+        return {"batch_id": batch_id, "restored": 0, "source_untouched": True}
+    if manifest.get("schema") != "xkb-governance-batch.v2" or manifest.get("completion_status") not in {"completed", "rolling_back"}:
+        raise RuntimeError("rollback requires a completed batch with verified output hashes")
+    restores = manifest["rollback"]["restores"]
     audit = GOVERNANCE_DIR / "audit.jsonl"
-    audit.parent.mkdir(parents=True, exist_ok=True)
-    with audit.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"event": "rollback", "batch_id": batch_id,
-                             "restored": restored, "source_untouched": True},
-                            sort_keys=True) + "\n")
-    return {"batch_id": batch_id, "restored": restored, "source_untouched": True}
+    if manifest["completion_status"] == "completed":
+        for item in restores:
+            if Path(item["artifact"]) == audit:
+                before = Path(item["snapshot"]).read_bytes() if item["existed"] else b""
+                event = {"event": "rollback", "batch_id": batch_id,
+                         "restored": len(restores), "source_untouched": True}
+                item["rollback_audit"] = (before + (json.dumps(event, sort_keys=True) + "\n").encode("utf-8")).decode("utf-8")
+            item["rollback_hash"] = (hashlib.sha256(item["rollback_audit"].encode("utf-8")).hexdigest()
+                                     if "rollback_audit" in item else item["before_hash"])
+    for item in restores:
+        allowed = {item["after_hash"]}
+        if manifest["completion_status"] == "rolling_back":
+            allowed.add(item["rollback_hash"])
+        if _hash_file(Path(item["artifact"])) not in allowed:
+            raise RuntimeError(f"rollback conflict: {item['artifact']} changed after the batch")
+        if item["existed"] and _hash_file(Path(item["snapshot"])) != item["before_hash"]:
+            raise RuntimeError(f"rollback snapshot damaged: {item['snapshot']}")
+    manifest["completion_status"] = "rolling_back"
+    _save_manifest(manifest_path, manifest)
+    for item in restores:
+        artifact = Path(item["artifact"])
+        if _hash_file(artifact) not in (item["after_hash"], item["rollback_hash"]):
+            raise RuntimeError(f"rollback conflict: {artifact} changed during rollback")
+        if "rollback_audit" in item:
+            _atomic_write(artifact, item["rollback_audit"].encode("utf-8"))
+        elif item["existed"]:
+            _atomic_write(artifact, Path(item["snapshot"]).read_bytes())
+        else:
+            artifact.unlink(missing_ok=True)
+    manifest["completion_status"] = "rolled_back"
+    _save_manifest(manifest_path, manifest)
+    return {"batch_id": batch_id, "restored": len(restores), "source_untouched": True}
 
 
 def write_registry(candidates: list[Candidate], path: Path, promoted_ids: set[str] | None = None) -> dict[str, Any]:
@@ -469,6 +490,13 @@ def write_registry(candidates: list[Candidate], path: Path, promoted_ids: set[st
 
 def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) -> dict[str, Any]:
     registry = GOVERNANCE_DIR / "candidate-registry.jsonl"
+    if not dry_run:
+        for path in sorted((GOVERNANCE_DIR / "manifests").glob("*.json")):
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            if manifest.get("completion_status") == "prepared":
+                return _finish_batch(path, manifest)
+            if manifest.get("completion_status") == "rolling_back":
+                raise RuntimeError(f"finish interrupted rollback first: {manifest['batch_id']}")
     # Classify against the complete pending pool, not only this batch.  A
     # bounded batch must still detect duplicates that arrived in different
     # runs.  Registry-known candidates are already governed; excluding them
@@ -555,78 +583,64 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
                               "reason": f"proposed {proposed_counts.get(topic, 0)}x "
                                         f"(>= {PROMOTE_AFTER}); 開不開這一頁是領域判斷"}
                              for topic in new_topics)
-    if not dry_run:
-        batch_key = "\n".join(f"{c.candidate_id}:{int(_topic_available(c))}" for c in bounded)
-        batch_id = hashlib.sha256(batch_key.encode("utf-8")).hexdigest()[:16]
-        registry_result = {"added": 0, "existing": 0}
-        manifest_dir = GOVERNANCE_DIR / "manifests"
-        manifest_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run and bounded:
+        # Attempts have distinct immutable snapshots, including after a rollback.
+        batch_id = uuid.uuid4().hex[:16]
         snapshot_dir = GOVERNANCE_DIR / "snapshots" / batch_id
         snapshot_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = manifest_dir / f"{batch_id}.json"
-        if manifest_path.exists():
-            stats["promoted"] = 0
-            stats["approved"] = 0
-            registry_result["batch_id"] = batch_id  # type: ignore[index]
-            registry_result["idempotent_replay"] = True
-            return {"dry_run": dry_run, "limit": limit, "batch_id": batch_id, "stats": stats,
-                    "registry": registry_result, "queues": queues,
-                    "topic_suggestions": topic_suggestions,
-                    "source_dir": str(STAGING_DIR), "ttl_days": ttl_days, "as_of": as_of.isoformat(),
-                    "topic_changes": []}
+        manifest_path = GOVERNANCE_DIR / "manifests" / f"{batch_id}.json"
         audit = GOVERNANCE_DIR / "audit.jsonl"
-        source_hashes = {c.source_file: hashlib.sha256((STAGING_DIR / c.source_file).read_bytes()).hexdigest()
-                         for c in bounded if (STAGING_DIR / c.source_file).exists()}
-        for source_file in sorted(source_hashes):
+        source_hashes = {}
+        for source_file in sorted({c.source_file for c in bounded}):
             source = STAGING_DIR / source_file
-            target = snapshot_dir / source_file
+            data = source.read_bytes()
+            source_hashes[source_file] = hashlib.sha256(data).hexdigest()
+            target = snapshot_dir / "sources" / source_file
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(source.read_bytes())
-        pre_write = []
-        for artifact in (registry, audit):
-            snapshot = snapshot_dir / "artifacts" / artifact.name
-            if artifact.exists():
-                snapshot.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(artifact, snapshot)
-                pre_write.append({"artifact": str(artifact), "snapshot": str(snapshot), "existed": True})
-            else:
-                pre_write.append({"artifact": str(artifact), "snapshot": str(snapshot), "existed": False})
-        # _expired 必須在這裡再檢查一次。上面的迴圈對過期候選 continue，
-        # 所以乾跑看起來有擋住；實跑走的是這條路，而這裡原本沒有過濾——
-        # 同一批統計會同時說「隔離 1 條」和「放行 1 條」，指的是同一條。
-        # 一個永遠攔不下東西的閘門，比沒有閘門更糟：它讓人以為擋住了。
-        topic_changes = _promote_topics(
-            [c for c in bounded if _safe_promotable(c)
-             and not _expired(c, ttl_days, as_of)
-             and c.candidate_id not in already_promoted], snapshot_dir
-        )
+            target.write_bytes(data)
+        updates, topic_changes = _topic_updates(
+            [c for c in bounded if not _expired(c, ttl_days, as_of)
+             and c.candidate_id not in already_promoted])
         promoted_ids = {item["candidate_id"] for item in topic_changes}
-        # Registry lifecycle follows the topic write, never the gate alone.
-        registry_result = write_registry(bounded, registry, promoted_ids)
-        stats["promoted"] = len(promoted_ids)
-        stats["approved"] = len(promoted_ids)
-        stats["retained"] += sum(
-            1 for c in bounded if _safe_promotable(c) and c.candidate_id not in promoted_ids
-        )
-        manifest = {"schema": "xkb-governance-batch.v1", "batch_id": batch_id,
-                    "candidate_ids": [c.candidate_id for c in bounded], "stats": stats,
-                    "dry_run": False, "source_dir": str(STAGING_DIR),
-                    "source_hashes": source_hashes,
-                    "artifact_paths": {"registry": str(registry), "manifest": str(manifest_path),
-                                       "audit": str(audit), "snapshot": str(snapshot_dir)},
-                    "completion_status": "completed", "rollback": {"snapshot_dir": str(snapshot_dir),
-                                                                         "restores": pre_write,
-                                                                         "source_untouched": True}}
-        manifest["topic_changes"] = topic_changes
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        audit.parent.mkdir(parents=True, exist_ok=True)
-        with audit.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"event": "governance_batch", "batch_id": batch_id,
-                                 "stats": stats, "candidate_ids": manifest["candidate_ids"],
-                                 "source_hashes": source_hashes, "completion_status": "completed",
-                                 "pre_write_snapshots": pre_write},
-                                ensure_ascii=False, sort_keys=True) + "\n")
-        registry_result["batch_id"] = batch_id  # type: ignore[index]
+        prepared_registry = snapshot_dir / "registry-plan.jsonl"
+        registry_before = registry.read_bytes() if registry.exists() else None
+        prepared_registry.write_bytes(registry_before or b"")
+        registry_result = write_registry(bounded, prepared_registry, promoted_ids)
+        updates[registry] = (registry_before, prepared_registry.read_bytes())
+        stats["promoted"] = stats["approved"] = len(promoted_ids)
+        event = {"event": "governance_batch", "batch_id": batch_id, "stats": stats,
+                 "candidate_ids": [c.candidate_id for c in bounded],
+                 "source_hashes": source_hashes, "completion_status": "completed"}
+        audit_before = audit.read_bytes() if audit.exists() else None
+        updates[audit] = (audit_before, (audit_before or b"")
+                          + (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+        restores = []
+        for index, (artifact, (before, data)) in enumerate(updates.items()):
+            snapshot = snapshot_dir / f"{index}.before"
+            prepared = snapshot_dir / f"{index}.after"
+            existed = before is not None
+            if before is not None:
+                snapshot.write_bytes(before)
+            prepared.write_bytes(data)
+            restores.append({"artifact": str(artifact), "snapshot": str(snapshot),
+                             "prepared": str(prepared), "existed": existed,
+                             "before_hash": hashlib.sha256(before).hexdigest() if before is not None else None,
+                             "after_hash": hashlib.sha256(data).hexdigest()})
+            for change in topic_changes:
+                if change["topic"] == str(artifact):
+                    change["snapshot"] = str(snapshot)
+        registry_result["batch_id"] = batch_id
+        result = {"dry_run": False, "limit": limit, "batch_id": batch_id, "stats": stats,
+                  "registry": registry_result, "queues": queues, "topic_suggestions": topic_suggestions,
+                  "source_dir": str(STAGING_DIR), "ttl_days": ttl_days, "as_of": as_of.isoformat(),
+                  "topic_changes": topic_changes}
+        manifest = {"schema": "xkb-governance-batch.v2", "batch_id": batch_id,
+                    "candidate_ids": event["candidate_ids"], "source_hashes": source_hashes,
+                    "stats": stats, "completion_status": "prepared", "result": result,
+                    "topic_changes": topic_changes,
+                    "rollback": {"restores": restores, "source_untouched": True}}
+        _save_manifest(manifest_path, manifest)
+        return _finish_batch(manifest_path, manifest)
     else:
         registry_result = {"added": 0, "existing": 0, "dry_run": True}
     return {"dry_run": dry_run, "limit": limit, "batch_id": locals().get("batch_id", ""), "stats": stats,
@@ -683,13 +697,7 @@ def governance_health_counts(ttl_days: int = 30) -> dict[str, int]:
     _classify_relations(candidates)
     # 導向要在計數之前，跟 governance_batch 同一個順序。少了這一步，一個
     # 會被導向 general 的候選在這裡仍算成提案——報 1，實際 0。
-    #
-    # 但這個函式的契約是「不寫任何東西」，而每天早上的健檢會呼叫它。
-    # _route_new_topics 會在頁面不存在時建立 general.md，所以這裡要先擋掉：
-    # 計數不能改變它所計的東西。
-    _routing_probe = _ensure_general_topic if (TOPICS_DIR / f"{GENERAL_TOPIC}.md").exists() else None
-    if _routing_probe:
-        _route_new_topics(candidates, _proposed_counts(candidates))
+    _route_new_topics(candidates, _proposed_counts(candidates))
     promoted, registered, _ = _registry_state(registry)
     result = {"pending": len(candidates), "high": 0, "medium": 0, "low": 0,
               "proposal": 0, "quarantine": 0, "overdue": 0, "safe_promotion": 0,

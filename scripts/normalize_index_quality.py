@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Normalize / exclude low-quality search index entries without touching source markdown.
+Normalize / exclude low-quality search index entries by persisting exclusion flags in source markdown.
 
 Phase 1 rules:
 - exclude entries with invalid source URLs
@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import xkb_paths
@@ -45,14 +46,16 @@ def clean_summary(text: str) -> str:
 
 
 def is_valid_source_url(url: str) -> bool:
-    url = (url or "").strip()
-    if not url.startswith(("http://", "https://")):
+    try:
+        parsed = urlsplit((url or "").strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.hostname.lower() in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
+            return bool(re.match(r"/[^/]+/status/[0-9]{15,20}(?:/|$)", parsed.path))
+        return True
+    except ValueError:
         return False
-    x_status = re.search(r"https?://(?:x|twitter)\.com/[^\s/]+/status/(\d{15,20})(?:\b|/|\?)", url)
-    x_i_status = re.search(r"https?://x\.com/i/status/(\d{15,20})(?:\b|/|\?)", url)
-    if ("x.com" in url or "twitter.com" in url) and not (x_status or x_i_status):
-        return False
-    return True
+
 
 
 # 從網路抓來的東西才該有網址。本機擷取的出處是一個檔案路徑，那不是品質問題，

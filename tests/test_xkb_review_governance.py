@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
@@ -18,6 +19,15 @@ Reusable claim with https://example.test/evidence.
 
 
 class GovernanceTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        for name, value in (("TOPICS_DIR", Path(temp.name) / "topics"),
+                            ("GOVERNANCE_DIR", Path(temp.name) / "governance")):
+            patch = mock.patch.object(xkb_review, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+
     def with_staging(self, text=FIXTURE):
         temp = tempfile.TemporaryDirectory()
         staging = Path(temp.name) / "staging"
