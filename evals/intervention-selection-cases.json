@@ -1,0 +1,22 @@
+{
+  "description": "Frozen joint-selection challenge: reusable guidance versus dated status, antecedents, constraints and complementary needs. Synthetic evidence only.",
+  "evidence": {
+    "queue-rule": "人工審稿是瓶頸時，為待審佇列設上限；到上限即停止新增草稿，人工消化後再恢復。",
+    "queue-history": "9月5日的 Medium 排程 shouldDraft=false，當天有2篇待審、另有3篇未發布，沒有產出新草稿，ATTENTION.md 保持 ACTION_NEEDED。",
+    "carbon": "碳排計算每筆保留原始數據來源、單位、排放係數版本、計算過程和審核者，讓接手者可以逐筆追溯。",
+    "repo-status": "新版程式目前只在本機 workspace，還沒有整理回獨立的 GitHub repository。",
+    "priority": "不能中止產出的流程，應先依風險分級審查，高風險項目優先；不要以未審通過為由自動發布。",
+    "identity": "跨鏡頭使用同一份角色設定圖，固定五官、服裝和色彩，變更場景時仍沿用角色參考。",
+    "hype": "這套方案適合各種資料追溯問題，是值得使用的完整解決方案。"
+  },
+  "cases": [
+    {"id":"reusable-over-dated-status","query":"文章越生越多，人工來不及審，得先讓積壓停下來","candidate_ids":["queue-history","queue-rule"],"expected_ids":["queue-rule"],"max_delivered":1},
+    {"id":"dated-status-when-requested","query":"幫我核對9月5日的 Medium 排程當天有沒有產新草稿、待審幾篇","candidate_ids":["queue-rule","queue-history"],"expected_ids":["queue-history"],"max_delivered":1},
+    {"id":"carbon-pronoun-not-repository","query":"算完了，但接手的人不知道它的來源和版本","conversation":[{"role":"user","content":"我在整理工廠碳排盤查的計算底稿"}],"candidate_ids":["repo-status","carbon"],"expected_ids":["carbon"],"max_delivered":1},
+    {"id":"repository-pronoun-not-carbon","query":"它目前是只有本機有，還是已經同步到 GitHub","conversation":[{"role":"user","content":"我們正在核對新版程式的發布狀態"}],"candidate_ids":["carbon","repo-status"],"expected_ids":["repo-status"],"max_delivered":1},
+    {"id":"constraint-changes-applicability","query":"待審資料又堆起來了，這次產出不能停，但發布仍要人工核准","candidate_ids":["queue-rule","priority"],"expected_ids":["priority"],"max_delivered":1},
+    {"id":"two-current-needs","query":"兩件事都卡住：碳盤查底稿交接無法追溯係數，同時影片主角跨鏡頭像換了人","candidate_ids":["carbon","identity","repo-status"],"expected_ids":["carbon","identity"],"max_delivered":2},
+    {"id":"old-obstacle-now-closed","query":"以前審稿跟不上，現在上限生效而且積壓已清完，只是回報一下","candidate_ids":["queue-rule","queue-history"],"expected_ids":[],"max_delivered":0},
+    {"id":"promise-is-not-method","query":"我希望每筆計算都能找到原始來源和版本，目前做不到","candidate_ids":["hype","repo-status"],"expected_ids":[],"max_delivered":0}
+  ]
+}

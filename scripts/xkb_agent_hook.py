@@ -137,16 +137,21 @@ def render(records: list[dict]) -> str:
         "也可能已經過時，請與當前請求和實際狀態核對後再使用。",
         "",
     ]
+    footer = "</xkb_recalled_knowledge>"
+    included = 0
     for item in records:
         title, body, source = fields(item)
-        summary = " ".join(body.split())[:600]
-        lines.append(f"- [{item.get('record_type', 'knowledge')}] {title}")
-        if summary:
-            lines.append(f"  {summary}")
+        entry = [f"- [{item.get('record_type', 'knowledge')}] {title}"]
+        if body:
+            entry.append(f"  {body}")
         if source:
-            lines.append(f"  來源：{source}")
-    lines.append("</xkb_recalled_knowledge>")
-    return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+            entry.append(f"  來源：{source}")
+        # The service selected a complete evidence paragraph. Cutting at 600
+        # characters here could silently remove its condition or negation.
+        if len("\n".join(lines + entry + [footer])) <= MAX_CONTEXT_CHARS:
+            lines.extend(entry)
+            included += 1
+    return "\n".join(lines + [footer]) if included else ""
 
 
 def last_assistant_message(transcript: str) -> str:

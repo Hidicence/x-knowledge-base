@@ -119,6 +119,19 @@ class RenderTests(unittest.TestCase):
         self.assertIn("可能已經過時", rendered)
         self.assertIn("T", rendered)
 
+    def test_complete_delivery_keeps_late_conditions_and_budget(self) -> None:
+        body = 'Step details. ' * 55 + 'Do not proceed unless the review is approved.'
+        rendered = hook.render([{'title': 'Procedure', 'summary': body, 'source_url': 'source'}])
+        self.assertIn(body, rendered)
+        self.assertTrue(rendered.endswith('</xkb_recalled_knowledge>'))
+        records = [{'title': 'Too long', 'summary': 'x' * 5000},
+                   {'title': 'Useful', 'summary': body}]
+        rendered = hook.render(records)
+        self.assertIn(body, rendered)
+        self.assertNotIn('Too long', rendered)
+        self.assertLessEqual(len(rendered), hook.MAX_CONTEXT_CHARS)
+        self.assertEqual(hook.render(records[:1]), '')
+
 
 class InstallerTests(unittest.TestCase):
     def setUp(self) -> None:

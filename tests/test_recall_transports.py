@@ -25,6 +25,15 @@ import xkb_recall_server as mcp
 from xkb_doctor import probe, assess
 
 
+def stable_packet(value):
+    """Compare transport content; durations belong to individual requests."""
+    if isinstance(value, dict):
+        return {k: stable_packet(v) for k, v in value.items() if k not in {'timing_ms', 'elapsed_ms'}}
+    if isinstance(value, list):
+        return [stable_packet(v) for v in value]
+    return value
+
+
 class RecallTransports(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -150,7 +159,10 @@ class RecallTransports(unittest.TestCase):
         expected = self.http()
         actual = probe("Aurora deployment", env=self.env)
         for key, value in expected.items():
-            self.assertEqual(actual[key], value, key)
+            if key == "timing_ms":
+                self.assertTrue(all(v >= 0 for v in actual[key].values()))
+            else:
+                self.assertEqual(stable_packet(actual[key]), stable_packet(value), key)
         self.assertEqual(actual["results"], actual["records"])
         self.assertEqual(actual["formatted_text"], actual["context"])
         self.assertNotIn("secret", [r["id"] for r in actual["records"]])
@@ -197,7 +209,10 @@ class RecallTransports(unittest.TestCase):
         expected = self.http()
         actual = probe("Aurora deployment", env={**self.env, "XKB_MEMORY_SERVICE_URL": self.url})
         for key, value in expected.items():
-            self.assertEqual(actual[key], value, key)
+            if key == "timing_ms":
+                self.assertTrue(all(v >= 0 for v in actual[key].values()))
+            else:
+                self.assertEqual(stable_packet(actual[key]), stable_packet(value), key)
         self.assertEqual([r["id"] for r in actual["records"]], ["answer"])
         self.assertEqual(actual["judge"]["status"], "judged")
 
@@ -250,9 +265,14 @@ class RecallTransports(unittest.TestCase):
         class Judge(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                answers = {key: {"noul": .9 if "blue green" in value["instructions"] else .01}
-                           for key, value in body["questions"].items()}
-                data = json.dumps({"answers": answers}).encode()
+                if self.path.endswith('/chat/completions'):
+                    # This fixture verifies the relevance transport; keep its
+                    # independent task planner explicitly quiet.
+                    data = json.dumps({'choices': [{'message': {'content': '{"needs": [], "constraints": []}'}}]}).encode()
+                else:
+                    answers = {key: {"noul": .9 if "blue green" in value["instructions"] else .01}
+                               for key, value in body["questions"].items()}
+                    data = json.dumps({"answers": answers}).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()

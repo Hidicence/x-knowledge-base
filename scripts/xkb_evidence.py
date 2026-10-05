@@ -5,6 +5,14 @@ import json
 IDENTITY_PREFIX = "ev1:"
 
 
+def bounded_excerpt(body: str, limit: int) -> str:
+    """Keep complete source paragraphs; never turn a cutoff into a full claim."""
+    if len(body) <= limit:
+        return body
+    boundary = body.rfind('\n\n', 0, limit + 1)
+    return body[:boundary].rstrip() if boundary >= 0 else ''
+
+
 def identity_key(record: dict) -> str:
     """Stable document/section identity shared by ranking and usage accounting.
 

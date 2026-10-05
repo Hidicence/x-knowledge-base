@@ -104,12 +104,12 @@ class RecallEvaluation(unittest.TestCase):
             with mock.patch('sys.argv', args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 xkb_eval.main()
             self.assertFalse(output.exists())
-            def judge(context, candidates):
+            def judge(query, conversation, candidates, task):
                 pending = json.loads(output.read_text(encoding='utf-8'))
                 self.assertEqual(pending['pending_case'], 'q')
                 self.assertEqual(pending['evidence']['a'], 'An actionable step')
-                return {'need': {'noul': .9}, 'use_0': {'noul': .9}, 'applies_0': {'noul': .9}}
-            with mock.patch('sys.argv', args+['--live']), mock.patch.object(xkb_delivery.xkb_jev, 'intervention', side_effect=judge), contextlib.redirect_stdout(io.StringIO()):
+                return {'needs': ['current task'], 'constraints': [], 'selected': [{'index': 0, 'quote': 'An actionable step'}], 'model': 'fixture'}
+            with mock.patch.object(xkb_delivery, 'prepare', return_value={'needs': ['task'], 'constraints': [], 'model': 'fixture'}), mock.patch('sys.argv', args+['--live']), mock.patch.object(xkb_delivery, '_select_grounded', side_effect=judge), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(xkb_eval.main(), 0)
             before = output.read_bytes()
             receipt = json.loads(before)
@@ -131,10 +131,11 @@ class RecallEvaluation(unittest.TestCase):
         from xkb_recall import conversation_messages, contextual_query
         history = [{'role': 'assistant', 'content': str(i)+'x'*700} for i in range(8)]
         case = {'id': 'q', 'query': 'Current need', 'expected_ids': [], 'candidate_ids': ['a'], 'conversation': history}
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(xkb_delivery.xkb_jev, 'intervention', return_value=None) as call:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(xkb_delivery, 'prepare', return_value={'needs': ['task'], 'constraints': [], 'model': 'fixture'}), mock.patch.object(xkb_delivery, '_select_grounded', return_value=None) as call:
             result = xkb_eval.run_intervention_cases([case], {'a': 'Evidence'}, Path(tmp)/'receipt.json')
         effective = conversation_messages(history)
-        self.assertEqual(call.call_args.args[0], contextual_query(case['query'], effective, for_judge=True))
+        self.assertEqual(call.call_args.args[0], case['query'])
+        self.assertEqual(call.call_args.args[1], effective)
         self.assertEqual(result['results'][0]['packet']['effective_conversation'], effective)
         self.assertEqual(result['input']['cases'][0]['conversation'], history)
 

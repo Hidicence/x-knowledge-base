@@ -11,13 +11,14 @@ from collections import Counter
 import json
 import math
 import os
+import re
 from pathlib import Path
 import statistics
 import tempfile
 import time
 
 from xkb_doctor import assess, probe
-from xkb_evidence import identity_key, record_id
+from xkb_evidence import fields, identity_key, record_id
 
 DEFAULT_CASES = Path(__file__).resolve().parent.parent / "evals" / "recall-cases.json"
 
@@ -63,6 +64,20 @@ def score_case(case: dict, packet: dict) -> dict:
     missing = sorted(expected - actual)
     unexpected = sorted(actual - allowed)
     errors = []
+    if surface == 'delivery':
+        # A provenance note naming the source of this wiki line is not a
+        # procedure for tracing the user's data source. Score the claim text.
+        bodies = [re.sub(r'\*\((?:self-derived\b|source:)[^\n]*?\)\*', '', fields(record)[1])
+                  for record in records]
+        excerpts = '\n'.join(bodies)
+        if any(not any(c.isalpha() for c in body) for body in bodies):
+            errors.append('content-free delivered excerpt')
+        for pattern in case.get('required_excerpt_patterns', []):
+            if not re.search(pattern, excerpts, re.IGNORECASE):
+                errors.append('missing excerpt requirement: ' + pattern)
+        for pattern in case.get('forbidden_excerpt_patterns', []):
+            if re.search(pattern, excerpts, re.IGNORECASE):
+                errors.append('forbidden excerpt: ' + pattern)
     if surface == "delivery" and packet["delivery"].get("status") != "ready":
         errors.append("proactive delivery judgement incomplete")
     if len(records) > case.get("max_delivered", len(records)):
@@ -208,6 +223,12 @@ def main() -> int:
                 or len({c["id"] for c in cases}) != len(cases)):
             raise ValueError("cases must be a non-empty list with unique ids")
         for case in cases:
+            for field in ('required_excerpt_patterns', 'forbidden_excerpt_patterns'):
+                patterns = case.get(field, [])
+                if not isinstance(patterns, list) or any(not isinstance(p, str) or not p for p in patterns):
+                    raise ValueError(field + ' must contain non-empty regular expressions')
+                for pattern in patterns:
+                    re.compile(pattern)
             if args.intervention:
                 case.setdefault("expected_ids", [])
                 case.setdefault("expected_delivery", "evidence" if case["expected_ids"] or case.get("expected_any_ids") else "none")

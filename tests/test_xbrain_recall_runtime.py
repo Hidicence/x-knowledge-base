@@ -71,6 +71,7 @@ class XbrainRecallRuntimeTests(unittest.TestCase):
             home=isolated_home,
             PATH=str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
             GBRAIN_DIR=str(gbrain),
+            XKB_DATA_DIR=str(root / "runtime-data"),
             PYTHONPATH="",
         )
         if env_file is not None:

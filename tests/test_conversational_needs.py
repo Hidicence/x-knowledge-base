@@ -25,6 +25,19 @@ class ConversationalNeeds(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
+    def test_failed_preparation_config_preserves_keyword_candidates(self):
+        store = service.Store(self.root/'test.sqlite')
+        wiki = self.root/'topics'
+        wiki.mkdir()
+        (wiki/'deployment.md').write_text('# Deployment\n\nDeployment keeps a verified rollback artifact.', encoding='utf-8')
+        store.catalog.wiki_topics_dir = wiki
+        with mock.patch.object(jev, 'available', side_effect=FileNotFoundError('missing runtime config')), \
+             mock.patch.object(jev, 'relevance', side_effect=FileNotFoundError('missing runtime config')):
+            packet = store.knowledge_recall('deployment', options={'semantic': False, 'cards': False, 'conversations': False})
+        self.assertTrue(packet['records'])
+        self.assertEqual(packet['quality']['status'], 'degraded')
+        self.assertEqual(packet['delivery']['records'], [])
+
     def test_hook_sends_prior_dialogue_for_a_statement_without_changing_capture(self):
         transcript = self.root / "conversation.jsonl"
         prior = [{"role": "user", "content": "I am building a Seedance character sequence."},
@@ -181,6 +194,24 @@ class ConversationalNeeds(unittest.TestCase):
                 release.set()
             self.assertEqual(first.result(), {'wiki/topics/test.md': [1, 0]})
             self.assertEqual(second.result(), first.result())
+
+    def test_parallel_catalog_layers_preserve_both_acl_diagnostics(self):
+        catalog = service.KnowledgeCatalog()
+        barrier = threading.Barrier(2)
+        def search(layer, query, limit, namespace):
+            catalog._stats = service.filter_stats(**({'semantic': 2} if layer == 'cards' else {'wiki': 3}))
+            catalog._irrelevant = 1 if layer == 'cards' else 0
+            barrier.wait(timeout=5)
+            return [{'id': layer, 'score': .8, 'namespace': namespace}]
+        with mock.patch.object(catalog, '_semantic_search', side_effect=lambda *a: search('cards', *a)), \
+             mock.patch.object(catalog, '_wiki_search', side_effect=lambda *a: search('wiki', *a)):
+            packet = catalog.search('two independent reads', namespace='client-a')
+        self.assertEqual(packet['filtered_counts']['total'], 5)
+        self.assertEqual(packet['filtered_counts']['by_layer']['semantic'], 2)
+        self.assertEqual(packet['filtered_counts']['by_layer']['wiki'], 3)
+        self.assertEqual(packet['dropped_as_irrelevant'], 1)
+        self.assertEqual({r['namespace'] for r in packet['records']}, {'client-a'})
+        self.assertTrue(all(s['used'] for s in packet['backends'].values()))
 
     def test_judge_retains_all_bounded_context_within_body_limit(self):
         history = [{"role": "user", "content": "offline deployment only" + "x" * 570},

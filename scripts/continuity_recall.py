@@ -528,7 +528,7 @@ def _section_text(topic_file: str, section: str) -> str:
         return ""
     for title, body in _split_into_sections(content):
         if title == section:
-            return re.sub(r"\n+", " ", body).strip()
+            return body.strip()
     return ""
 
 
@@ -543,12 +543,13 @@ def _memory_section_text(filename: str, section: str) -> str:
             continue
         for title, body in _split_into_sections(content):
             if title == section:
-                return re.sub(r"\s+", " ", body).strip()
-        return re.sub(r"\s+", " ", content).strip()
+                return body.strip()
+        return content.strip()
     return ""
 
 
-def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None = None) -> list[RecallResult] | None:
+def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None = None,
+                    sections_per_document: int = 1, excerpt_limit: int = 200) -> list[RecallResult] | None:
     """向量召回。回傳 None 代表「語意能力不可用」，空 list 代表「真的沒有夠相關的」。
 
     這兩者必須分得開：不可用要退回字串比對，沒有夠相關的就該安靜。
@@ -566,8 +567,50 @@ def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None 
         scored.append((_cosine(query_vector, vec), key))
     scored.sort(reverse=True)
 
+    if sections_per_document > 1:
+        # Dense similarity often prefers an overview or the same broad advice.
+        # Reserve the companion slot for the best explicit-term match within
+        # that same indexed document. Keep its real cosine score and section
+        # identity; the shared judge still decides whether it is applicable.
+        tokens = tokenize(query)
+        companions, first_sections = {}, {}
+        # Only inspect companions of the leading documents. Resolving indexed
+        # suffixes can read a source file, so do not do it for the whole library.
+        for similarity, key in scored:
+            if similarity < floor or not key.startswith('wiki/'):
+                continue
+            rest, _, heading = key[len('wiki/'):].partition('#')
+            if rest not in first_sections:
+                first_sections[rest] = _base_heading(rest, heading)
+                if len(first_sections) >= top_k:
+                    break
+        for similarity, key in scored:
+            if similarity < floor or not key.startswith('wiki/'):
+                continue
+            rest, _, heading = key[len('wiki/'):].partition('#')
+            if rest not in first_sections:
+                continue
+            heading = _base_heading(rest, heading)
+            if heading == first_sections[rest]:
+                continue
+            lexical = _score_text(tokens, heading)
+            candidate = (lexical, similarity, key)
+            if lexical > 0 and candidate > companions.get(rest, (0, 0, '')):
+                companions[rest] = candidate
+        expanded, visited = [], set()
+        for similarity, key in scored:
+            expanded.append((similarity, key))
+            rest = key[len('wiki/'):].partition('#')[0] if key.startswith('wiki/') else ''
+            if rest and rest not in visited:
+                visited.add(rest)
+                if rest in companions:
+                    _, companion_score, companion_key = companions[rest]
+                    expanded.append((companion_score, companion_key))
+        scored = expanded
+
     results: list[RecallResult] = []
-    seen_topics: set[str] = set()
+    seen_sections: set[tuple[str, str]] = set()
+    topic_counts: dict[str, int] = {}
     for similarity, key in scored:
         if similarity < floor or len(results) >= top_k:
             break
@@ -575,16 +618,21 @@ def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None 
         source_type = SEMANTIC_PREFIXES.get(prefix, "wiki_semantic")
         rest, _, section = key[len(prefix):].partition("#")
         section = _base_heading(rest, section)
-        if rest in seen_topics:            # 同一份文件只取最相關的一段
+        identity = (f"{prefix}{rest}", section)
+        if identity in seen_sections or topic_counts.get(identity[0], 0) >= sections_per_document:
             continue
-        seen_topics.add(rest)
+        seen_sections.add(identity)
+        topic_counts[identity[0]] = topic_counts.get(identity[0], 0) + 1
         is_wiki = source_type == "wiki_semantic"
         excerpt = _section_text(rest, section) if is_wiki else _memory_section_text(rest, section)
+        from xkb_evidence import bounded_excerpt
+        excerpt = xkb_provenance.strip_markers(excerpt)
+        excerpt = bounded_excerpt(excerpt, excerpt_limit) if sections_per_document > 1 else excerpt[:excerpt_limit]
         results.append(_result(
             source_type=source_type,
             source_file=f"{prefix}{rest}",
             section=section,
-            excerpt=excerpt[:200],
+            excerpt=excerpt,
             score=round(similarity, 3),
             url=f"wiki/topics/{Path(rest).stem}" if is_wiki else "",
         ))

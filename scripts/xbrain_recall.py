@@ -191,11 +191,13 @@ def xbrain_query(
     if not raw or raw == "No results.":
         return []
 
+    truncated_display = False
     try:
         items = json.loads(raw)
     except json.JSONDecodeError:
         # gbrain v0.42+ 移除了 query --json，輸出為「[分數] slug -- 內文」行格式
         items = _parse_line_format(raw)
+        truncated_display = True
         if not items:
             state["status"] = "invalid_response"
             return []
@@ -218,6 +220,7 @@ def xbrain_query(
             "score_scale": "card_hybrid",
             "source_url": source_url,
             "stale": item.get("stale", False),
+            **({"excerpt_truncated": True} if truncated_display else {}),
         })
     state.update(used=bool(results), status="used" if results else "empty")
     return results
