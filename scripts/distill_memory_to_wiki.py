@@ -410,7 +410,10 @@ def apply_staging_file(
     from xkb_review import _split_candidates, stable_candidate_id
     from xkb_provenance import candidate_marker
     blocks = _split_candidates(content)
-    source_file = staging_path.resolve().relative_to(STAGING_DIR.resolve()).as_posix()
+    try:
+        source_file = staging_path.resolve().relative_to(STAGING_DIR.resolve()).as_posix()
+    except ValueError:
+        source_file = staging_path.resolve().as_posix()
     applied = 0
     skipped = 0
     updated_slugs: list[str] = []

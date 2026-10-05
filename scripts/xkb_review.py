@@ -642,7 +642,7 @@ def governance_batch(limit: int = 50, dry_run: bool = True, ttl_days: int = 30) 
         _save_manifest(manifest_path, manifest)
         return _finish_batch(manifest_path, manifest)
     else:
-        registry_result = {"added": 0, "existing": 0, "dry_run": True}
+        registry_result = {"added": 0, "existing": 0, "dry_run": dry_run}
     return {"dry_run": dry_run, "limit": limit, "batch_id": locals().get("batch_id", ""), "stats": stats,
             "registry": registry_result, "queues": queues,
             "topic_suggestions": topic_suggestions,
@@ -794,7 +794,7 @@ def main() -> int:
         print(json.dumps(rollback_batch(args.rollback), ensure_ascii=False, indent=2)); return 0
     candidates = load_candidates()
     if args.governance:
-        print(json.dumps(governance_batch(args.limit, not args.write_governance, args.ttl_days),
+        print(json.dumps(governance_batch(args.limit, args.dry_run or not args.write_governance, args.ttl_days),
                          ensure_ascii=False, indent=2)); return 0
     if args.stats or not args.do_list: print_stats(candidates); return 0
     pending = [c for c in candidates if c.status == "pending" and (args.include_duplicates or not c.duplicate_of) and (not args.topic or c.topic == args.topic)]

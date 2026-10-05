@@ -73,6 +73,12 @@ class WikiWriteIntegrity(unittest.TestCase):
         governance.rollback_batch(result["batch_id"])
         self.assertFalse((self.topics / "general.md").exists())
 
+    def test_explicit_dry_run_overrides_write_flag(self):
+        before = self.files()
+        with mock.patch.object(sys, "argv", ["review", "--governance", "--write-governance", "--dry-run"]):
+            self.assertEqual(governance.main(), 0)
+        self.assertEqual(self.files(), before)
+
     def test_interrupted_topic_write_resumes_registry_without_duplicates(self):
         original = self.topic.read_bytes()
         real_write = governance._atomic_write

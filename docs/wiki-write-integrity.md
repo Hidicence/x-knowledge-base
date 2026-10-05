@@ -1,6 +1,6 @@
 # Wiki writes and recovery
 
-`xkb_review.py --governance-batch --apply` prepares an immutable batch before
+`xkb_review.py --governance --write-governance` prepares an immutable batch before
 changing topic pages, the candidate registry, or the audit log. A v2 manifest
 records the original snapshots, planned outputs, and both sets of hashes.
 The next apply resumes an interrupted prepared batch before selecting new
