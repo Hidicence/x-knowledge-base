@@ -45,8 +45,14 @@ def fixture_env(root: Path, fixtures: dict) -> dict[str, str]:
 
 
 def score_case(case: dict, packet: dict) -> dict:
-    record_ids = [record_id(r) for r in packet["records"]]
-    evidence_keys = [r.get("evidence_key") or identity_key(r) for r in packet["records"]]
+    surface = case.get("surface", "records")
+    if surface not in {"records", "delivery"}:
+        raise ValueError("surface must be records or delivery")
+    if surface == "delivery" and not isinstance(packet.get("delivery"), dict):
+        raise ValueError("service did not return a delivery decision")
+    records = packet["delivery"]["records"] if surface == "delivery" else packet["records"]
+    record_ids = [record_id(r) for r in records]
+    evidence_keys = [r.get("evidence_key") or identity_key(r) for r in records]
     label_unit = case.get("label_unit", "document")
     if label_unit not in {"document", "evidence"}:
         raise ValueError("label_unit must be document or evidence")
@@ -63,9 +69,9 @@ def score_case(case: dict, packet: dict) -> dict:
         errors.append("missed required evidence group")
     if unexpected:
         errors.append("unexpected: " + ", ".join(unexpected))
-    if case.get("expected_delivery") == "none" and packet["records"]:
+    if case.get("expected_delivery") == "none" and records:
         errors.append("unnecessary interruption")
-    if case.get("expected_delivery") == "evidence" and not packet["records"]:
+    if case.get("expected_delivery") == "evidence" and not records:
         errors.append("missed conversational need")
     if case.get("retrieval_mode") and packet["retrieval_mode"] != case["retrieval_mode"]:
         errors.append("wrong retrieval mode")
@@ -74,7 +80,7 @@ def score_case(case: dict, packet: dict) -> dict:
         errors.append("duplicate evidence")
     if len(identified) != len(evidence_keys):
         errors.append("unidentified evidence")
-    return {"id": case["id"], "ok": not errors, "errors": errors,
+    return {"id": case["id"], "ok": not errors, "errors": errors, "surface": surface,
             "record_ids": record_ids, "evidence_keys": evidence_keys, "label_unit": label_unit,
             "recall_at_k": ((len(expected & actual) + bool(alternatives & actual)) /
                             (len(expected) + bool(alternatives))) if expected or alternatives else None,

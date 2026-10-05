@@ -394,6 +394,12 @@ usefulness. Keep ordinary acknowledgements quiet and avoid repeating advice the
 conversation has already settled. The MCP tool requires an agent to invoke it;
 the Claude prompt hook automates invocation.
 
+The common recall core distinguishes `records` (inspectable candidates) from
+`delivery.records` (at most two proactive suggestions). Consult `delivery.status`
+and withholding reasons; missing judgement is not a negative verdict. Ranking
+and delivery selection live in `scripts/xkb_delivery.py`; the hook uses that
+shared decision rather than treating every retrieved candidate as an instruction.
+
 ## Before you push
 
 Run `/code-review high <base>..HEAD` over the diff, and act on what comes back.

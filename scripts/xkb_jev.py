@@ -156,6 +156,9 @@ def relevance(query: str, candidates: list[tuple[str, str]],
         return None
     state = ("判斷證據能否推進使用者當前需求，陳述計畫、困難或限制也可能需要知識。"
              "前文只協助理解指代；當前發言改變方向時，以當前需求為準。\n"
+             "使用者已暫停或放棄的話題不算當前需求。已在助手前文完整說過的做法，"
+             "除非使用者要求重述或出現新的適用條件，否則沒有新增幫助；"
+             "未回應不代表接受或拒絕。\n"
              f"對話情境：{_trim(query, 4096)}")
     batches, batch = [], {}
     for slot, question in questions.items():

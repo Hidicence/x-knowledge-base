@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from conversation_state_parser import is_harness_text
 from xkb_evidence import fields
+from xkb_delivery import diagnostic
 from xkb_recall import conversation_messages
 
 DEFAULT_URL = "http://127.0.0.1:18972"
@@ -247,12 +248,18 @@ def on_prompt(event: dict, cfg: dict) -> None:
         "ordinal": ordinal,
     }, ensure_ascii=False), encoding="utf-8")
 
-    records = (turn.get("retrieval") or {}).get("records") or []
-    if not records:
+    retrieval = turn.get("retrieval") or {}
+    # New services distinguish candidate recall from proactive delivery. Keep
+    # the legacy path only for a service that has no delivery contract yet.
+    delivery = retrieval.get("delivery")
+    records = (delivery if isinstance(delivery, dict) else retrieval).get("records") or []
+    status = diagnostic(retrieval) if isinstance(delivery, dict) else ""
+    context = "\n\n".join(part for part in (status, render(records) if records else "") if part)
+    if not context:
         return
     emit({"hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
-        "additionalContext": render(records),
+        "additionalContext": context,
     }})
 
 

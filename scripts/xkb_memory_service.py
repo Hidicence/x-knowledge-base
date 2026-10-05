@@ -43,7 +43,7 @@ import xkb_jev
 from xkb_frontmatter import FRONTMATTER
 import xkb_relevance
 import xkb_text
-import xkb_score
+import xkb_delivery
 from xkb_evidence import fields, record_id, render_context, identity_key, IDENTITY_PREFIX
 from xkb_recall import recall_options, judge_quality, recall_quality, conversation_messages, conversation_fingerprint, contextual_query
 
@@ -1614,6 +1614,7 @@ class Store:
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
             packet["quality"] = recall_quality(packet)
+            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent)
             return packet
         # Keep current-utterance candidates even when old dialogue is longer or
         # contains stronger keywords. The second retrieval resolves references;
@@ -1670,7 +1671,7 @@ class Store:
                         if type(item.get("judge")) in (int, float)
                         and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_quality(judge_note)["has_verdicts"] else set()
         tag_demoted(records, lambda: self.demoted_ids(namespace=namespace), relevant_ids=relevant_ids)
-        records = xkb_score.rank(records)
+        records = xkb_delivery.rank(records, judge_note)
         # Quotas apply after identity fusion, before the global response limit.
         counts = {"cards": 0, "wiki": 0}
         selected = []
@@ -1733,6 +1734,7 @@ class Store:
             "warnings": warnings,
         }
         packet["quality"] = recall_quality(packet)
+        packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent)
         return packet
 
 

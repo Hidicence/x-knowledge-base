@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 from xkb_recall import run_configured, compatibility_aliases
+from xkb_delivery import diagnostic
 
 RECALL_SCRIPT = Path(__file__).resolve().parent / "xkb_recall.py"
 
@@ -39,6 +40,8 @@ TOOL_DEF = {
         "already-settled advice. Returns cards, wiki topics and conversation "
         "evidence with provenance. Uses the same retrieval, ACL, relevance judge and "
         "ranking as the HTTP API. Inspect retrieval_mode, judge and warnings: "
+        "Use delivery.records for proactive suggestions; full records remain "
+        "available for inspection even when delivery is background or degraded. "
         "keyword fallback or an unavailable judge are not semantic success. "
         "Results are candidates, not established answers; check their relevance "
         "and sources. Greetings are skipped. Failures are reported explicitly."
@@ -144,6 +147,14 @@ def handle(req: dict):
         structured = _run_recall_structured(message, arguments.get("limit", 10), arguments.get("conversation"))
         # formatted_text for human-readable context injection
         text_output = structured.get("formatted_text", "")
+        delivery = structured.get("delivery")
+        if isinstance(delivery, dict):
+            text_output = delivery.get("context", "")
+            status = diagnostic(structured)
+            if status:
+                text_output = "\n\n".join(part for part in (status, text_output) if part)
+            elif not text_output and structured.get("records"):
+                text_output = "沒有足夠把握的新資訊值得主動提醒；候選與判斷狀態保留於 metadata，請依當前需求自行查閱。"
         # 提示放在回傳內容裡，不只放在 tool description——description 可能被截斷或忽略，
         # 而這句話決定了 agent 會不會把不相關的卡片當成使用者的知識講出來。
         if text_output:

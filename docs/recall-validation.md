@@ -4,6 +4,59 @@ XKB's intended behavior is proactive reuse during conversation. A user can revea
 a need by stating a plan, describing a difficulty, adding a constraint, or changing
 direction. Question answering alone does not validate that behavior.
 
+## Proactive delivery trial: not accepted for production
+
+The 2026-10-05 trial ran an isolated checkout against read-only production indexes
+and a disposable SQLite snapshot. Each case used a fresh MCP initialize/list/call
+against the trial HTTP service. Frozen labels and raw responses remain private.
+No production deployment or knowledge write was performed for this trial.
+
+| Measure | Existing scenarios | New held-out scenarios |
+| --- | --- | --- |
+| Strict candidate acceptance | 2/9 | 0/8 |
+| Strict delivery acceptance | 4/9 | 2/8 |
+| Labelled useful-evidence coverage in delivery | 7/7 | 5/5 |
+| Quiet scenarios with no delivered suggestions | 2/2 | 1/3 |
+
+Coverage means at least one labelled core source appeared; it does not establish
+that every delivered item helped. Strict acceptance includes unexpected-source
+checks. Later content review found some unlabelled equivalent advice, but also
+weakly applicable snippets and paraphrased duplicate advice. Labels were not
+changed to turn those failures into passes. These counts are within this trial;
+they are not a controlled improvement estimate over an earlier live run.
+
+The frozen topic-switch example delivered carbon evidence without video advice.
+However, two held-out completion statements still received suggestions. The judge
+returned complete verdicts, so those were decision failures, not outages. Held-out
+latency ranged from 5.8 to 15.3 seconds (median 9.8 seconds). This trial measured
+packets, not the answering agent's actual use or the user's perceived usefulness.
+
+The implementation below remains an experiment. Production acceptance requires
+a separate current-turn intervention decision and new held-out conversations,
+including completion, explicit repeat requests and changed constraints. Raising
+the relevance threshold to fit these known failures would not validate that design.
+
+## Experimental delivery contract
+
+The packet preserves all returned candidates in `records`, while `delivery`
+describes proactive suggestions. Current-turn Jev verdicts order judged evidence
+after retrieval-leg fusion; unknown verdicts retain their retrieval positions.
+The delivery policy selects at most two candidates scoring at least 0.5, removes
+exact repeated claim text within that response, and marks claims already fully
+present in a recent assistant reply. Current-turn judging considers novelty,
+explicit repeat requests and new applicability; prior presentation alone never
+vetoes a positive current judgement. This is an experimental decision boundary, not a calibrated
+probability. The broader candidate floor remains 0.1. Partial/unavailable judging
+stays visible; unjudged candidates remain inspectable but are not auto-injected.
+Presentation does not imply acceptance, and silence does not imply rejection.
+
+Both the hook and MCP presentation use this delivery decision. Existing candidate
+evaluation remains unchanged. Set a case's `surface` to `delivery` to separately
+evaluate intervention precision, missed useful suggestions and quiet turns.
+Freeze new conversational scenarios before provider calls; retain failures and
+report candidate coverage separately from delivery success. Recent dialogue is
+the current state input; this iteration does not infer a persistent goal registry.
+
 `xkb_recall` accepts optional `conversation` messages (`role`: `user`/`assistant`,
 `content`: text), in chronological order, excluding the current `message`. HTTP
 recall/context accepts the same field. Inputs accept at most eight messages; the

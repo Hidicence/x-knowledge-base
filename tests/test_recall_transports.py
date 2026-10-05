@@ -91,6 +91,8 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(packet["conversation_fingerprint"], conversation_fingerprint(history))
         self.assertIn("answer", {r["id"] for r in packet["records"]})
         self.assertNotIn("secret", {r["id"] for r in packet["records"]})
+        self.assertEqual(packet["delivery"]["records"], [])
+        self.assertEqual(packet["delivery"]["status"], "degraded")
         legacy = {key: value for key, value in packet.items() if not key.startswith("conversation_")}
         with mock.patch.object(self.store, "knowledge_recall", return_value=legacy), \
              mock.patch.dict(os.environ, {"XKB_MEMORY_SERVICE_URL": self.url}):
@@ -116,6 +118,19 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "noise"))]["judged_count"], 0)
         self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "noise"))]["returned_count"], 1)
         self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "answer"))]["judged_count"], 1)
+
+    def test_mcp_presentation_keeps_degraded_diagnostic_and_full_candidate_metadata(self):
+        packet = self.http()
+        with mock.patch.object(mcp, "_run_recall_structured", return_value=packet), \
+             mock.patch.object(mcp, "_respond") as respond:
+            mcp.handle({"id": 7, "method": "tools/call", "params": {
+                "name": "xkb_recall", "arguments": {"message": "Aurora deployment"}}})
+        content = respond.call_args.args[1]["content"]
+        self.assertIn("xkb_recall_status>degraded", content[0]["text"])
+        self.assertNotIn("blue green releases", content[0]["text"])
+        metadata = json.loads(content[1]["text"].removeprefix("[xkb_recall_meta] "))
+        self.assertTrue(metadata["records"])
+        self.assertEqual(metadata["delivery"]["records"], [])
 
     def test_doctor_detects_incomplete_judge_even_with_healthy_semantic_backend(self):
         packet = {"records": [{"id": "x"}], "count": 1, "retrieval_mode": "xbrain_hybrid",
