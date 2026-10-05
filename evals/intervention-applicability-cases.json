@@ -1,0 +1,22 @@
+{
+  "description":"Frozen applicability challenge. Similar vocabulary must not turn another task's instructions into current advice; transferable principles remain allowed.",
+  "evidence":{
+    "carbon-lineage":"逐筆記錄原始用量的來源、單位、計算式、排放係數年份和版本；交接時附上變更紀錄，讓接手者可重建計算。",
+    "repo-docs":"軟體儲存庫交接清單：更新 README、套件依賴聲明、API 金鑰設定範例，掃描硬編碼路徑，修復安裝腳本。",
+    "video-reference":"每鏡使用同一份人物正側面設定圖，將服裝、臉部及髮型綁定到固定參考，避免各鏡重新設計人物。",
+    "video-hype":"作者宣稱兩個步驟能解決角色一致性，但貼文沒有揭露步驟內容，必須再取得完整教學才能知道做法。",
+    "past-shot":"上次廣告的第七鏡要刪除，因為那個產品還没上架；字幕改成品牌藍色，結尾停在公司大門。",
+    "backpressure":"當消費端的處理速度低於生產端，設置有界佇列；佇列達上限時停止新增工作，消費端消化後再恢復生產。此原則不依賴特定產業。",
+    "archive":"舊文件歸檔時可以依日期建立目錄，把同月份的文件移到相同資料夾，另留目錄索引。"
+  },
+  "cases":[
+    {"id":"same-word-different-work","query":"碳排底稿要交接，我擔心同事查不到原始資料與當時係數","candidate_ids":["repo-docs","carbon-lineage"],"expected_ids":["carbon-lineage"]},
+    {"id":"reverse-scope","query":"同事要接手這個軟體專案，但 README 沒寫安裝流程，程式裡還有我電腦的絕對路徑","candidate_ids":["carbon-lineage","repo-docs"],"expected_ids":["repo-docs"]},
+    {"id":"promise-without-method","query":"每次換鏡頭角色都會換臉，我需要能照著做的修正方法","candidate_ids":["video-hype","video-reference"],"expected_ids":["video-reference"]},
+    {"id":"hype-alone-is-no-evidence","query":"人物一致性的具體步驟我還沒找到","candidate_ids":["video-hype"],"expected_ids":[]},
+    {"id":"old-command-not-current-plan","query":"我要改善這支新影片的角色一致性，不是重剪上次廣告","candidate_ids":["past-shot","video-reference"],"expected_ids":["video-reference"]},
+    {"id":"transfer-principle","query":"自動寫稿每天二十篇，但編輯每天只看五篇，待審資料夾一直長大","candidate_ids":["backpressure","archive"],"expected_ids":["backpressure"]},
+    {"id":"same-principle-another-domain","query":"照片辨識服務持續收到新圖片，辨識的 worker 已經追不上，記憶體裡的待辦越堆越多","candidate_ids":["backpressure","archive"],"expected_ids":["backpressure"]},
+    {"id":"quiet-after-actual-completion","query":"交接的資料來源跟版本都補好了，同事也重算確認一致，今天這項完成","candidate_ids":["carbon-lineage","repo-docs"],"expected_ids":[]}
+  ]
+}

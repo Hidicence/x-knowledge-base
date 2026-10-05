@@ -194,7 +194,7 @@ cd demo/xkb-demo-ui && npm run dev       # → http://localhost:3000
 
 **可跳過 recall：** 純問候（早安、哈哈）、單字確認（好、收到、OK）、笑話。
 
-`xkb_recall` 不呼叫 LLM，只做 keyword + wiki 搜尋，latency < 2s，token 開銷為零。
+`xkb_recall` 共用服務會進行檢索、Jev 判斷與原文段落選擇，可能產生模型費用與數秒以上延遲。用 `delivery` 判斷本輪可提供的知識，並檢查 degraded 診斷；命中文件不代表選出的內容足以推進對話。詳見 [驗證與限制](docs/recall-validation.md)。
 
 ---
 
@@ -203,6 +203,8 @@ cd demo/xkb-demo-ui && npm run dev       # → http://localhost:3000
 把這個 skill 當成對話中的第二層記憶：當前對話若需要案例、做法、脈絡或可行動參考，先用主動召回找你過去存過的相關知識，再決定要不要主動提給使用者。
 
 ### 什麼時候觸發
+
+陳述計畫、遇到困難、新限制或切換話題都可能透露需求，不以問號為條件。傳入原始訊息及近期對話；純完成、拒絕建議、照既定計畫執行時保持安靜。只有最多兩段符合當前需求的原文會交給回答端。
 
 只有同時滿足以下兩件事才主動召回：
 1. 當前對話值得查既有知識庫
@@ -393,6 +395,16 @@ the returned evidence advances the current need; a retrieval hit is not proof of
 usefulness. Keep ordinary acknowledgements quiet and avoid repeating advice the
 conversation has already settled. The MCP tool requires an agent to invoke it;
 the Claude prompt hook automates invocation.
+
+The common recall core distinguishes `records` (inspectable candidates) from
+`delivery.records` (at most two proactive suggestions). Consult `delivery.status`
+and withholding reasons; missing judgement is not a negative verdict. Ranking
+and delivery selection live in `scripts/xkb_delivery.py`; the hook uses that
+shared decision rather than treating every retrieved candidate as an instruction.
+The experimental intervention decision distinguishes current response need,
+applicability, new information and repeated advice. `xkb_eval.py --live
+--intervention` evaluates frozen evidence separately from full MCP retrieval;
+require both layers and visible outage handling before claiming readiness.
 
 ## Before you push
 

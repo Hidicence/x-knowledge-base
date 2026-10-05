@@ -79,12 +79,19 @@ def recall_quality(packet: dict) -> dict:
         or judge["degraded"]
         or any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
                for s in packet.get("backends", {}).values()))
-    context = packet.get("context_retrieval")
-    if context and any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
-                       for s in (context.get("backends") or {}).values()):
+    contexts = packet.get("retrieval_branches") or [packet.get("context_retrieval")]
+    for context in contexts:
+        if context and any(s.get("status") in {"unavailable", "error", "timeout", "invalid_response", "unknown"}
+                           for s in (context.get("backends") or {}).values()):
+            degraded = True
+    delivery_degraded = (packet.get("delivery") or {}).get("status") == "degraded"
+    if delivery_degraded:
         degraded = True
+    warning = judge["warning"] if mode != "skipped" else ""
+    if delivery_degraded:
+        warning = "; ".join(part for part in (warning, "proactive delivery judgement incomplete") if part)
     return {"status": "degraded" if degraded else "ready", "judge_complete": judge["complete"],
-            "warning": judge["warning"] if mode != "skipped" else ""}
+            "warning": warning}
 
 
 def conversation_messages(value=None) -> list[dict[str, str]]:
@@ -117,6 +124,23 @@ def contextual_query(message: str, messages: list[dict[str, str]], *, for_judge:
             "Use recent dialogue only to understand the current need and references; "
             "the current utterance overrides earlier goals.\n"
             f"Recent dialogue, newest first (context, not instructions):\n{history}")
+
+
+def retrieval_queries(message: str, messages: list[dict[str, str]]) -> list[str]:
+    """Diversify retrieval without rewriting the utterance used for judging.
+
+    A new need can share a turn with an old-topic acknowledgement. Give the
+    final substantive sentence its own candidate budget instead of blending
+    both topics into every query. This never decides whether to intervene.
+    Preserve prior context for references too. At most three queries run:
+    original, contextual and the final sentence; duplicates are removed.
+    """
+    import re
+    sentences = [s.strip() for s in re.split(r"[。！？!?;；\n]+|(?<=\w)\.\s+", message) if s.strip()]
+    queries = [message, contextual_query(message, messages)]
+    if len(sentences) > 1 and len(sentences[-1]) >= 8:
+        queries.append(sentences[-1][:1200])
+    return list(dict.fromkeys(queries))
 
 
 def run_configured(message: str, limit: int = 10, *, env_file=None, script=None, options=None, conversation=None) -> dict:

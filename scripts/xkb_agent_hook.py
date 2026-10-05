@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from conversation_state_parser import is_harness_text
 from xkb_evidence import fields
+from xkb_delivery import diagnostic
 from xkb_recall import conversation_messages
 
 DEFAULT_URL = "http://127.0.0.1:18972"
@@ -136,16 +137,21 @@ def render(records: list[dict]) -> str:
         "也可能已經過時，請與當前請求和實際狀態核對後再使用。",
         "",
     ]
+    footer = "</xkb_recalled_knowledge>"
+    included = 0
     for item in records:
         title, body, source = fields(item)
-        summary = " ".join(body.split())[:600]
-        lines.append(f"- [{item.get('record_type', 'knowledge')}] {title}")
-        if summary:
-            lines.append(f"  {summary}")
+        entry = [f"- [{item.get('record_type', 'knowledge')}] {title}"]
+        if body:
+            entry.append(f"  {body}")
         if source:
-            lines.append(f"  來源：{source}")
-    lines.append("</xkb_recalled_knowledge>")
-    return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+            entry.append(f"  來源：{source}")
+        # The service selected a complete evidence paragraph. Cutting at 600
+        # characters here could silently remove its condition or negation.
+        if len("\n".join(lines + entry + [footer])) <= MAX_CONTEXT_CHARS:
+            lines.extend(entry)
+            included += 1
+    return "\n".join(lines + [footer]) if included else ""
 
 
 def last_assistant_message(transcript: str) -> str:
@@ -247,12 +253,18 @@ def on_prompt(event: dict, cfg: dict) -> None:
         "ordinal": ordinal,
     }, ensure_ascii=False), encoding="utf-8")
 
-    records = (turn.get("retrieval") or {}).get("records") or []
-    if not records:
+    retrieval = turn.get("retrieval") or {}
+    # New services distinguish candidate recall from proactive delivery. Keep
+    # the legacy path only for a service that has no delivery contract yet.
+    delivery = retrieval.get("delivery")
+    records = (delivery if isinstance(delivery, dict) else retrieval).get("records") or []
+    status = diagnostic(retrieval) if isinstance(delivery, dict) else ""
+    context = "\n\n".join(part for part in (status, render(records) if records else "") if part)
+    if not context:
         return
     emit({"hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
-        "additionalContext": render(records),
+        "additionalContext": context,
     }})
 
 

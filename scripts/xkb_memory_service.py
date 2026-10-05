@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -43,9 +44,9 @@ import xkb_jev
 from xkb_frontmatter import FRONTMATTER
 import xkb_relevance
 import xkb_text
-import xkb_score
-from xkb_evidence import fields, record_id, render_context, identity_key, IDENTITY_PREFIX
-from xkb_recall import recall_options, judge_quality, recall_quality, conversation_messages, conversation_fingerprint, contextual_query
+import xkb_delivery
+from xkb_evidence import bounded_excerpt, fields, record_id, render_context, identity_key, IDENTITY_PREFIX
+from xkb_recall import recall_options, judge_quality, recall_quality, conversation_messages, conversation_fingerprint, contextual_query, retrieval_queries
 
 # The list of what is not worth searching for lives with the parser, so the
 # router and this service cannot disagree about it. They used to: the copy
@@ -597,6 +598,7 @@ class KnowledgeCatalog:
                 "id": hit.get("slug") or hit.get("source_url") or f"semantic:{len(records)}",
                 "title": hit.get("title", ""),
                 "summary": hit.get("chunk_text", ""),
+                **({"excerpt_truncated": True} if hit.get("excerpt_truncated") else {}),
                 "source_url": hit.get("source_url", ""),
                 "source_type": hit.get("type") or "xkb",
                 "memory_layer": "external_knowledge",
@@ -645,7 +647,12 @@ class KnowledgeCatalog:
             return []
         try:
             state["attempted"] = True
-            hits = recall_semantic(query, top_k=max(1, limit))
+            # Shared recall delegates relevance to Jev after candidate merging.
+            # The legacy cosine floor must not discard conversational evidence
+            # before that judge sees it. Count/ACL budgets still apply.
+            candidate_options = {"min_similarity": 0.0, "sections_per_document": 2,
+                                 "excerpt_limit": 2000} if os.getenv("XKB_JEV_DECIDE", "1") != "0" else {}
+            hits = recall_semantic(query, top_k=max(1, limit), **candidate_options)
         except Exception as err:
             state["status"] = "error"
             xkb_failures.note("service wiki search", err)
@@ -813,33 +820,55 @@ class KnowledgeCatalog:
         # Preserve the existing semantic Wiki budget without reducing keyword
         # quotas. Options cap candidates; they do not expand default payloads.
         wiki_semantic_limit = min(wiki_limit, max(2, limit // 2))
-        semantic_records = []
-        for layer, budget, search in (("cards", card_limit, self._semantic_search),
-                                       ("wiki", wiki_semantic_limit, self._wiki_search)):
+        def search_layer(spec):
+            layer, budget, search = spec
+            self._reset_request_stats()
             self._local.backends[layer] = {"backend": "xbrain_hybrid" if layer == "cards" else "wiki_semantic",
                 "available": False, "attempted": False, "used": False, "status": "disabled"}
+            rows = []
+            started = time.monotonic()
             if budget and opts["semantic"]:
                 # Unknown is useful for adapters that return rows but omit diagnostics.
                 self._local.backends[layer]["status"] = "unknown"
                 rows = search(query, budget, namespace)
-                semantic_records.extend(rows)
                 if rows:
                     self._local.backends[layer].update(available=True, attempted=True, used=True, status="used")
+            state = dict(self._local.backends[layer], elapsed_ms=round((time.monotonic()-started)*1000))
+            return layer, rows, state, self._stats, self._irrelevant
+        specs = [("cards", card_limit, self._semantic_search),
+                 ("wiki", wiki_semantic_limit, self._wiki_search)]
+        if opts["semantic"] and card_limit and wiki_semantic_limit:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                layers = list(pool.map(search_layer, specs))
+        else:
+            layers = [search_layer(spec) for spec in specs]
+        # Worker diagnostics are thread-local. Merge their returned snapshots,
+        # never whichever stats happen to remain on the caller's thread.
+        semantic_records = [record for _, rows, _, _, _ in layers for record in rows]
+        self._local.backends = {layer: state for layer, _, state, _, _ in layers}
+        self._stats = filter_stats(**{name: sum(stats['by_layer'][name] for _, _, _, stats, _ in layers)
+                                    for name in ('card', 'wiki', 'semantic', 'conversation')})
+        self._irrelevant = sum(count for _, _, _, _, count in layers)
         backends = self._local.backends
         used = [v["backend"] for v in backends.values() if v["used"]]
         semantic_backend = {"name": "+".join(used) or "none",
             "available": any(v["available"] for v in backends.values()),
             "attempted": any(v["attempted"] for v in backends.values()),
             "used": bool(used), "status": "used" if used else "empty" if any(v["status"] == "empty" for v in backends.values()) else "unavailable"}
-        if semantic_records:
-            records = semantic_records
-            retrieval_mode = "xbrain_hybrid" if backends["cards"]["used"] else "wiki_semantic"
-            filtered_counts = dict(self._stats)
-        else:
+        records = list(semantic_records)
+        retrieval_mode = ("xbrain_hybrid" if backends["cards"]["used"] else "wiki_semantic") if records else (
+            ("keyword_fallback" if opts["semantic"] else "keyword") if card_limit or wiki_limit else "conversation_only")
+        # One successful source must not prevent another source from falling
+        # back. In particular, broad wiki candidates cannot hide exact cards
+        # while the card semantic backend is unavailable or empty.
+        keyword_cards = card_limit if not backends["cards"]["used"] else 0
+        keyword_wiki = wiki_limit if not backends["wiki"]["used"] else 0
+        if keyword_cards or keyword_wiki:
             terms = [term for term in query_terms(query) if term not in xkb_text.STOPWORDS]
             hits: list[tuple[float, dict[str, Any], bool]] = []
             filtered_cards = filtered_wiki = 0
-            for item in self._index() if card_limit else []:
+            for item in self._index() if keyword_cards else []:
                 metadata = self._item_metadata(item)
                 if not self._allowed(metadata, namespace):
                     filtered_cards += 1
@@ -849,7 +878,7 @@ class KnowledgeCatalog:
                 score = _keyword_unit_score(blob, terms)
                 if score:
                     hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "knowledge_card", "id": str(item.get("id") or Path(str(item.get("path", ""))).stem), "title": item.get("title", ""), "summary": item.get("summary", ""), "source_url": item.get("source_url", ""), "source_type": item.get("source_type", "unknown"), "memory_layer": "external_knowledge", "score_scale": "card_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}, all(term in blob for term in terms)))
-            for path in sorted(self.wiki_topics_dir.glob("*.md")) if wiki_limit else []:
+            for path in sorted(self.wiki_topics_dir.glob("*.md")) if keyword_wiki else []:
                 metadata = self._frontmatter(path)
                 if not self._allowed(metadata, namespace):
                     filtered_wiki += 1
@@ -859,30 +888,29 @@ class KnowledgeCatalog:
                         ("title", "tags", "keywords"))).lower()
                 score = _keyword_unit_score(blob, terms)
                 if score:
-                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": content[:500], "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}, all(term in blob for term in terms)))
+                    hits.append((score, {"schema": KNOWLEDGE_SCHEMA, "record_type": "wiki_topic", "id": path.stem, "title": path.stem, "summary": bounded_excerpt(content, 1600), "source_url": "", "source_type": "wiki", "memory_layer": "knowledge_product", "score_scale": "wiki_keyword", "visibility": metadata.get("sensitivity", metadata.get("visibility", "private")), "namespace": metadata.get("namespace", "private"), "score": score, "retrieval": "keyword"}, all(term in blob for term in terms)))
             # Prefer complete content matches when available. Retain partial
             # matches when none exist, including natural-language CJK queries
             # whose overlapping n-grams rarely all appear in one document.
             if any(complete for _, _, complete in hits):
                 hits = [hit for hit in hits if hit[2]]
             hits.sort(key=lambda pair: pair[0], reverse=True)
-            records = []
+            keyword_records = []
             counts = {"cards": 0, "wiki": 0}
             for _, item, _ in hits:
                 layer = "wiki" if item["record_type"] == "wiki_topic" else "cards"
                 if counts[layer] < (wiki_limit if layer == "wiki" else card_limit):
-                    records.append(item)
+                    keyword_records.append(item)
                     counts[layer] += 1
-            records = records[:limit]
-            for layer, budget in (("cards", card_limit), ("wiki", wiki_limit)):
+            records.extend(keyword_records[:limit])
+            for layer, budget in (("cards", keyword_cards), ("wiki", keyword_wiki)):
                 if budget:
                     backends[layer]["fallback"] = {"backend": "keyword", "status": "used" if counts[layer] else "empty"}
-            retrieval_mode = ("keyword_fallback" if opts["semantic"] else "keyword") if card_limit or wiki_limit else "conversation_only"
             previous = self._stats["by_layer"]
             self._stats = filter_stats(card=filtered_cards + previous.get("card", 0),
                                        wiki=filtered_wiki + previous.get("wiki", 0),
                                        semantic=previous.get("semantic", 0))
-            filtered_counts = dict(self._stats)
+        filtered_counts = dict(self._stats)
         context = render_context(records)
         return {
             "schema": SCHEMA, "query": query, "namespace": namespace,
@@ -1582,6 +1610,7 @@ class Store:
         return _noise_kind(query)
 
     def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None) -> dict[str, Any]:
+        started = time.monotonic()
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=10, minimum=1, maximum=50)
@@ -1591,7 +1620,7 @@ class Store:
         recent = conversation_messages(conversation)
         context_receipt = {"conversation_fingerprint": conversation_fingerprint(recent),
                            "conversation_messages": len(recent)}
-        search_query = contextual_query(query, recent)
+        queries = retrieval_queries(query, recent)
         # 每次召回從乾淨的統計開始。少了這一步，某些路徑（例如語意後端不在時
         # 提早回傳的那條）會沿用同一條執行緒上一個請求的數字，回應裡的
         # 「為什麼結果這麼少」就會是別人的答案。
@@ -1614,22 +1643,36 @@ class Store:
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
             packet["quality"] = recall_quality(packet)
+            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent, query=query)
             return packet
         # Keep current-utterance candidates even when old dialogue is longer or
-        # contains stronger keywords. The second retrieval resolves references;
-        # neither branch consumes the other's pre-judge candidate budget.
+        # contains stronger keywords. Context resolves references and the final
+        # sentence gives a new topic its own pre-judge candidate budget.
         search_options = {"options": opts} if options is not None else {}
-        knowledge = self.catalog.search(query, limit, namespace, **search_options)
-        context_knowledge = self.catalog.search(search_query, limit, namespace, **search_options) if recent else None
-        if context_knowledge is not None:
-            knowledge = {**knowledge, "records": knowledge["records"] + context_knowledge["records"]}
+        # Prepare the task independently while bounded source reads run. The
+        # planner never sees retrieved text; selection cannot change this task.
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            can_prepare = os.getenv('XKB_JEV_DECIDE', '1') != '0' and xkb_jev.available()
+        except Exception as err:
+            # A broken provider config must not erase locally available evidence.
+            can_prepare = False
+            xkb_failures.note('delivery preparation configuration', ValueError(type(err).__name__))
+        with ThreadPoolExecutor(max_workers=len(queries) + int(can_prepare)) as pool:
+            pending_task = pool.submit(xkb_delivery.prepare, query, recent) if can_prepare else None
+            branches = list(pool.map(lambda text: self.catalog.search(text, limit, namespace, **search_options), queries))
+            retrieved = time.monotonic()
+            delivery_options = {'task': pending_task.result()} if pending_task else {}
+        knowledge = {**branches[0], "records": [r for branch in branches for r in branch["records"]]}
+        context_knowledge = branches[1] if len(branches) > 1 else None
+        prepared = time.monotonic()
         conversation_state = {"backend": "conversation_keyword", "attempted": opts["conversations"],
                               "used": False, "status": "disabled"}
         conversation = {"memories": []}
         if opts["conversations"]:
             try:
                 conversation = self.recall(query, limit, namespace)
-                if recent:
+                for search_query in queries[1:]:
                     conversation = {"memories": conversation["memories"] + self.recall(search_query, limit, namespace)["memories"]}
                 conversation_state.update(used=bool(conversation["memories"]),
                                           status="used" if conversation["memories"] else "empty")
@@ -1657,6 +1700,7 @@ class Store:
         for item in records:
             item["evidence_key"] = identity_key(item)
         candidates = list(records)
+        merged = time.monotonic()
         # jev 判斷接在這裡，排序之前：排序只需要處理真的相關的那些。
         # 一個旗標就能退回餘弦——XKB_JEV_DECIDE=0。
         judge_note: dict[str, Any] = {"status": "off"}
@@ -1666,11 +1710,12 @@ class Store:
             except Exception as err:  # noqa: BLE001
                 xkb_failures.note("jev judge", err)
                 judge_note = {"status": "error"}
+        judged = time.monotonic()
         relevant_ids = {identity_key(item) for item in records
                         if type(item.get("judge")) in (int, float)
                         and item["judge"] >= judge_note.get("floor", JUDGE_FLOOR)} if judge_quality(judge_note)["has_verdicts"] else set()
         tag_demoted(records, lambda: self.demoted_ids(namespace=namespace), relevant_ids=relevant_ids)
-        records = xkb_score.rank(records)
+        records = xkb_delivery.rank(records, judge_note)
         # Quotas apply after identity fusion, before the global response limit.
         counts = {"cards": 0, "wiki": 0}
         selected = []
@@ -1702,9 +1747,9 @@ class Store:
         quality_warning = judge_quality(judge_note)["warning"]
         if quality_warning:
             warnings.append(quality_warning)
-        if context_knowledge is not None:
+        for extra in branches[1:]:
             warnings.extend("conversation context retrieval: " + warning for warning in
-                            _recall_warnings(context_knowledge, context_knowledge.get("filtered_counts", filter_stats())) if warning)
+                            _recall_warnings(extra, extra.get("filtered_counts", filter_stats())) if warning)
         for item in records:
             item.pop("index_unreadable", None)
         context = render_context(records[:limit])
@@ -1727,11 +1772,25 @@ class Store:
             "semantic_retrieval_attempted": knowledge.get("semantic_backend", {}).get("attempted", False),
             "semantic_backend": knowledge.get("semantic_backend", {"status": "unknown"}),
             "backends": backends, "options": opts,
-            "context_retrieval": ({key: context_knowledge.get(key) for key in
+            "context_retrieval": ({"query": queries[1], **{key: context_knowledge.get(key) for key in
                                    ("retrieval_mode", "semantic_backend", "backends", "filtered_counts")}
+                                   }
                                   if context_knowledge is not None else None),
+            "retrieval_branches": [{"query": text, **{key: branch.get(key) for key in
+                                    ("retrieval_mode", "semantic_backend", "backends", "filtered_counts")}}
+                                   for text, branch in zip(queries, branches)],
             "warnings": warnings,
         }
+        delivery_started = time.monotonic()
+        packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent, query=query, **delivery_options)
+        finished = time.monotonic()
+        packet["timing_ms"] = {"retrieval": round((retrieved-started)*1000),
+                               "task_wait": round((prepared-retrieved)*1000),
+                               "conversation_merge": round((merged-prepared)*1000),
+                               "relevance": round((judged-merged)*1000),
+                               "fusion_and_usage": round((delivery_started-judged)*1000),
+                               "delivery": round((finished-delivery_started)*1000),
+                               "total": round((finished-started)*1000)}
         packet["quality"] = recall_quality(packet)
         return packet
 

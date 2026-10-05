@@ -89,6 +89,18 @@ class LlmRetryTest(unittest.TestCase):
         self.assertEqual(calls, _llm.MAX_ATTEMPTS)
         self.assertIsInstance(err, RuntimeError)
 
+    def test_interactive_direct_calls_do_not_retry_transient_errors(self):
+        for url in ('https://example.invalid/v1', 'https://example.invalid/anthropic',
+                    'https://generativelanguage.googleapis.com'):
+            with self.subTest(url=url), \
+                 mock.patch.object(_llm, '_runtime_settings', return_value={'LLM_API_URL': url, 'LLM_API_KEY': 'fixture'}), \
+                 mock.patch.object(_llm.urllib.request, 'urlopen', side_effect=http_error(503)) as call, \
+                 self.assertRaises(RuntimeError):
+                try:
+                    _llm._direct_api_call('s', 'u', model='fixture-model', attempts=1, timeout=1, max_tokens=32)
+                finally:
+                    self.assertEqual(call.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

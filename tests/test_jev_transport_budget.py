@@ -5,6 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import xkb_jev as j
 
 class Transport(unittest.TestCase):
+
     def test_nested_answers(self):
         with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"data":{"answers":{"q":{"noul":0}}}}')):
             self.assertEqual(j.judge('s',{'q':{'type':'noul'}}),{'q':{'noul':0}})
@@ -16,7 +17,7 @@ class Transport(unittest.TestCase):
             body=json.loads(req.data)
             return io.BytesIO(json.dumps({'answers':{q:{'noul':0.8} for q in body['questions']}}).encode())
         with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',side_effect=respond):
-            out=j.relevance('中文問題😀',[(str(i),'中😀\\\"'*300) for i in range(25)])
+            out=j.relevance('中文問題😀',[(str(i),str(i)+'中😀\\\"'*300) for i in range(25)])
         self.assertEqual(len(out),25); self.assertGreater(len(sizes),1)
 
     def test_invalid_probabilities_are_not_rejections(self):
@@ -37,8 +38,35 @@ class Transport(unittest.TestCase):
         def respond(state,questions,**kwargs):
             return None if 'q0' in questions else {q:{'noul':0} for q in questions}
         with patch.object(j,'judge',side_effect=respond):
-            out=j.relevance('問題',[(str(i),'中😀'*450) for i in range(25)])
+            out=j.relevance('問題',[(str(i),str(i)+'中😀'*450) for i in range(25)])
         self.assertTrue(out);self.assertNotIn('0',out);self.assertIn('24',out)
+
+    def test_identical_questions_share_a_verdict_without_losing_candidate_keys(self):
+        calls=[]
+        def respond(state, questions, **kwargs):
+            calls.append((state, questions))
+            return {q:{'noul':0} for q in questions}
+        candidates=[('semantic','Keep source.\nPreserve version.'),
+                    ('keyword','Keep source. Preserve version.'),
+                    ('constraint','Do not preserve version.')]
+        with patch.object(j,'judge',side_effect=respond):
+            first=j.relevance('current request',candidates)
+            j.relevance('different current request',candidates)
+        self.assertEqual(first,dict.fromkeys(['semantic','keyword','constraint'],0.0))
+        self.assertEqual(len(calls),2)
+        self.assertTrue(all(len(questions)==2 for state,questions in calls))
+        self.assertNotEqual(calls[0][0],calls[1][0])
+
+    def test_missing_shared_verdict_leaves_every_alias_unknown(self):
+        import xkb_memory_service as svc
+        records=[{'id':'a','title':'Same claim'}, {'id':'a','title':'Same claim'},
+                 {'id':'b','title':'Distinct claim'}]
+        with patch.object(j,'judge',return_value={'q2':{'noul':.8}}) as call:
+            kept,note=svc.judge_relevance('current request',records)
+        self.assertEqual(len(call.call_args.args[1]),2)
+        self.assertEqual([r['judge'] for r in kept],[None,None,.8])
+        self.assertEqual(note['unjudged'],2)
+        self.assertEqual(note['status'],'partial')
 
     def test_partial_coverage_is_visible(self):
         import xkb_memory_service as svc

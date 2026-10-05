@@ -81,6 +81,24 @@ class TranscriptTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def test_delivery_distinguishes_quiet_from_degraded_without_injecting_unknown_claims(self) -> None:
+        for state in ("ready", "degraded"):
+            for candidates in ([], [{"id": "unverified", "summary": "UNVERIFIED_CLAIM"}]):
+                packet = {"records": candidates, "quality": {"status": state},
+                          "delivery": {"records": [], "status": "ready"}}
+                with self.subTest(state=state, candidates=bool(candidates)), \
+                     tempfile.TemporaryDirectory() as tmp, \
+                     mock.patch.object(hook, "STATE_DIR", Path(tmp)), \
+                     mock.patch.object(hook, "call", side_effect=[{"session_id": "fixture"}, {"retrieval": packet}]), \
+                     mock.patch.object(hook, "emit") as emit:
+                    hook.on_prompt({"session_id": "fixture", "prompt": "Prepare the release"}, {"source": "test"})
+                    if state == "ready":
+                        emit.assert_not_called()
+                    else:
+                        context = emit.call_args.args[0]["hookSpecificOutput"]["additionalContext"]
+                        self.assertIn("degraded", context)
+                        self.assertNotIn("UNVERIFIED_CLAIM", context)
+
     def test_prompt_event_injects_conversation_evidence_and_provenance(self) -> None:
         record = {"record_type": "conversation_trace", "trace_id": "trace:fixture",
                   "query": "角色參考圖如何分工？", "answer": "人物、場景、構圖使用各自的參考圖。"}
@@ -100,6 +118,19 @@ class RenderTests(unittest.TestCase):
         self.assertIn("xkb_recalled_knowledge", rendered)
         self.assertIn("可能已經過時", rendered)
         self.assertIn("T", rendered)
+
+    def test_complete_delivery_keeps_late_conditions_and_budget(self) -> None:
+        body = 'Step details. ' * 55 + 'Do not proceed unless the review is approved.'
+        rendered = hook.render([{'title': 'Procedure', 'summary': body, 'source_url': 'source'}])
+        self.assertIn(body, rendered)
+        self.assertTrue(rendered.endswith('</xkb_recalled_knowledge>'))
+        records = [{'title': 'Too long', 'summary': 'x' * 5000},
+                   {'title': 'Useful', 'summary': body}]
+        rendered = hook.render(records)
+        self.assertIn(body, rendered)
+        self.assertNotIn('Too long', rendered)
+        self.assertLessEqual(len(rendered), hook.MAX_CONTEXT_CHARS)
+        self.assertEqual(hook.render(records[:1]), '')
 
 
 class InstallerTests(unittest.TestCase):

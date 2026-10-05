@@ -33,8 +33,8 @@ _CONFIG_FILE = _SKILL_DIR / "config" / "llm.json"
 # 設定壞掉時退回的模型。它的職責是「在你修設定的期間讓事情繼續動」，
 # 所以它必須是活的——原本寫的是 sub2api-gpt/gpt-5.5，而那個模型在這台機器上
 # 回 server_error，於是一個打錯字的設定會表現成「每次呼叫模型都失敗」。
-# 這個值跟 Hermes 的主模型一致（config.yaml: gpt-5.6-luna @ api.tu-zi.com）。
-FALLBACK_MODEL = "gpt-5.6-luna"
+# 這個值跟 Hermes 的主模型一致（config.yaml: gpt-6-luna @ api.tu-zi.com）。
+FALLBACK_MODEL = "gpt-6-luna"
 
 def _runtime_settings() -> dict[str, str]:
     """Read credentials from process env or explicit XKB_ENV_FILE only."""
@@ -58,7 +58,8 @@ def _load_model() -> str:
 
 
 def _direct_api_call(system: str, user: str, *, timeout: int = 120,
-                     max_tokens: int = 4096) -> str:
+                     max_tokens: int = 4096, model: str | None = None,
+                     attempts: int | None = None) -> str:
     """
     Fallback when openclaw CLI is not available.
     Uses LLM_API_URL + LLM_API_KEY env vars for direct HTTP calls.
@@ -73,10 +74,13 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120,
             "Set them to use a direct OpenAI-compatible API fallback:\n"
             "  export LLM_API_URL=https://your-openai-compatible-endpoint/v1\n"
             "  export LLM_API_KEY=your-key\n"
-            "  export LLM_MODEL=gpt-5.6-luna"
+            "  export LLM_MODEL=gpt-6-luna"
         )
 
-    model = _load_model()
+    model = model or _load_model()
+    attempts = MAX_ATTEMPTS if attempts is None else attempts
+    if type(attempts) is not int or attempts < 1:
+        raise ValueError("attempts must be a positive integer")
     url = direct_api_url.rstrip("/")
     # Use Anthropic format only when URL explicitly contains "/anthropic"
     is_anthropic = "/anthropic" in url
@@ -89,13 +93,14 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120,
         # model var not used for URL when generateContent already in URL
         url = f"{url}?key={direct_api_key}"
         parts_text = (f"{system.strip()}\n\n" if system else "") + user.strip()
-        payload = {"contents": [{"parts": [{"text": parts_text}]}]}
+        payload = {"contents": [{"parts": [{"text": parts_text}]}],
+                   "generationConfig": {"maxOutputTokens": max_tokens}}
         headers = {"Content-Type": "application/json"}
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         import time as _time
         _last_err = None
-        for _attempt in range(5):
+        for _attempt in range(attempts):
             if _attempt:
                 _time.sleep(8 * _attempt)
             try:
@@ -148,7 +153,7 @@ def _direct_api_call(system: str, user: str, *, timeout: int = 120,
 
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    data = _post_with_retry(req, timeout)
+    data = _post_with_retry(req, timeout, attempts=attempts)
 
     if is_anthropic:
         # Handle thinking blocks: find first text block
@@ -176,7 +181,7 @@ TRANSIENT_STATUS = (429, 500, 502, 503, 504)
 MAX_ATTEMPTS = 5
 
 
-def _post_with_retry(req, timeout: int) -> dict:
+def _post_with_retry(req, timeout: int, *, attempts: int | None = None) -> dict:
     """POST, retrying only the failures that another attempt could fix.
 
     A long batch is only as reliable as its flakiest call: a run of a hundred
@@ -185,7 +190,7 @@ def _post_with_retry(req, timeout: int) -> dict:
     import time as _time
 
     last: Exception | None = None
-    for attempt in range(MAX_ATTEMPTS):
+    for attempt in range(MAX_ATTEMPTS if attempts is None else attempts):
         if attempt:
             _time.sleep(4 * attempt)
         try:

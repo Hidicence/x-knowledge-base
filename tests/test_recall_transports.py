@@ -25,6 +25,15 @@ import xkb_recall_server as mcp
 from xkb_doctor import probe, assess
 
 
+def stable_packet(value):
+    """Compare transport content; durations belong to individual requests."""
+    if isinstance(value, dict):
+        return {k: stable_packet(v) for k, v in value.items() if k not in {'timing_ms', 'elapsed_ms'}}
+    if isinstance(value, list):
+        return [stable_packet(v) for v in value]
+    return value
+
+
 class RecallTransports(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -91,6 +100,8 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(packet["conversation_fingerprint"], conversation_fingerprint(history))
         self.assertIn("answer", {r["id"] for r in packet["records"]})
         self.assertNotIn("secret", {r["id"] for r in packet["records"]})
+        self.assertEqual(packet["delivery"]["records"], [])
+        self.assertEqual(packet["delivery"]["status"], "degraded")
         legacy = {key: value for key, value in packet.items() if not key.startswith("conversation_")}
         with mock.patch.object(self.store, "knowledge_recall", return_value=legacy), \
              mock.patch.dict(os.environ, {"XKB_MEMORY_SERVICE_URL": self.url}):
@@ -117,6 +128,19 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "noise"))]["returned_count"], 1)
         self.assertEqual(rows[identity_key(next(r for r in packet["records"] if r["id"] == "answer"))]["judged_count"], 1)
 
+    def test_mcp_presentation_keeps_degraded_diagnostic_and_full_candidate_metadata(self):
+        packet = self.http()
+        with mock.patch.object(mcp, "_run_recall_structured", return_value=packet), \
+             mock.patch.object(mcp, "_respond") as respond:
+            mcp.handle({"id": 7, "method": "tools/call", "params": {
+                "name": "xkb_recall", "arguments": {"message": "Aurora deployment"}}})
+        content = respond.call_args.args[1]["content"]
+        self.assertIn("xkb_recall_status>degraded", content[0]["text"])
+        self.assertNotIn("blue green releases", content[0]["text"])
+        metadata = json.loads(content[1]["text"].removeprefix("[xkb_recall_meta] "))
+        self.assertTrue(metadata["records"])
+        self.assertEqual(metadata["delivery"]["records"], [])
+
     def test_doctor_detects_incomplete_judge_even_with_healthy_semantic_backend(self):
         packet = {"records": [{"id": "x"}], "count": 1, "retrieval_mode": "xbrain_hybrid",
                   "semantic_backend": {"used": True}, "backends": {}}
@@ -135,7 +159,10 @@ class RecallTransports(unittest.TestCase):
         expected = self.http()
         actual = probe("Aurora deployment", env=self.env)
         for key, value in expected.items():
-            self.assertEqual(actual[key], value, key)
+            if key == "timing_ms":
+                self.assertTrue(all(v >= 0 for v in actual[key].values()))
+            else:
+                self.assertEqual(stable_packet(actual[key]), stable_packet(value), key)
         self.assertEqual(actual["results"], actual["records"])
         self.assertEqual(actual["formatted_text"], actual["context"])
         self.assertNotIn("secret", [r["id"] for r in actual["records"]])
@@ -182,7 +209,10 @@ class RecallTransports(unittest.TestCase):
         expected = self.http()
         actual = probe("Aurora deployment", env={**self.env, "XKB_MEMORY_SERVICE_URL": self.url})
         for key, value in expected.items():
-            self.assertEqual(actual[key], value, key)
+            if key == "timing_ms":
+                self.assertTrue(all(v >= 0 for v in actual[key].values()))
+            else:
+                self.assertEqual(stable_packet(actual[key]), stable_packet(value), key)
         self.assertEqual([r["id"] for r in actual["records"]], ["answer"])
         self.assertEqual(actual["judge"]["status"], "judged")
 
@@ -235,9 +265,14 @@ class RecallTransports(unittest.TestCase):
         class Judge(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                answers = {key: {"noul": .9 if "blue green" in value["instructions"] else .01}
-                           for key, value in body["questions"].items()}
-                data = json.dumps({"answers": answers}).encode()
+                if self.path.endswith('/chat/completions'):
+                    # This fixture verifies the relevance transport; keep its
+                    # independent task planner explicitly quiet.
+                    data = json.dumps({'choices': [{'message': {'content': '{"needs": [], "constraints": []}'}}]}).encode()
+                else:
+                    answers = {key: {"noul": .9 if "blue green" in value["instructions"] else .01}
+                               for key, value in body["questions"].items()}
+                    data = json.dumps({"answers": answers}).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -425,6 +460,9 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(packet["retrieval_mode"], "wiki_semantic")
         self.assertFalse(packet["backends"]["cards"]["used"])
         self.assertTrue(packet["backends"]["wiki"]["used"])
+        self.assertEqual(packet["backends"]["cards"]["fallback"]["status"], "used")
+        self.assertIn("answer", {r.get("id") for r in packet["records"]})
+        self.assertNotIn("secret", {r.get("id") for r in packet["records"]})
         self.assertEqual(packet["records"][0]["section"], "A")
         self.assertEqual(assess(packet, require_semantic=True)["status"], "degraded")
 
