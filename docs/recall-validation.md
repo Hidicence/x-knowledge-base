@@ -165,7 +165,7 @@ review of every task and delivered paragraph still found three ready-state
 quality problems: repetitive backlog-control advice, project-specific video
 restrictions attached to a reusable identity method, and unrelated narrative
 framing attached to another identity method. Thus 50 automated passes are not
-50 fully satisfactory interventions, and this version is **not accepted for
+50 fully satisfactory interventions, and that trial was **not accepted for
 production**. The agreed-execution case stayed quiet and successful lineage
 cases contained source/version procedures in their substantive text.
 
@@ -182,9 +182,39 @@ warnings) and **170 focused Linux tests** across eleven suites, including reruns
 of the changed boundaries. A fresh hook-process/HTTP replay preserved all **56/56**
 saved packets with zero provider calls. This confirms context transport, not new
 retrieval, automatic Codex/Orca invocation, or downstream answer quality. Cold
-code review found no outstanding implementation defect; the semantic and
-availability limitations above remain release blockers. Keep the reviewed
-candidate separate from the production service until those gates are met.
+code review found no outstanding implementation defect. The candidate remained
+separate from production pending another live check and severity review of the
+semantic and availability limitations.
+
+### Release recheck (2026-10-05)
+
+A fresh run of the same frozen 56 cases, without runtime changes or relabelling,
+scored **53/56**: fixed evidence 31/32 and full retrieval 22/24. The failures
+remain in the denominator:
+
+- One task-planning response contained invalid JSON; delivery conservatively
+  degraded and emitted no suggestions.
+- One Jev batch timed out; incomplete relevance judgement withheld suggestions.
+- One carbon handoff case returned relevant governance guidance but omitted the
+  specifically requested per-figure sources and versions. An embedding HTTP 429
+  also affected one retrieval branch, while another semantic branch succeeded.
+  This is a real content-coverage miss, not solely a connection failure.
+
+Independent review of all tasks and excerpts found no critical or high-severity
+defect. All 45 selected quotes matched their candidate originals exactly.
+Declined advice, agreed execution and closed topics produced no unsolicited
+suggestions. Occasional repeated advice and optional narrative details remain
+non-blocking precision limitations; the carbon coverage miss remains an open
+quality issue. The release assessment permits these disclosed limitations; it
+does **not** claim the stricter all-cases benchmark has passed.
+
+Windows again passed 652 tests (17 skipped), Linux passed the 170 focused tests,
+and all 56 saved packets passed fresh hook/HTTP replay. Full-retrieval median was
+**11,002 ms**, nearest-rank p95 **22,257 ms**. Of 145 recorded decision-provider
+requests, 144 completed at transport level and one timed out; the invalid JSON
+was among the completed responses. Embedding traffic is outside that request
+count. The largest serialized Jev body remained 32,713 bytes. These results do
+not establish that every earlier failure originated at the provider server.
 
 ## Follow-up trials (2026-10-05): still experimental
 
