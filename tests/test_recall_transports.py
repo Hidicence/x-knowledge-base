@@ -440,6 +440,9 @@ class RecallTransports(unittest.TestCase):
         self.assertEqual(packet["retrieval_mode"], "wiki_semantic")
         self.assertFalse(packet["backends"]["cards"]["used"])
         self.assertTrue(packet["backends"]["wiki"]["used"])
+        self.assertEqual(packet["backends"]["cards"]["fallback"]["status"], "used")
+        self.assertIn("answer", {r.get("id") for r in packet["records"]})
+        self.assertNotIn("secret", {r.get("id") for r in packet["records"]})
         self.assertEqual(packet["records"][0]["section"], "A")
         self.assertEqual(assess(packet, require_semantic=True)["status"], "degraded")
 

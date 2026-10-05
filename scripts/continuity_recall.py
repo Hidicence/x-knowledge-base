@@ -19,6 +19,7 @@ import math
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import NamedTuple
 
@@ -210,6 +211,7 @@ WIKI_MIN_SIMILARITY = xkb_relevance.threshold("wiki_recall")
 
 _VECTORS: dict[str, list[float]] | None = None
 _PROVIDER = None
+_INDEX_LOCK = threading.RLock()
 
 
 SEMANTIC_PREFIXES = {"wiki/topics/": "wiki_semantic", "memory/": "memory_semantic"}
@@ -221,60 +223,61 @@ def _load_semantic_vectors() -> dict[str, list[float]]:
     優先讀二進位小檔：整份 vector_index.json 有 8,000 多個卡片向量，
     存成 JSON 光載入就要 5 秒，而召回是每句話都要跑的。
     """
-    global _VECTORS
-    if _VECTORS is not None:
-        return _VECTORS
-    _VECTORS = {}
-
-    meta_path = Path(os.getenv("XKB_SEMANTIC_INDEX",
-                               str(xkb_paths.BOOKMARKS_DIR / "semantic_index.json")))
-    bin_path = meta_path.with_suffix(".bin")
-    if meta_path.exists() and bin_path.exists():
-        try:
-            import array
-            with meta_path.open(encoding="utf-8") as fh:
-                meta = json.load(fh)
-            dims, keys = int(meta["dims"]), list(meta["keys"])
-            packed = array.array("f")
-            payload = bin_path.read_bytes()
-
-            # 二進位格式沒有自我描述能力，對不上時不會拋錯，只會安靜地
-            # 切出空的或錯位的向量——分數變成 0，看起來就像「知識庫沒東西」。
-            # 所以寧可大聲退回 JSON，也不要拿可能錯位的資料去算相似度。
-            problems = []
-            if meta.get("byteorder") and meta["byteorder"] != sys.byteorder:
-                problems.append(f"byteorder {meta['byteorder']} != {sys.byteorder}")
-            if meta.get("itemsize") and int(meta["itemsize"]) != packed.itemsize:
-                problems.append(f"itemsize {meta['itemsize']} != {packed.itemsize}")
-            expected = len(keys) * dims * packed.itemsize
-            if len(payload) != expected:
-                problems.append(f"size {len(payload)} != expected {expected}"
-                                f"（keys 與 .bin 不同步，可能只重建了其中一個）")
-            if problems:
-                raise ValueError("; ".join(problems))
-
-            packed.frombytes(payload)
-            _VECTORS = {
-                key: packed[i * dims:(i + 1) * dims].tolist()
-                for i, key in enumerate(keys)
-            }
+    with _INDEX_LOCK:
+        global _VECTORS
+        if _VECTORS is not None:
             return _VECTORS
-        except (OSError, ValueError, KeyError) as exc:
-            print(f"（semantic index unusable, falling back to JSON: {exc}）", file=sys.stderr)
-            _VECTORS = {}
+        _VECTORS = {}
 
-    # 退路：直接讀完整索引（慢，但至少能動）
-    try:
-        with xkb_paths.VECTOR_FILE.open(encoding="utf-8") as fh:
-            data = json.load(fh)
-        _VECTORS = {
-            k: v for k, v in (data.get("vectors") or {}).items()
-            if any(k.startswith(prefix) for prefix in SEMANTIC_PREFIXES)
-            and not k.startswith("memory/cards/")
-        }
-    except (OSError, ValueError):
-        pass
-    return _VECTORS
+        meta_path = Path(os.getenv("XKB_SEMANTIC_INDEX",
+                                   str(xkb_paths.BOOKMARKS_DIR / "semantic_index.json")))
+        bin_path = meta_path.with_suffix(".bin")
+        if meta_path.exists() and bin_path.exists():
+            try:
+                import array
+                with meta_path.open(encoding="utf-8") as fh:
+                    meta = json.load(fh)
+                dims, keys = int(meta["dims"]), list(meta["keys"])
+                packed = array.array("f")
+                payload = bin_path.read_bytes()
+
+                # 二進位格式沒有自我描述能力，對不上時不會拋錯，只會安靜地
+                # 切出空的或錯位的向量——分數變成 0，看起來就像「知識庫沒東西」。
+                # 所以寧可大聲退回 JSON，也不要拿可能錯位的資料去算相似度。
+                problems = []
+                if meta.get("byteorder") and meta["byteorder"] != sys.byteorder:
+                    problems.append(f"byteorder {meta['byteorder']} != {sys.byteorder}")
+                if meta.get("itemsize") and int(meta["itemsize"]) != packed.itemsize:
+                    problems.append(f"itemsize {meta['itemsize']} != {packed.itemsize}")
+                expected = len(keys) * dims * packed.itemsize
+                if len(payload) != expected:
+                    problems.append(f"size {len(payload)} != expected {expected}"
+                                    f"（keys 與 .bin 不同步，可能只重建了其中一個）")
+                if problems:
+                    raise ValueError("; ".join(problems))
+
+                packed.frombytes(payload)
+                _VECTORS = {
+                    key: packed[i * dims:(i + 1) * dims].tolist()
+                    for i, key in enumerate(keys)
+                }
+                return _VECTORS
+            except (OSError, ValueError, KeyError) as exc:
+                print(f"（semantic index unusable, falling back to JSON: {exc}）", file=sys.stderr)
+                _VECTORS = {}
+
+        # 退路：直接讀完整索引（慢，但至少能動）
+        try:
+            with xkb_paths.VECTOR_FILE.open(encoding="utf-8") as fh:
+                data = json.load(fh)
+            _VECTORS = {
+                k: v for k, v in (data.get("vectors") or {}).items()
+                if any(k.startswith(prefix) for prefix in SEMANTIC_PREFIXES)
+                and not k.startswith("memory/cards/")
+            }
+        except (OSError, ValueError):
+            pass
+        return _VECTORS
 
 
 _CARD_KEYS: dict[str, int] | None = None
@@ -372,40 +375,41 @@ def lookup_card_vectors(keys: list[str], *, card_level_only: bool = False,
     gbrain 挑出來的那三五張。定長記錄的好處就是可以直接算出位移，
     讀 12KB 而不是 100MB。
     """
-    global _CARD_KEYS, _CARD_DIMS
-    meta_path, bin_path = _card_index_paths()
-    if _CARD_KEYS is None:
-        _CARD_KEYS = {}
-        try:
-            with meta_path.open(encoding="utf-8") as fh:
-                meta = json.load(fh)
-            _CARD_DIMS = int(meta["dims"])
-            _CARD_KEYS = {k: i for i, k in enumerate(meta["keys"])}
-        except (OSError, ValueError, KeyError):
+    with _INDEX_LOCK:
+        global _CARD_KEYS, _CARD_DIMS
+        meta_path, bin_path = _card_index_paths()
+        if _CARD_KEYS is None:
             _CARD_KEYS = {}
-    if not _CARD_KEYS or not bin_path.exists():
-        return {}
+            try:
+                with meta_path.open(encoding="utf-8") as fh:
+                    meta = json.load(fh)
+                _CARD_DIMS = int(meta["dims"])
+                _CARD_KEYS = {k: i for i, k in enumerate(meta["keys"])}
+            except (OSError, ValueError, KeyError):
+                _CARD_KEYS = {}
+        if not _CARD_KEYS or not bin_path.exists():
+            return {}
 
-    import array
-    row_bytes = _CARD_DIMS * 4
-    out: dict[str, list[list[float]]] = {}
-    try:
-        with bin_path.open("rb") as fh:
-            for key in keys:
-                # 一張卡可能有好幾條論點向量。全部讀回來，讓上面決定用哪一個。
-                rows = _find_card_rows(key, card_level_only=card_level_only,
-                                       exact=exact)
-                for row in rows[:MAX_CARD_ARGUMENT_ROWS]:
-                    fh.seek(row * row_bytes)
-                    chunk = fh.read(row_bytes)
-                    if len(chunk) != row_bytes:
-                        continue
-                    vec = array.array("f")
-                    vec.frombytes(chunk)
-                    out.setdefault(key, []).append(vec.tolist())
-    except OSError:
-        return {}
-    return out
+        import array
+        row_bytes = _CARD_DIMS * 4
+        out: dict[str, list[list[float]]] = {}
+        try:
+            with bin_path.open("rb") as fh:
+                for key in keys:
+                    # 一張卡可能有好幾條論點向量。全部讀回來，讓上面決定用哪一個。
+                    rows = _find_card_rows(key, card_level_only=card_level_only,
+                                           exact=exact)
+                    for row in rows[:MAX_CARD_ARGUMENT_ROWS]:
+                        fh.seek(row * row_bytes)
+                        chunk = fh.read(row_bytes)
+                        if len(chunk) != row_bytes:
+                            continue
+                        vec = array.array("f")
+                        vec.frombytes(chunk)
+                        out.setdefault(key, []).append(vec.tolist())
+        except OSError:
+            return {}
+        return out
 
 
 def card_similarities(query: str, keys: list[str]) -> dict[str, float] | None:
@@ -433,12 +437,14 @@ _QUERY_VECTOR_LIMIT = 64
 
 def _embed_query(query: str) -> list[float] | None:
     """拿不到 embedding 就回 None，呼叫端會退回字串比對。"""
-    if query in _QUERY_VECTORS:
-        return _QUERY_VECTORS[query]
+    with _INDEX_LOCK:
+        if query in _QUERY_VECTORS:
+            return _QUERY_VECTORS[query]
     vector = _embed_query_uncached(query)
-    if len(_QUERY_VECTORS) >= _QUERY_VECTOR_LIMIT:
-        _QUERY_VECTORS.clear()
-    _QUERY_VECTORS[query] = vector
+    with _INDEX_LOCK:
+        if len(_QUERY_VECTORS) >= _QUERY_VECTOR_LIMIT:
+            _QUERY_VECTORS.clear()
+        _QUERY_VECTORS[query] = vector
     return vector
 
 
@@ -542,11 +548,12 @@ def _memory_section_text(filename: str, section: str) -> str:
     return ""
 
 
-def recall_semantic(query: str, top_k: int = 2) -> list[RecallResult] | None:
+def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None = None) -> list[RecallResult] | None:
     """向量召回。回傳 None 代表「語意能力不可用」，空 list 代表「真的沒有夠相關的」。
 
     這兩者必須分得開：不可用要退回字串比對，沒有夠相關的就該安靜。
     """
+    floor = WIKI_MIN_SIMILARITY if min_similarity is None else min_similarity
     vectors = _load_semantic_vectors()
     if not vectors:
         return None
@@ -562,7 +569,7 @@ def recall_semantic(query: str, top_k: int = 2) -> list[RecallResult] | None:
     results: list[RecallResult] = []
     seen_topics: set[str] = set()
     for similarity, key in scored:
-        if similarity < WIKI_MIN_SIMILARITY or len(results) >= top_k:
+        if similarity < floor or len(results) >= top_k:
             break
         prefix = next((p for p in SEMANTIC_PREFIXES if key.startswith(p)), "")
         source_type = SEMANTIC_PREFIXES.get(prefix, "wiki_semantic")

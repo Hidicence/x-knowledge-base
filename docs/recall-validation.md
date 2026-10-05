@@ -4,7 +4,99 @@ XKB's intended behavior is proactive reuse during conversation. A user can revea
 a need by stating a plan, describing a difficulty, adding a constraint, or changing
 direction. Question answering alone does not validate that behavior.
 
-## Proactive delivery trial: not accepted for production
+## Intervention decisions and acceptance
+
+The current experiment separates four judgements: whether this turn needs an
+information response, whether the evidence applies to that task, whether it adds
+usable information, and whether another selected item already supplies the same
+advice. An explicit request to repeat or recheck is a current need even when the
+topic was previously resolved. Completed work without a new need stays quiet.
+
+At most four relevance-qualified candidates enter one additional Jev request.
+Source provenance accompanies the excerpts; historical project instructions are
+not automatically instructions for the current task. Source, title and body have
+separate caps so a long URL cannot displace the evidence. Four candidates require
+at most 15 questions. The serialized request is
+bounded to 32 KiB, shrinks excerpts if needed, and uses the existing six-second
+timeout without retries. Missing or invalid answers remain unknown, produce a
+degraded diagnostic, and cannot become automatic suggestions or negative user
+preferences. The packet records need, applicability, usefulness, pairwise overlap
+and withholding reasons independently of the broader candidate records.
+
+In shared recall with Jev enabled, Wiki retrieval now supplies count-bounded
+nearest candidates before relevance judging. Its legacy 0.65 cosine cutoff no
+longer removes natural-language candidates before Jev can see them. Legacy callers
+and `XKB_JEV_DECIDE=0` retain their existing cutoff. Keyword fallback operates per
+missing layer, so a Wiki hit cannot suppress an exact card while card semantic
+retrieval is unavailable. Namespace checks and per-layer budgets still apply.
+
+Retrieval keeps the original utterance, its bounded dialogue context, and the
+last substantive sentence as at most three distinct queries. Each receives its
+own candidate budget, so closing an old topic cannot consume the new topic's
+entire retrieval budget. These read branches run concurrently; vector cache
+initialization is synchronized. All branch diagnostics are retained, and a failed
+branch degrades overall quality. Relevance and intervention still judge the
+original utterance with its dialogue; sentence splitting never decides intent.
+This costs up to three retrievals and remains a bounded heuristic: needs buried
+in a middle sentence or written without sentence boundaries can still be missed.
+
+The public fixed-evidence suites can be run separately from retrieval. They use
+real provider calls only with explicit `--live --intervention`; offline tests
+never make these purchases. Create `tmp/` first and choose a new receipt name:
+
+```bash
+python scripts/xkb_eval.py --live --intervention --cases evals/intervention-cases.json --output tmp/intervention-trial.json
+python scripts/xkb_eval.py --live --intervention --cases evals/intervention-applicability-cases.json --output tmp/applicability-trial.json
+```
+
+Receipts preserve source/effective conversation, frozen evidence, decision packets
+and pending progress before each call. Existing outputs are refused; interrupted
+runs must be inspected rather than silently retried. Strict acceptance requires
+all cases to pass, including missing/unexpected sources, overdelivery and degraded
+judgements. A fixed-evidence success does not prove retrieval, downstream agent
+behavior, or production readiness. Live-library and cached-candidate replay
+results must remain separate, and failures must not be relabelled after a run.
+
+## Follow-up trials (2026-10-05): still experimental
+
+Trials used isolated code checkouts, read-only production indexes and disposable
+SQLite snapshots. Full retrieval cases exercised fresh MCP initialize/list/call
+against the temporary HTTP service. Raw case packets, provider responses and
+pre-call archive/suite hashes are retained privately under `tmp/`; no production
+code or knowledge was changed. These are sequential diagnostic trials, not a
+randomized comparison of versions.
+
+| Trial | Fixed evidence | Full retrieval / cached replay |
+| --- | --- | --- |
+| Initial intervention gate | 15/16 | Existing 5/8; new 12/16 |
+| Repeat-request correction | 24/24 | Cached replay 18/24 |
+| Wiki candidate correction | — | Existing 1/4; new 6/8 |
+| Applicability judgement | 24/24 | Cached replay 9/12; fresh regression 3/4 |
+| Bounded topic-shift retrieval | 24/24 | Fresh regression 4/4; new 6/8 |
+
+The Wiki-candidate trial's three regression failures were unavailable relevance
+judgements. Cached replay preserves those failures; it does not retest provider
+availability. None were removed from the reported denominators.
+
+In the final topic-shift trial, all five new information needs found a labelled
+source among candidates, but only four delivered one. All three quiet cases
+stayed quiet. Strict acceptance was **6/8**: one case preferred an old project
+status trace over the reusable guidance, and another added an unrelated repository
+sync note to carbon-data guidance. These are real selection failures despite
+complete provider responses. The new eight cases had median **12,470 ms** and
+nearest-rank p95 **15,668 ms**; the median misses the predeclared 12,000 ms target.
+All 71 recorded Jev calls completed; largest serialized body was 32,764 bytes.
+That observed byte count is not an official token-limit claim.
+
+Windows regression validation passed **633 tests**, with 17 skipped and four
+existing deprecation warnings. The seven focused Linux suites passed **126
+tests**. Cold review found and verified the concurrent cache-initialization fix.
+These checks validate implementation boundaries, not model accuracy. The trial
+does not establish the answering agent's actual use of suggestions or user benefit,
+and it has **not met production acceptance**. Fixed evidence scores must not be
+presented as end-to-end success.
+
+## First delivery trial: not accepted for production
 
 The 2026-10-05 trial ran an isolated checkout against read-only production indexes
 and a disposable SQLite snapshot. Each case used a fresh MCP initialize/list/call
@@ -31,18 +123,19 @@ returned complete verdicts, so those were decision failures, not outages. Held-o
 latency ranged from 5.8 to 15.3 seconds (median 9.8 seconds). This trial measured
 packets, not the answering agent's actual use or the user's perceived usefulness.
 
-The implementation below remains an experiment. Production acceptance requires
-a separate current-turn intervention decision and new held-out conversations,
-including completion, explicit repeat requests and changed constraints. Raising
-the relevance threshold to fit these known failures would not validate that design.
+This first trial established the need for a separate current-turn intervention
+decision and new held-out conversations, including completion, explicit repeat
+requests and changed constraints. Raising the relevance threshold to fit those
+known failures would not validate that design.
 
 ## Experimental delivery contract
 
 The packet preserves all returned candidates in `records`, while `delivery`
 describes proactive suggestions. Current-turn Jev verdicts order judged evidence
 after retrieval-leg fusion; unknown verdicts retain their retrieval positions.
-The delivery policy selects at most two candidates scoring at least 0.5, removes
-exact repeated claim text within that response, and marks claims already fully
+The delivery policy reviews at most four candidates scoring at least 0.5, selects
+at most two after the intervention/applicability/usefulness/overlap checks,
+removes exact repeated claim text, and marks claims already fully
 present in a recent assistant reply. Current-turn judging considers novelty,
 explicit repeat requests and new applicability; prior presentation alone never
 vetoes a positive current judgement. This is an experimental decision boundary, not a calibrated

@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import sys
 import unittest
+import json
+import tempfile
+import contextlib
+import io
 from pathlib import Path
 from unittest import mock
 
@@ -88,6 +92,51 @@ class RecallEvaluation(unittest.TestCase):
         self.assertEqual(result["mean_recall_at_k"], 0)
         self.assertEqual(result["no_answer_cases"], 1)
         self.assertEqual(result["no_answer_passed"], 0)
+
+    def test_intervention_cli_is_explicit_and_preserves_a_paid_run_receipt(self):
+        import xkb_delivery
+        with tempfile.TemporaryDirectory() as tmp:
+            suite = Path(tmp)/'cases.json'
+            output = Path(tmp)/'receipt.json'
+            suite.write_text(json.dumps({'evidence': {'a': 'An actionable step'}, 'cases': [
+                {'id': 'q', 'query': 'Help with this task', 'candidate_ids': ['a'], 'expected_ids': ['a']}]}), encoding='utf-8')
+            args = ['xkb_eval', '--intervention', '--cases', str(suite), '--output', str(output)]
+            with mock.patch('sys.argv', args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                xkb_eval.main()
+            self.assertFalse(output.exists())
+            def judge(context, candidates):
+                pending = json.loads(output.read_text(encoding='utf-8'))
+                self.assertEqual(pending['pending_case'], 'q')
+                self.assertEqual(pending['evidence']['a'], 'An actionable step')
+                return {'need': {'noul': .9}, 'use_0': {'noul': .9}, 'applies_0': {'noul': .9}}
+            with mock.patch('sys.argv', args+['--live']), mock.patch.object(xkb_delivery.xkb_jev, 'intervention', side_effect=judge), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(xkb_eval.main(), 0)
+            before = output.read_bytes()
+            receipt = json.loads(before)
+            self.assertEqual(receipt['status'], 'completed')
+            self.assertEqual(receipt['results'][0]['packet']['delivery']['records'][0]['id'], 'a')
+            with mock.patch('sys.argv', args+['--live']), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                xkb_eval.main()
+            self.assertEqual(output.read_bytes(), before)
+
+    def test_delivery_evaluation_rejects_overdelivery_and_unknown_judgement(self):
+        packet = self.packet(['a','b'])
+        packet['delivery'] = {'records': packet['records'], 'status': 'degraded'}
+        row = xkb_eval.score_case({'id': 'q', 'surface': 'delivery', 'expected_ids': ['a','b'], 'max_delivered': 1}, packet)
+        self.assertIn('delivery budget exceeded', row['errors'])
+        self.assertIn('proactive delivery judgement incomplete', row['errors'])
+
+    def test_intervention_fixture_uses_the_same_bounded_dialogue_as_production(self):
+        import xkb_delivery
+        from xkb_recall import conversation_messages, contextual_query
+        history = [{'role': 'assistant', 'content': str(i)+'x'*700} for i in range(8)]
+        case = {'id': 'q', 'query': 'Current need', 'expected_ids': [], 'candidate_ids': ['a'], 'conversation': history}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(xkb_delivery.xkb_jev, 'intervention', return_value=None) as call:
+            result = xkb_eval.run_intervention_cases([case], {'a': 'Evidence'}, Path(tmp)/'receipt.json')
+        effective = conversation_messages(history)
+        self.assertEqual(call.call_args.args[0], contextual_query(case['query'], effective, for_judge=True))
+        self.assertEqual(result['results'][0]['packet']['effective_conversation'], effective)
+        self.assertEqual(result['input']['cases'][0]['conversation'], history)
 
 
 if __name__ == "__main__":

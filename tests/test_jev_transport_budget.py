@@ -5,6 +5,32 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import xkb_jev as j
 
 class Transport(unittest.TestCase):
+    def test_intervention_is_one_byte_bounded_call_even_with_escaped_unicode(self):
+        def respond(state, questions, **kwargs):
+            self.assertLessEqual(len(j._body(state, questions)), j.MAX_BODY_BYTES)
+            self.assertEqual(len(questions), 15)
+            self.assertIn('need', questions)
+            return {'need': {'noul': .9}}
+        with patch.object(j, 'judge', side_effect=respond) as call:
+            sample = {'source': '中😀\\\"'*500, 'title': '中😀\\\"'*500, 'text': '中😀\\\"'*500}
+            self.assertIsNotNone(j.intervention('中😀\\\"'*1200, [sample]*4))
+            call.assert_called_once()
+            self.assertIsNone(j.intervention('current need', [sample]*5))
+            call.assert_called_once()
+
+    def test_long_provenance_cannot_consume_the_actionable_excerpt(self):
+        def respond(state, questions, **kwargs):
+            payload = json.loads(state.split('\n', 1)[1])
+            item = payload['evidence'][0]
+            self.assertLessEqual(len(item['source']), 121)
+            self.assertLessEqual(len(item['title']), 81)
+            self.assertIn('UNIQUE_ACTION', item['text'])
+            return {'need': {'noul': .9}}
+        with patch.object(j, 'judge', side_effect=respond):
+            self.assertIsNotNone(j.intervention('current need', [{
+                'source': 'https://example.test/?signature='+'x'*1200,
+                'title': 'title'*400, 'text': 'UNIQUE_ACTION: stop generating when the review queue is full.'}]))
+
     def test_nested_answers(self):
         with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"data":{"answers":{"q":{"noul":0}}}}')):
             self.assertEqual(j.judge('s',{'q':{'type':'noul'}}),{'q':{'noul':0}})

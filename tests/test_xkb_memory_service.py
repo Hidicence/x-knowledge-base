@@ -43,6 +43,9 @@ class XKBMemoryServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = Store(Path(self.tmp.name) / "memory.sqlite")
+        self.store.catalog.index_file = Path(self.tmp.name) / "search_index.json"
+        self.store.catalog.cards_dir = Path(self.tmp.name) / "cards"
+        self.store.catalog.wiki_topics_dir = Path(self.tmp.name) / "wiki" / "topics"
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
