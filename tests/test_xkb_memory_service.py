@@ -425,7 +425,7 @@ class XKBMemoryServiceTests(unittest.TestCase):
             "semantic_retrieval_attempted": True,
             "warnings": [],
         }
-        self.store.knowledge_recall = lambda query, limit=10, namespace="private", conversation=None: packet
+        self.store.knowledge_recall = lambda query, limit=10, namespace="private", conversation=None, **_: packet
         try:
             session = self.store.open_session({"source": "fixture", "session_key": "retrieval-session"})
             started = self.store.start_turn({"session_id": session["session_id"], "turn_id": "retrieval-turn", "query": "turn query"})

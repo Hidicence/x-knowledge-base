@@ -1433,7 +1433,18 @@ class Store:
                 recent = conversation_messages([
                     {"role": role, "content": row[column]} for row in reversed(previous)
                     for role, column in (("user", "query"), ("assistant", "answer")) if row[column]])
-            retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace, conversation=recent)
+            delivered = set()
+            for (earlier,) in db.execute(
+                    "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT 100",
+                    (session_id,)):
+                try:
+                    delivered.update(item.get("evidence_key") for item in
+                                     ((json.loads(earlier or "{}").get("delivery") or {}).get("records") or [])
+                                     if isinstance(item, dict) and item.get("evidence_key"))
+                except (ValueError, AttributeError):
+                    continue
+            retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace, conversation=recent,
+                                              session_id=session_id, delivered=frozenset(delivered), proactive=True)
             db.execute(
                 "INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
                 (turn_id, session_id, query, "started", json.dumps(retrieval, ensure_ascii=False), now()),
@@ -1609,7 +1620,18 @@ class Store:
         """
         return _noise_kind(query)
 
-    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None) -> dict[str, Any]:
+    def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None,
+                         session_id: str | None = None, delivered: frozenset = frozenset(),
+                         proactive: bool = False) -> dict[str, Any]:
+        """Shared recall core.
+
+        ``proactive`` is only set by the prompt hook's turn start: nobody asked
+        a question there, so a turn the task planner calls quiet can stop before
+        relevance judging and paragraph selection. An explicit MCP/HTTP/CLI
+        recall is itself a request and never stops early. ``session_id``
+        excludes this session's own traces; ``delivered`` lists evidence already
+        suggested earlier in it.
+        """
         started = time.monotonic()
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
@@ -1629,22 +1651,26 @@ class Store:
         reset = getattr(self.catalog, "_reset_request_stats", None)
         if callable(reset):
             reset()
-        skipped = self._skip_reason(query)
-        if skipped:
+        def skipped_packet(reason: str, task=None) -> dict[str, Any]:
             packet = {
                 "schema": SCHEMA, "query": query, "namespace": namespace, **context_receipt,
                 "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
                 "records": [], "count": 0, "unfiltered_count": 0,
                 "filtered_counts": filter_stats(), "context": "",
-                "retrieval_mode": "skipped", "skip_reason": skipped, "options": opts,
+                "retrieval_mode": "skipped", "skip_reason": reason, "options": opts,
                 "backends": {k: {"status": "not_attempted", "attempted": False, "used": False} for k in ("cards", "wiki", "conversation")},
                 "semantic_retrieval_attempted": False,
                 "semantic_backend": {"status": "not_attempted"},
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
+            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent, query=query,
+                                                     **({"task": task} if task is not None else {}))
             packet["quality"] = recall_quality(packet)
-            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent, query=query)
+            packet["timing_ms"] = {"total": round((time.monotonic() - started) * 1000)}
             return packet
+        skipped = self._skip_reason(query)
+        if skipped:
+            return skipped_packet(skipped)
         # Keep current-utterance candidates even when old dialogue is longer or
         # contains stronger keywords. Context resolves references and the final
         # sentence gives a new topic its own pre-judge candidate budget.
@@ -1658,11 +1684,25 @@ class Store:
             # A broken provider config must not erase locally available evidence.
             can_prepare = False
             xkb_failures.note('delivery preparation configuration', ValueError(type(err).__name__))
-        with ThreadPoolExecutor(max_workers=len(queries) + int(can_prepare)) as pool:
+        pool = ThreadPoolExecutor(max_workers=len(queries) + int(can_prepare))
+        try:
             pending_task = pool.submit(xkb_delivery.prepare, query, recent) if can_prepare else None
-            branches = list(pool.map(lambda text: self.catalog.search(text, limit, namespace, **search_options), queries))
+            searches = [pool.submit(self.catalog.search, text, limit, namespace, **search_options) for text in queries]
+            task = pending_task.result() if pending_task else None
+            # 2026-10-05 實測：「好 直接送」這種輪次要等 11 秒，最後什麼都不給。
+            # 任務規劃看不到證據，它說沒有資訊需求，挑段落那步本來就會全部
+            # 否決（見 xkb_delivery.select）；所以不必等檢索、jev 與挑段落。
+            # 規劃失敗（None）是「不知道」，不是安靜，照常走完。
+            if proactive and isinstance(task, dict) and not task["needs"]:
+                for search in searches:
+                    search.cancel()
+                return skipped_packet("no_current_information_need", task)
+            branches = [search.result() for search in searches]
             retrieved = time.monotonic()
-            delivery_options = {'task': pending_task.result()} if pending_task else {}
+            delivery_options = {'task': task} if pending_task else {}
+        finally:
+            # 提早收工時不等還在跑的檢索；它們只讀索引，跑完就丟。
+            pool.shutdown(wait=False)
         knowledge = {**branches[0], "records": [r for branch in branches for r in branch["records"]]}
         context_knowledge = branches[1] if len(branches) > 1 else None
         prepared = time.monotonic()
@@ -1674,6 +1714,12 @@ class Store:
                 conversation = self.recall(query, limit, namespace)
                 for search_query in queries[1:]:
                     conversation = {"memories": conversation["memories"] + self.recall(search_query, limit, namespace)["memories"]}
+                if session_id:
+                    # 同一段對話的軌跡不是「既有知識」：2026-10-05 召回把 Claude
+                    # 七分鐘前自己說的「兩支都下載完成了」當成建議送回來。最近
+                    # 幾輪本來就由 conversation 參數帶著，不需要從這裡再撈一次。
+                    conversation = {"memories": [m for m in conversation["memories"]
+                                                 if m.get("session_id") != session_id]}
                 conversation_state.update(used=bool(conversation["memories"]),
                                           status="used" if conversation["memories"] else "empty")
             except sqlite3.Error as err:
@@ -1782,7 +1828,8 @@ class Store:
             "warnings": warnings,
         }
         delivery_started = time.monotonic()
-        packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent, query=query, **delivery_options)
+        packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent, query=query,
+                                                 delivered=delivered, **delivery_options)
         finished = time.monotonic()
         packet["timing_ms"] = {"retrieval": round((retrieved-started)*1000),
                                "task_wait": round((prepared-retrieved)*1000),

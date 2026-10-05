@@ -474,6 +474,36 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na * nb > 1e-9 else 0.0
 
 
+# 逐段用 Python 迴圈算餘弦，4,357 段 × 3,072 維一次要 1 秒；每輪最多三條查詢，
+# 又被 GIL 排成一列，2026-10-05 實測 wiki 這條腿中位數 5.7 秒。整批矩陣乘法
+# 約 0.01 秒，前 20 名與分數跟逐段算的一致。沒有 numpy、或向量維度不齊
+# （混了不同模型的向量）時退回逐段算，結果不變，只是慢。
+_MATRIX: tuple | None = None
+
+
+def _score_all(vectors: dict[str, list[float]], query_vector: list[float]) -> list[tuple[float, str]]:
+    """回傳 (餘弦, 鍵) 由高到低；與逐段 _cosine 同一個定義。"""
+    global _MATRIX
+    try:
+        import numpy as np
+        with _INDEX_LOCK:
+            if _MATRIX is None or _MATRIX[0] is not vectors:
+                keys = list(vectors)
+                matrix = np.asarray([vectors[k] for k in keys], dtype=np.float32)
+                if matrix.ndim != 2:
+                    raise ValueError("ragged vectors")
+                _MATRIX = (vectors, keys, matrix, np.linalg.norm(matrix, axis=1))
+            _, keys, matrix, norms = _MATRIX
+        query = np.asarray(query_vector, dtype=np.float32)
+        if query.shape != (matrix.shape[1],):
+            raise ValueError("query dimension mismatch")
+        denominator = norms * float(np.linalg.norm(query))
+        sims = np.where(denominator > 1e-9, (matrix @ query) / np.maximum(denominator, 1e-9), 0.0)
+        return sorted(zip(sims.tolist(), keys), reverse=True)
+    except (ImportError, ValueError):
+        return sorted(((_cosine(query_vector, vec), key) for key, vec in vectors.items()), reverse=True)
+
+
 # 索引用 @N 標示「同一段被切成好幾塊」、~N 標示「同名標題的第幾個」，兩個都
 # 加在 # 之後，所以讀取端會拿「做法-Workflow~2」去找標題。實測索引裡有 895
 # 個這種鍵，648 個是 wiki 的——每一個都佔掉名額然後顯示空白。
@@ -562,10 +592,7 @@ def recall_semantic(query: str, top_k: int = 2, *, min_similarity: float | None 
     if query_vector is None:
         return None
 
-    scored: list[tuple[float, str]] = []
-    for key, vec in vectors.items():
-        scored.append((_cosine(query_vector, vec), key))
-    scored.sort(reverse=True)
+    scored = _score_all(vectors, query_vector)
 
     if sections_per_document > 1:
         # Dense similarity often prefers an overview or the same broad advice.
