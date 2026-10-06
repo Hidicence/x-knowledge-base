@@ -67,6 +67,8 @@ python3 scripts/local_ingest.py demo/sample-notes --category learning --limit 3
 python3 scripts/recall_router.py "agent memory" --json
 ```
 
+To send card generation and relevance judging to different providers, set `XKB_GENERATION_API_URL`/`_API_KEY`/`_MODEL` and `XKB_JUDGE_API_URL`/`_API_KEY`/`_MODEL` instead; a route with its own URL or key never borrows the generic `LLM_*` credentials. See [`.env.example`](./.env.example).
+
 Local ingestion writes both cards and the search index; a separate index rebuild is unnecessary here. Its exit code is `2` when new cards were added, `0` when none were added. That is a change signal, not a failure.
 
 Keyword recall works without embeddings. Enable semantic retrieval using the [embedding configuration guide](./docs/embedding-configuration.md); installing NumPy makes wiki similarity search much faster, with identical results when it is absent. Jev relevance judging is optional and requires a provider that also serves `/systemone`; a chat-completions endpoint alone is insufficient. An unavailable judge is reported and retains candidates. Set `XKB_JEV_DECIDE=0` to disable it deliberately.

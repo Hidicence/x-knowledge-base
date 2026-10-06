@@ -65,6 +65,8 @@ python3 scripts/local_ingest.py demo/sample-notes --category learning --limit 3
 python3 scripts/recall_router.py "agent memory" --json
 ```
 
+想讓「產生卡片」與「相關性判斷」走不同供應商時，改設 `XKB_GENERATION_API_URL`／`_API_KEY`／`_MODEL` 與 `XKB_JUDGE_API_URL`／`_API_KEY`／`_MODEL`；設了專用網址或金鑰的用途，不會再借用通用的 `LLM_*` 金鑰。範例見 [`.env.example`](./.env.example)。
+
 本地匯入會同時寫入卡片與搜尋索引，這裡不需要另外重建索引。匯入新增卡片時的結束碼是 `2`，沒有新增時是 `0`；這是「資料有變動」的訊號，不代表失敗。
 
 關鍵字召回不需要 embedding。需要語意搜尋時，再依照[向量設定指南](./docs/embedding-configuration.md)設定；安裝 NumPy 可以大幅加快 wiki 相似度搜尋，沒有安裝時結果相同，只是比較慢。Jev 相關性判斷是選用能力，供應商須另外支援 `/systemone`，只有 chat-completions 端點並不足夠。判斷服務不可用時會保留候選並回報狀態；也可設定 `XKB_JEV_DECIDE=0` 主動關閉。
