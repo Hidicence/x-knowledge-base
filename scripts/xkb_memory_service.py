@@ -1061,17 +1061,18 @@ def redact(value: Any) -> Any:
     return value
 
 
-# 回答者的上下文裡還留著的最近幾輪：這段範圍內已送過的建議不再送，同一段
-# 對話的軌跡也不當成既有知識。更早的會被壓縮或捲出視窗，所以可以再送、
-# 也可以被召回（2026-10-06 code review）。
-RECENT_SESSION_TURNS = 10
+# 一段對話裡送過的建議與這段對話自己的軌跡，整段都不再當成新知識：Claude Code
+# 在壓縮之前保留整段對話。曾改成只看最近 10 輪，第二輪審查指出那會在內容還在
+# 畫面上時就重送——正是 10/5 實際發生的兩件事。代價：壓縮或明確要求複習之後，
+# hook 不會再主動送同一條。
+SESSION_DELIVERY_SCAN = 200
 
 
 def source_memory_ids(retrieval: dict) -> list:
     """Returned records plus suggestions picked from beyond the response limit."""
     ids = [item.get("id") for item in retrieval.get("records", [])]
     extra = [item.get("id") for item in ((retrieval.get("delivery") or {}).get("records") or [])]
-    return ids + [i for i in extra if i not in ids]
+    return ids + [i for i in extra if i and i not in ids]
 
 
 class Store:
@@ -1439,7 +1440,7 @@ class Store:
             delivered = set()
             for (earlier,) in db.execute(
                     "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT ?",
-                    (session_id, RECENT_SESSION_TURNS)):
+                    (session_id, SESSION_DELIVERY_SCAN)):
                 try:
                     # (key, 內容指紋)：來源更新後可以再送。舊紀錄沒有指紋就只用
                     # key，維持原本「送過就不送」的行為。
@@ -1560,11 +1561,9 @@ class Store:
                 # 排除目前 session 要在 500 筆視窗與結果數量之前：之後才濾的話，
                 # 自己最近的十輪就能占滿名額，別的 session 的相關回答永遠進不來
                 # （2026-10-06 Codex 審查重現）。
-                # 只排除最近幾輪（它們還在回答者的上下文裡）；同一段長對話更早
-                # 的決定仍可召回。
-                f"{'AND turns.rowid NOT IN (SELECT rowid FROM turns WHERE session_id=? ORDER BY completed_at DESC, rowid DESC LIMIT ?) ' if exclude_session else ''}"
+                f"{'AND turns.session_id != ? ' if exclude_session else ''}"
                 "ORDER BY turns.completed_at DESC LIMIT 500",
-                (namespace, *marker_params, *([exclude_session, RECENT_SESSION_TURNS] if exclude_session else [])),
+                (namespace, *marker_params, *([exclude_session] if exclude_session else [])),
             ).fetchall()
         # 命中詞數不是相關度。
         #
@@ -1768,13 +1767,13 @@ class Store:
         # the eleventh relevant one must still be able to take a slot.
         delivery_started = time.monotonic()
         delivery = xkb_delivery.select(records, judge_note, recent, query=query, delivered=delivered)
-        delivered_keys = {identity_key(item) for item in delivery["records"]}
+        delivered_keys = {item.get("evidence_key") for item in delivery["records"]}
         delivery_done = time.monotonic()
         try:
             # Delivery can reach past the response limit; what it injects was
             # returned too, or demotion and reports undercount exactly that.
             returned = records[:limit] + [item for item in records[limit:]
-                                          if identity_key(item) in delivered_keys]
+                                          if item.get("evidence_key") in delivered_keys]
             self.record_recall_usage(namespace, candidates, returned, judge_note)
         except Exception as err:
             xkb_failures.note("recall usage", err)

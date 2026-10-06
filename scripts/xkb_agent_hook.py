@@ -147,7 +147,7 @@ def render(records: list[dict]) -> str:
         if body:
             entry.append(f"  {body}")
         if source:
-            entry.append(f"  來源：{source[:300]}")
+            entry.append(f"  來源：{source if len(source) <= 300 else source[:300] + '…（網址過長已截斷）'}")
         # The service selected a complete evidence paragraph. Cutting at 600
         # characters here could silently remove its condition or negation.
         if len("\n".join(lines + entry + [footer])) <= MAX_CONTEXT_CHARS:
@@ -346,9 +346,12 @@ def unattended() -> bool:
     ENTRYPOINT=cli；`claude -p` 是 0 與 sdk-cli。這些輪次不需要知識庫，卻每次
     都走完整套召回、付一次判斷模型，還把提示詞寫進對話紀錄。
     """
-    # 只認明確的「無人值守」。用 ENTRYPOINT 推測會把建在 Agent SDK 上的互動
-    # 前端（sdk-ts、sdk-py）也當成排程，安靜地丟掉它們所有的召回與紀錄。
-    return os.getenv("CLAUDE_CODE_SESSION_ATTENDED", "").strip() == "0"
+    # 有明確旗標就照旗標。沒有時只把 sdk-cli（`claude -p`）當排程：建在
+    # Agent SDK 上的互動前端回報 sdk-ts／sdk-py，不能被安靜地丟掉。
+    attended = os.getenv("CLAUDE_CODE_SESSION_ATTENDED")
+    if attended is not None:
+        return attended.strip() == "0"
+    return os.getenv("CLAUDE_CODE_ENTRYPOINT", "") == "sdk-cli"
 
 
 def main() -> int:

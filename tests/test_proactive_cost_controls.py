@@ -131,9 +131,10 @@ class ScheduledAgentsSkipRecall(unittest.TestCase):
         self.assertFalse(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "0", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
         self.assertTrue(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "1", "CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
-    def test_sdk_front_ends_without_an_attendance_flag_still_recall(self):
+    def test_without_an_attendance_flag_only_print_mode_is_skipped(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+            self.assertFalse(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
             self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-ts"}))
             self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
@@ -251,23 +252,49 @@ class CodeReviewFindings20261006(unittest.TestCase):
         again = delivery.select([card("chunk B of the same card")], {"status": "judged"}, [], query="q", delivered=given)
         self.assertEqual(again["records"], [])
 
-    def test_only_recent_turns_block_resending(self):
+    def test_a_suggestion_stays_blocked_for_the_whole_session(self):
+        # 第二輪審查：只看最近 10 輪會在內容還在畫面上時重送（10/5 的實際事件）。
         session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
         old = {"records": [], "delivery": {"records": [{"evidence_key": "ev1:old"}]}}
         self._turn(session, "t00", "q", "a", "2026-10-06T00:00:00", old)
-        for i in range(1, service.RECENT_SESSION_TURNS + 1):
+        for i in range(1, 16):
             self._turn(session, f"t{i:02d}", "q", "a", f"2026-10-06T00:{i:02d}:00")
         with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
-            self.store.start_turn({"session_id": session, "turn_id": "now", "query": "remind me"})
-        self.assertNotIn("ev1:old", run.call_args.kwargs["delivered"])
+            self.store.start_turn({"session_id": session, "turn_id": "now", "query": "next"})
+        self.assertIn("ev1:old", run.call_args.kwargs["delivered"])
 
-    def test_earlier_decisions_in_a_long_session_stay_recallable(self):
+    def test_own_traces_stay_excluded_for_the_whole_session(self):
         mine = self.store.open_session({"source": "test", "session_key": "mine"})["session_id"]
-        self._turn(mine, "early", "coefficient version", "Agreed: record the coefficient version.", "2026-10-06T00:00:00")
-        for i in range(service.RECENT_SESSION_TURNS):
+        self._turn(mine, "early", "coefficient version", "my own early reply", "2026-10-06T00:00:00")
+        for i in range(15):
             self._turn(mine, f"r{i}", "coefficient version", f"recent reply {i}", f"2026-10-06T01:{i:02d}:00")
-        answers = [m["answer"] for m in self.store.recall("coefficient version", 20, exclude_session=mine)["memories"]]
-        self.assertEqual(answers, ["Agreed: record the coefficient version."])
+        self.assertEqual(self.store.recall("coefficient version", 20, exclude_session=mine)["memories"], [])
+
+    def test_a_format_change_at_deploy_does_not_resend(self):
+        card = {**record("card-x", 0.9, "chunk"), "record_type": "knowledge_chunk"}
+        stored_by_previous_version = frozenset({(delivery.identity_key(card), "0123456789abcdef")})
+        again = delivery.select([card], {"status": "judged"}, [], query="q", delivered=stored_by_previous_version)
+        self.assertEqual(again["records"], [])
+
+    def test_report_still_raises_real_database_errors(self):
+        import sqlite3
+        import xkb_delivery_report as report
+        path = Path(self.tmp.name) / "broken.sqlite"
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE turns(retrieval_json TEXT, started_at TEXT, status TEXT)")
+        db.execute("CREATE TABLE delivery_outcomes(evidence_key TEXT, recorded_at TEXT)")  # no overlap column
+        db.commit(); db.close()
+        with self.assertRaises(sqlite3.OperationalError):
+            report.report(path, 7)
+
+    def test_source_ids_never_include_missing_ids(self):
+        packet = {"records": [{"id": "a"}], "delivery": {"records": [{"trace_id": "trace:x"}, {"id": "b"}]}}
+        self.assertEqual(service.source_memory_ids(packet), ["a", "b"])
+
+    def test_a_cut_source_reference_is_marked(self):
+        import xkb_agent_hook as hook
+        rendered = hook.render([{"title": "t", "summary": "body", "source_url": "https://example.test/" + "p" * 400}])
+        self.assertIn("…（網址過長已截斷）", rendered)
 
     def test_a_delivered_record_beyond_the_limit_counts_as_returned(self):
         hits = [{**record(f"old{i}", 0.9, f"given step {i}"), "record_type": "knowledge_card"} for i in range(10)]                + [{**record("fresh", 0.8, "new step"), "record_type": "knowledge_card"}]

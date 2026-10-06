@@ -26,8 +26,12 @@ def report(db_path: Path, days: int) -> dict:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         rows = db.execute("SELECT evidence_key, overlap FROM delivery_outcomes WHERE recorded_at>=?", (since,)).fetchall()
-    except sqlite3.OperationalError:
-        rows = []  # 服務還沒用新版重啟過，表還沒建：沒有紀錄，不是錯誤
+    except sqlite3.OperationalError as err:
+        # 只有「表還沒建」（服務還沒用新版重啟過）代表沒有紀錄；鎖住或
+        # 損壞要讓人看到，不能顯示成 0 條。
+        if "no such table" not in str(err):
+            raise
+        rows = []
     turns = db.execute("SELECT retrieval_json FROM turns WHERE started_at>=? AND status='succeeded'", (since,)).fetchall()
     suggested = sum(1 for (r,) in turns if ((json.loads(r or "{}").get("delivery") or {}).get("records")))
     buckets = {"<0.2": 0, "0.2-0.4": 0, "0.4-0.6": 0, ">=0.6": 0}

@@ -134,6 +134,14 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
     erase everything. The packet is marked degraded so the gap stays visible.
     No adopted/rejected preference is inferred from presentation or silence.
     """
+    # key -> versions given. None means "some version, unknown which": a card,
+    # a turn recorded before fingerprints, or a pair whose evidence is now
+    # unversioned. An unknown version on either side blocks, so a format
+    # change at deploy cannot resend what this session already saw.
+    given: dict[str, set] = {}
+    for entry in delivered:
+        key_, version = entry if isinstance(entry, tuple) else (entry, None)
+        given.setdefault(key_, set()).add(version)
     status = judge.get("status")
     active = status in {"judged", "partial"}
     previous = [claim_text(m["content"]) for m in conversation if m["role"] == "assistant"]
@@ -153,7 +161,7 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
             reason = "weak_relevance"
         elif record.get("excerpt_truncated"):
             reason = "incomplete_source_excerpt"
-        elif key and (key in delivered or (key, fingerprint) in delivered):
+        elif key in given and (fingerprint is None or None in given[key] or fingerprint in given[key]):
             reason = "delivered_earlier_in_session"
         elif in_reply:
             reason = "already_in_conversation"
