@@ -25,6 +25,16 @@ DELIVERY_FLOOR = 0.5
 MAX_SUGGESTIONS = 3
 EXCERPT_CHARS = 900
 
+# 歷史紀錄（每日筆記、其他對話）說的是「當時發生了什麼」，不是可重複使用的
+# 知識，而且常常已經過時。2026-10-06 開發 XKB 時送出的 33 條有 27 條是這類：
+# 半年前 Telegram 時期討論 XKB 的摘要，跟話題相關，卻在推薦已刪掉的腳本。
+# 知識（卡片、wiki）先挑；歷史每輪最多一條，而且要明顯相關才送。用 10/5~10/6
+# 的真實紀錄模擬：XKB 開發 43 條降到 17 條（知識 13），影片工作的 wiki 反而
+# 多了 6 條，因為原本被對話紀錄占掉的名額空出來了。
+HISTORY_TYPES = {"memory_note", "conversation_trace"}
+HISTORY_FLOOR = 0.75
+MAX_HISTORY = 1
+
 
 def diagnostic(packet: dict) -> str:
     """Do not confuse unavailable judgement/retrieval with a quiet decision."""
@@ -83,9 +93,14 @@ def claim_text(value: str) -> str:
 _SENTENCE_END = re.compile(r"[。！？!?]|\.(?:\s|$)|\n")
 
 
+# 「Xkb Case 6769746875625f...」「Local Readme 064efe10」這類由前綴加雜湊組成的
+# 標題，跟純數字一樣說不出內容。
+_ID_TITLE = re.compile(r"[A-Za-z ]{0,16}(?=[0-9A-Fa-f_-]*\d)[0-9A-Fa-f_-]{8,}")
+
+
 def display_title(record: dict) -> str:
     title, body, _ = fields(record)
-    if any(c.isalpha() for c in title):
+    if any(c.isalpha() for c in title) and not _ID_TITLE.fullmatch(title.strip()):
         return title[:120]
     text = re.sub(r"^[#>\-\*\s]+", "", body.strip())
     match = _SENTENCE_END.search(text)
@@ -145,8 +160,8 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
     status = judge.get("status")
     active = status in {"judged", "partial"}
     previous = [claim_text(m["content"]) for m in conversation if m["role"] == "assistant"]
-    selected, withheld, presented, seen = [], [], [], set()
-    for record in records:
+    withheld, presented, eligible = [], [], []
+    for index, record in enumerate(records):
         key = identity_key(record)
         body = fields(record)[1]
         claim = claim_text(body)
@@ -165,20 +180,39 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
             reason = "delivered_earlier_in_session"
         elif in_reply:
             reason = "already_in_conversation"
-        elif claim and claim in seen:
-            reason = "duplicate_claim"
-        elif len(selected) >= MAX_SUGGESTIONS:
-            reason = "limit"
+        elif record.get("record_type") in HISTORY_TYPES and score < HISTORY_FLOOR:
+            reason = "history_below_floor"
         else:
             reason = ""
         if reason:
-            withheld.append({"evidence_key": key, "reason": reason})
+            withheld.append((index, {"evidence_key": key, "reason": reason}))
             continue
-        seen.add(claim)
-        shown = {**record, "title": display_title(record), "summary": excerpt(body)}
-        if fingerprint:
-            shown["content_fingerprint"] = fingerprint
-        selected.append(shown)
+        eligible.append((index, record, key, body, claim, fingerprint))
+    # Knowledge first, then at most MAX_HISTORY history items for leftover slots.
+    selected, seen, history = [], set(), 0
+    for want_history in (False, True):
+        for index, record, key, body, claim, fingerprint in eligible:
+            is_history = record.get("record_type") in HISTORY_TYPES
+            if is_history != want_history:
+                continue
+            if claim and claim in seen:
+                reason = "duplicate_claim"
+            elif len(selected) >= MAX_SUGGESTIONS:
+                reason = "limit"
+            elif is_history and history >= MAX_HISTORY:
+                reason = "history_limit"
+            else:
+                reason = ""
+            if reason:
+                withheld.append((index, {"evidence_key": key, "reason": reason}))
+                continue
+            seen.add(claim)
+            history += int(is_history)
+            shown = {**record, "title": display_title(record), "summary": excerpt(body)}
+            if fingerprint:
+                shown["content_fingerprint"] = fingerprint
+            selected.append(shown)
+    withheld = [item for _, item in sorted(withheld, key=lambda pair: pair[0])]
     return {"mode": "suggest" if selected else "background" if records else "none",
             "policy": "jev-direct", "records": selected, "context": render_context(selected),
             "floor": DELIVERY_FLOOR, "limit": MAX_SUGGESTIONS, "withheld": withheld,

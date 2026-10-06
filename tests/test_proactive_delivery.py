@@ -83,6 +83,33 @@ class ProactiveDelivery(unittest.TestCase):
         named = {**record('x', .9, 'Body.'), 'title': 'Seedance 2.0 workflow'}
         self.assertEqual(self.select([named], {'status': 'judged'}, [])['records'][0]['title'], 'Seedance 2.0 workflow')
 
+    def history(self, key, judge, kind='memory_note'):
+        return {**record(key, judge, f'history {key}'), 'record_type': kind}
+
+    def card(self, key, judge):
+        return {**record(key, judge, f'card {key}'), 'record_type': 'knowledge_card'}
+
+    def test_reusable_knowledge_comes_before_a_more_relevant_history_note(self):
+        records = [self.history('old-sync', .9), self.card('a', .6), self.card('b', .55), self.card('c', .52)]
+        result = self.select(records, {'status': 'judged'}, [])
+        self.assertEqual([r['id'] for r in result['records']], ['a', 'b', 'c'])
+        self.assertEqual(result['withheld'], [{'evidence_key': delivery.identity_key(records[0]), 'reason': 'limit'}])
+
+    def test_history_needs_strong_relevance_and_gets_at_most_one_slot(self):
+        records = [self.history('note', .9), self.history('trace', .85, 'conversation_trace'),
+                   self.history('weak-note', .7), self.card('a', .6)]
+        result = self.select(records, {'status': 'judged'}, [])
+        self.assertEqual([r['id'] for r in result['records']], ['a', 'note'])
+        self.assertEqual([w['reason'] for w in result['withheld']], ['history_limit', 'history_below_floor'])
+
+    def test_prefixed_hash_titles_are_replaced_too(self):
+        for title in ('Xkb Case 6769746875625f737461722d', 'Local Readme 064efe10'):
+            card = {**record('x', .9, 'One main action per shot. More.'), 'title': title}
+            self.assertEqual(self.select([card], {'status': 'judged'}, [])['records'][0]['title'], 'One main action per shot')
+        for title in ('Seedance 2.0 workflow', 'Release v1.2 notes'):
+            card = {**record('x', .9, 'Body.'), 'title': title}
+            self.assertEqual(self.select([card], {'status': 'judged'}, [])['records'][0]['title'], title)
+
     def test_long_bodies_keep_whole_paragraphs_and_are_labelled(self):
         body = 'First complete paragraph.\n\n' + 'later detail. ' * 200
         shown = delivery.excerpt(body)

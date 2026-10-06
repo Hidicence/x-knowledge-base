@@ -398,9 +398,10 @@ the Claude prompt hook automates invocation.
 
 The common recall core distinguishes `records` (inspectable candidates) from
 `delivery.records` (at most three proactive suggestions). Delivery uses only
-Jev's per-turn verdict and local rules: verdict floor, no evidence already
-suggested earlier in the session, none of the session's own traces, no exact
-duplicates. It calls no generation model; deciding applicability is left to
+Jev's per-turn verdict and local rules: verdict floor, cards and wiki before
+history (daily notes and other sessions' traces get at most one slot, at a
+higher floor), no evidence already suggested earlier in the session, none of
+the session's own traces, no exact duplicates. It calls no generation model; deciding applicability is left to
 the answering agent, which sees the whole conversation. Consult
 `delivery.status` and withholding reasons; missing judgement is not a negative
 verdict. `scripts/xkb_delivery_report.py` reports how much of each suggestion

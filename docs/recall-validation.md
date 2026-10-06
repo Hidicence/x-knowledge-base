@@ -17,6 +17,14 @@ merged candidates once against the utterance with its dialogue; `xkb_delivery`
 then applies local rules and calls no generation model:
 
 - verdict at least 0.5 (`DELIVERY_FLOOR`), at most three items;
+- reusable knowledge (cards, wiki) first. History, meaning daily notes and other
+  sessions' conversation traces, records what happened and is often stale: it
+  needs a verdict of at least 0.75 (`HISTORY_FLOOR`) and takes at most one slot
+  left over by knowledge (`MAX_HISTORY`). On 2026-10-06, 27 of 33 suggestions
+  while working on XKB itself were such history, months-old summaries that
+  still recommended deleted scripts. Replaying the stored 10/5 and 10/6 turns
+  under this rule cut XKB-development suggestions from 43 to 17 (13 knowledge)
+  and gave video work 6 more wiki items, because traces no longer held slots;
 - nothing already suggested in this session since Claude Code last compacted
   it. The hook reads the last `compact_boundary` timestamp from the transcript
   (backward, matching the serialized field so a message that merely mentions
@@ -36,8 +44,9 @@ then applies local rules and calls no generation model:
   remain recallable;
 - no exact duplicate text and nothing already quoted in a recent assistant reply;
 - display-only truncated snippets are never injected;
-- a title with no letters (bookmark cards titled by tweet ID) is replaced by the
-  first sentence of the body; long bodies keep whole paragraphs and are labelled
+- a title with no letters (bookmark cards titled by tweet ID), or a short prefix
+  plus a hash such as `Xkb Case 6769...`, is replaced by the first sentence of
+  the body; long bodies keep whole paragraphs and are labelled
   as excerpts.
 
 Delivery chooses from every candidate that passed ACL and per-layer quotas, not
