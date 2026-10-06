@@ -17,13 +17,17 @@ merged candidates once against the utterance with its dialogue; `xkb_delivery`
 then applies local rules and calls no generation model:
 
 - verdict at least 0.5 (`DELIVERY_FLOOR`), at most three items;
-- nothing already suggested earlier in the same session with the same content:
-  each suggestion stores a fingerprint of its normalized source body, so an
-  edited source can be suggested again (turns recorded before fingerprints
-  existed keep blocking that source by evidence key);
-- none of the session's own conversation traces, excluded in the conversation
-  query itself so that recent own turns cannot fill its 500-row window or
-  result limit;
+- nothing already suggested in the session's last 10 turns
+  (`RECENT_SESSION_TURNS`), which are still in the answering agent's context;
+  older suggestions may return after compaction or an explicit recap request.
+  Wiki sections, notes and traces also store a fingerprint of their normalized
+  body, so an edited source can be suggested again. Cards do not: each
+  retrieval returns whichever chunk matched, so their text is not a version,
+  and a card is blocked by evidence key alone;
+- none of the session's own conversation traces from those same recent turns,
+  excluded in the conversation query itself so that they cannot fill its
+  500-row window or result limit; earlier decisions in a long session remain
+  recallable;
 - no exact duplicate text and nothing already quoted in a recent assistant reply;
 - display-only truncated snippets are never injected;
 - a title with no letters (bookmark cards titled by tweet ID) is replaced by the
@@ -40,10 +44,12 @@ tells the agent to ignore unrelated items without mentioning them. All
 candidates remain inspectable in `records`. Presentation does not imply
 acceptance, and silence does not imply rejection.
 
-The hook skips unattended sessions entirely: interactive Claude Code sets
-`CLAUDE_CODE_SESSION_ATTENDED=1` (`CLAUDE_CODE_ENTRYPOINT=cli`), while
-`claude -p` scheduled agents set `0` (`sdk-cli`). Those turns neither recall
-nor write a conversation trace.
+The hook skips only sessions explicitly marked unattended: interactive Claude
+Code sets `CLAUDE_CODE_SESSION_ATTENDED=1`, while `claude -p` scheduled agents
+set `0`. Those turns neither recall nor write a conversation trace. The entry
+point is not used as a guess, because interactive front ends built on the
+Agent SDK also report `sdk-*` entry points. Suggestions picked from beyond the
+response limit count as returned in usage accounting and `source_memory_ids`.
 
 When a turn completes, `delivery_outcomes` records, for each suggestion, the
 share of its excerpt terms that reappear in the answer.

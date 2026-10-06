@@ -467,6 +467,7 @@ they do not carry pipelines.
 
 | Tool | When you would reach for it |
 | --- | --- |
+| `xkb_delivery_report.py` | See how much of each proactive suggestion reappeared in the answer, and which repeatedly suggested sources were never reused. A lexical signal, not proof of use. |
 
 
 Everything else in `scripts/` is either on a schedule or called by something

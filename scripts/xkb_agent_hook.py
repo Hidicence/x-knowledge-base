@@ -40,7 +40,9 @@ DEFAULT_URL = "http://127.0.0.1:18972"
 TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_TIMEOUT", "6"))
 RECALL_TIMEOUT_SECONDS = float(os.getenv("XKB_HOOK_RECALL_TIMEOUT", os.getenv("XKB_HOOK_TIMEOUT", "40")))
 STATE_DIR = Path(os.getenv("XKB_HOOK_STATE", str(Path.home() / ".xkb-runtime" / "hook-state")))
-MAX_CONTEXT_CHARS = 4000
+# 服務已把送出的每一條記成「這段對話給過了」；這裡丟掉任何一條，它就整段
+# 對話都不會再出現。三條各 900 字的節錄加上標題與來源要放得下。
+MAX_CONTEXT_CHARS = 6000
 MAX_ANSWER_CHARS = 4000
 
 
@@ -145,7 +147,7 @@ def render(records: list[dict]) -> str:
         if body:
             entry.append(f"  {body}")
         if source:
-            entry.append(f"  來源：{source}")
+            entry.append(f"  來源：{source[:300]}")
         # The service selected a complete evidence paragraph. Cutting at 600
         # characters here could silently remove its condition or negation.
         if len("\n".join(lines + entry + [footer])) <= MAX_CONTEXT_CHARS:
@@ -344,10 +346,9 @@ def unattended() -> bool:
     ENTRYPOINT=cli；`claude -p` 是 0 與 sdk-cli。這些輪次不需要知識庫，卻每次
     都走完整套召回、付一次判斷模型，還把提示詞寫進對話紀錄。
     """
-    attended = os.getenv("CLAUDE_CODE_SESSION_ATTENDED")
-    if attended is not None:
-        return attended.strip() == "0"
-    return os.getenv("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
+    # 只認明確的「無人值守」。用 ENTRYPOINT 推測會把建在 Agent SDK 上的互動
+    # 前端（sdk-ts、sdk-py）也當成排程，安靜地丟掉它們所有的召回與紀錄。
+    return os.getenv("CLAUDE_CODE_SESSION_ATTENDED", "").strip() == "0"
 
 
 def main() -> int:

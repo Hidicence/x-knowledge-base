@@ -124,7 +124,7 @@ class RenderTests(unittest.TestCase):
         rendered = hook.render([{'title': 'Procedure', 'summary': body, 'source_url': 'source'}])
         self.assertIn(body, rendered)
         self.assertTrue(rendered.endswith('</xkb_recalled_knowledge>'))
-        records = [{'title': 'Too long', 'summary': 'x' * 5000},
+        records = [{'title': 'Too long', 'summary': 'x' * (hook.MAX_CONTEXT_CHARS + 1)},
                    {'title': 'Useful', 'summary': body}]
         rendered = hook.render(records)
         self.assertIn(body, rendered)

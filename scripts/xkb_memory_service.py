@@ -1061,6 +1061,19 @@ def redact(value: Any) -> Any:
     return value
 
 
+# 回答者的上下文裡還留著的最近幾輪：這段範圍內已送過的建議不再送，同一段
+# 對話的軌跡也不當成既有知識。更早的會被壓縮或捲出視窗，所以可以再送、
+# 也可以被召回（2026-10-06 code review）。
+RECENT_SESSION_TURNS = 10
+
+
+def source_memory_ids(retrieval: dict) -> list:
+    """Returned records plus suggestions picked from beyond the response limit."""
+    ids = [item.get("id") for item in retrieval.get("records", [])]
+    extra = [item.get("id") for item in ((retrieval.get("delivery") or {}).get("records") or [])]
+    return ids + [i for i in extra if i not in ids]
+
+
 class Store:
     def __init__(self, path: Path):
         self.path = path
@@ -1412,7 +1425,7 @@ class Store:
                 retrieval = json.loads(existing["retrieval_json"] or "{}")
                 if "conversation" in body and retrieval.get("conversation_fingerprint") != conversation_fingerprint(conversation_messages(body["conversation"])):
                     raise ValueError("turn_id conflicts with existing conversation context")
-                return {"schema": SCHEMA, "turn_id": turn_id, "session_id": existing["session_id"], "episode_id": existing["episode_id"], "resumed": True, "source_memory_ids": [item.get("id") for item in retrieval.get("records", [])], "retrieval": retrieval}
+                return {"schema": SCHEMA, "turn_id": turn_id, "session_id": existing["session_id"], "episode_id": existing["episode_id"], "resumed": True, "source_memory_ids": source_memory_ids(retrieval), "retrieval": retrieval}
             retrieval_limit = bounded_int(body.get("retrieval_limit"), name="retrieval_limit", default=10, minimum=1, maximum=50)
             if "conversation" in body:
                 recent = conversation_messages(body["conversation"])
@@ -1425,8 +1438,8 @@ class Store:
                     for role, column in (("user", "query"), ("assistant", "answer")) if row[column]])
             delivered = set()
             for (earlier,) in db.execute(
-                    "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT 100",
-                    (session_id,)):
+                    "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT ?",
+                    (session_id, RECENT_SESSION_TURNS)):
                 try:
                     # (key, 內容指紋)：來源更新後可以再送。舊紀錄沒有指紋就只用
                     # key，維持原本「送過就不送」的行為。
@@ -1442,7 +1455,7 @@ class Store:
                 "INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
                 (turn_id, session_id, query, "started", json.dumps(retrieval, ensure_ascii=False), now()),
             )
-            return {"schema": SCHEMA, "turn_id": turn_id, "session_id": session_id, "episode_id": f"episode:{turn_id}", "resumed": False, "source_memory_ids": [item.get("id") for item in retrieval.get("records", [])], "retrieval": retrieval}
+            return {"schema": SCHEMA, "turn_id": turn_id, "session_id": session_id, "episode_id": f"episode:{turn_id}", "resumed": False, "source_memory_ids": source_memory_ids(retrieval), "retrieval": retrieval}
 
     def complete_turn(self, turn_id: str, body: dict[str, Any]) -> dict[str, Any]:
         query = text(body.get("query"))
@@ -1486,7 +1499,7 @@ class Store:
             for item in ((retrieval.get("delivery") or {}).get("records") or []):
                 if not isinstance(item, dict) or not item.get("evidence_key"):
                     continue
-                terms = set(query_terms(str(item.get("summary") or "")))
+                terms = set(query_terms(str(item.get("summary") or "").removesuffix("\n（節錄）")))
                 if terms:
                     db.execute("INSERT OR IGNORE INTO delivery_outcomes VALUES(?,?,?,?,?)",
                                (turn_id, retrieval.get("namespace") or "private", item["evidence_key"],
@@ -1547,9 +1560,11 @@ class Store:
                 # 排除目前 session 要在 500 筆視窗與結果數量之前：之後才濾的話，
                 # 自己最近的十輪就能占滿名額，別的 session 的相關回答永遠進不來
                 # （2026-10-06 Codex 審查重現）。
-                f"{'AND turns.session_id != ? ' if exclude_session else ''}"
+                # 只排除最近幾輪（它們還在回答者的上下文裡）；同一段長對話更早
+                # 的決定仍可召回。
+                f"{'AND turns.rowid NOT IN (SELECT rowid FROM turns WHERE session_id=? ORDER BY completed_at DESC, rowid DESC LIMIT ?) ' if exclude_session else ''}"
                 "ORDER BY turns.completed_at DESC LIMIT 500",
-                (namespace, *marker_params, *([exclude_session] if exclude_session else [])),
+                (namespace, *marker_params, *([exclude_session, RECENT_SESSION_TURNS] if exclude_session else [])),
             ).fetchall()
         # 命中詞數不是相關度。
         #
@@ -1748,8 +1763,19 @@ class Store:
                 selected.append(item)
                 counts[layer] += 1
         records = selected
+        # Delivery chooses from every ACL- and quota-checked candidate, not the
+        # response limit: when the top ten were already suggested this session,
+        # the eleventh relevant one must still be able to take a slot.
+        delivery_started = time.monotonic()
+        delivery = xkb_delivery.select(records, judge_note, recent, query=query, delivered=delivered)
+        delivered_keys = {identity_key(item) for item in delivery["records"]}
+        delivery_done = time.monotonic()
         try:
-            self.record_recall_usage(namespace, candidates, records[:limit], judge_note)
+            # Delivery can reach past the response limit; what it injects was
+            # returned too, or demotion and reports undercount exactly that.
+            returned = records[:limit] + [item for item in records[limit:]
+                                          if identity_key(item) in delivered_keys]
+            self.record_recall_usage(namespace, candidates, returned, judge_note)
         except Exception as err:
             xkb_failures.note("recall usage", err)
         # Conversation recall filters by namespace in SQL, so nothing is
@@ -1801,18 +1827,15 @@ class Store:
                                    for text, branch in zip(queries, branches)],
             "warnings": warnings,
         }
-        delivery_started = time.monotonic()
-        # Delivery chooses from every ACL- and quota-checked candidate, not the
-        # response limit: when the top ten were already suggested this session,
-        # the eleventh relevant one must still be able to take a slot.
-        packet["delivery"] = xkb_delivery.select(records, judge_note, recent, query=query,
-                                                 delivered=delivered)
+        for item in delivery["records"]:
+            item.pop("index_unreadable", None)
+        packet["delivery"] = delivery
         finished = time.monotonic()
         packet["timing_ms"] = {"retrieval": round((retrieved-started)*1000),
                                "conversation_merge": round((merged-retrieved)*1000),
                                "relevance": round((judged-merged)*1000),
-                               "fusion_and_usage": round((delivery_started-judged)*1000),
-                               "delivery": round((finished-delivery_started)*1000),
+                               "fusion_and_usage": round(((delivery_started-judged)+(finished-delivery_done))*1000),
+                               "delivery": round((delivery_done-delivery_started)*1000),
                                "total": round((finished-started)*1000)}
         packet["quality"] = recall_quality(packet)
         return packet

@@ -325,7 +325,9 @@ class RecallTransports(unittest.TestCase):
         for key, row in rows.items():
             self.assertEqual(row["judged_count"], 1)
             self.assertEqual(row["relevant_count"], 1)
-            self.assertEqual(row["returned_count"], int(key == packet["records"][0]["id"]))
+            # Returned = in the response, or injected from beyond its limit.
+            shown = {r["id"] for r in packet["records"]} | {r["id"] for r in packet["delivery"]["records"]}
+            self.assertEqual(row["returned_count"], int(key in shown))
         self.assertEqual(self.store.demoted_ids(after=1), set())
 
     def test_usage_is_namespace_scoped_and_does_not_reinterpret_legacy(self):

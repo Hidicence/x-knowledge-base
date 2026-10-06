@@ -489,11 +489,17 @@ def _score_all(vectors: dict[str, list[float]], query_vector: list[float]) -> li
         with _INDEX_LOCK:
             if _MATRIX is None or _MATRIX[0] is not vectors:
                 keys = list(vectors)
-                matrix = np.asarray([vectors[k] for k in keys], dtype=np.float32)
-                if matrix.ndim != 2:
-                    raise ValueError("ragged vectors")
-                _MATRIX = (vectors, keys, matrix, np.linalg.norm(matrix, axis=1))
+                try:
+                    matrix = np.asarray([vectors[k] for k in keys], dtype=np.float32)
+                    if matrix.ndim != 2:
+                        raise ValueError("ragged vectors")
+                    _MATRIX = (vectors, keys, matrix, np.linalg.norm(matrix, axis=1))
+                except ValueError:
+                    # 記住失敗：否則每次查詢都在鎖裡重轉一次整份索引才退回。
+                    _MATRIX = (vectors, None, None, None)
             _, keys, matrix, norms = _MATRIX
+            if matrix is None:
+                raise ValueError("ragged vectors")
         query = np.asarray(query_vector, dtype=np.float32)
         if query.shape != (matrix.shape[1],):
             raise ValueError("query dimension mismatch")

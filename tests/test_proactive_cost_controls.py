@@ -4,6 +4,7 @@
 - 同一個 session 裡同一條建議被塞三次
 - 召回把同一段對話裡 Claude 自己的回覆當成既有知識送回來
 """
+import json
 import os
 import sys
 import tempfile
@@ -130,10 +131,10 @@ class ScheduledAgentsSkipRecall(unittest.TestCase):
         self.assertFalse(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "0", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
         self.assertTrue(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "1", "CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
-    def test_entrypoint_decides_when_attendance_is_unknown(self):
+    def test_sdk_front_ends_without_an_attendance_flag_still_recall(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
-            self.assertFalse(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
+            self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-ts"}))
             self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
 
@@ -202,14 +203,12 @@ class ReviewFindings20261006(unittest.TestCase):
         self.assertEqual(answers, ["Use ffprobe to verify duration and codec."])
 
     def test_updated_source_can_be_delivered_again_but_the_same_content_cannot(self):
-        old = record("guide", 0.9, "Use version 1")
-        sent = delivery.select([old], {"status": "judged"}, [], query="q")["records"][0]
-        given = frozenset({(sent["evidence_key"] if "evidence_key" in sent else delivery.identity_key(old),
-                            sent["content_fingerprint"])})
-        same = delivery.select([record("guide", 0.9, "Use  version 1")], {"status": "judged"}, [],
-                               query="q", delivered=given)
+        guide = lambda text: {**record("wiki/topics/guide.md", 0.9, text), "record_type": "wiki_topic", "section": "Guide"}
+        sent = delivery.select([guide("Use version 1")], {"status": "judged"}, [], query="q")["records"][0]
+        given = frozenset({(delivery.identity_key(sent), sent["content_fingerprint"])})
+        same = delivery.select([guide("Use  version 1")], {"status": "judged"}, [], query="q", delivered=given)
         self.assertEqual(same["records"], [])
-        updated = delivery.select([record("guide", 0.9, "Version 1 is obsolete; use version 2")],
+        updated = delivery.select([guide("Version 1 is obsolete; use version 2")],
                                   {"status": "judged"}, [], query="q", delivered=given)
         self.assertEqual([r["summary"] for r in updated["records"]], ["Version 1 is obsolete; use version 2"])
 
@@ -223,3 +222,100 @@ class ReviewFindings20261006(unittest.TestCase):
         with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
             self.store.start_turn({"session_id": session, "turn_id": "t9", "query": "next"})
         self.assertEqual(run.call_args.kwargs["delivered"], frozenset({("ev1:new", "abc"), "ev1:legacy"}))
+
+
+class CodeReviewFindings20261006(unittest.TestCase):
+    """/code-review high 1a80821..HEAD 的十項，各一個在修正前會失敗的測試。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = service.Store(Path(self.tmp.name) / "knowledge.sqlite")
+        env = mock.patch.dict(os.environ, {"XKB_JEV_DECIDE": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _turn(self, session, turn_id, query, answer, at, retrieval=None):
+        with self.store.connect() as db:
+            db.execute("INSERT INTO turns(turn_id,session_id,query,answer,status,trace_id,retrieval_json,started_at,completed_at) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (turn_id, session, query, answer, "succeeded", "trace:" + turn_id,
+                                                     json.dumps(retrieval or {}), at, at))
+
+    def test_another_chunk_of_the_same_card_is_not_resent(self):
+        card = lambda text: {**record("card-x", 0.9, text), "record_type": "knowledge_chunk"}
+        first = delivery.select([card("chunk A of the card")], {"status": "judged"}, [], query="q")["records"][0]
+        self.assertNotIn("content_fingerprint", first)
+        wiki = {**record("wiki/topics/g.md", 0.9, "Use version 1"), "record_type": "wiki_topic", "section": "Guide"}
+        self.assertIn("content_fingerprint", delivery.select([wiki], {"status": "judged"}, [], query="q")["records"][0])
+        given = frozenset({delivery.identity_key(card("x"))})
+        again = delivery.select([card("chunk B of the same card")], {"status": "judged"}, [], query="q", delivered=given)
+        self.assertEqual(again["records"], [])
+
+    def test_only_recent_turns_block_resending(self):
+        session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
+        old = {"records": [], "delivery": {"records": [{"evidence_key": "ev1:old"}]}}
+        self._turn(session, "t00", "q", "a", "2026-10-06T00:00:00", old)
+        for i in range(1, service.RECENT_SESSION_TURNS + 1):
+            self._turn(session, f"t{i:02d}", "q", "a", f"2026-10-06T00:{i:02d}:00")
+        with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
+            self.store.start_turn({"session_id": session, "turn_id": "now", "query": "remind me"})
+        self.assertNotIn("ev1:old", run.call_args.kwargs["delivered"])
+
+    def test_earlier_decisions_in_a_long_session_stay_recallable(self):
+        mine = self.store.open_session({"source": "test", "session_key": "mine"})["session_id"]
+        self._turn(mine, "early", "coefficient version", "Agreed: record the coefficient version.", "2026-10-06T00:00:00")
+        for i in range(service.RECENT_SESSION_TURNS):
+            self._turn(mine, f"r{i}", "coefficient version", f"recent reply {i}", f"2026-10-06T01:{i:02d}:00")
+        answers = [m["answer"] for m in self.store.recall("coefficient version", 20, exclude_session=mine)["memories"]]
+        self.assertEqual(answers, ["Agreed: record the coefficient version."])
+
+    def test_a_delivered_record_beyond_the_limit_counts_as_returned(self):
+        hits = [{**record(f"old{i}", 0.9, f"given step {i}"), "record_type": "knowledge_card"} for i in range(10)]                + [{**record("fresh", 0.8, "new step"), "record_type": "knowledge_card"}]
+        given = frozenset(delivery.identity_key(h) for h in hits[:10])
+        with mock.patch.object(self.store.catalog, "search", return_value={"records": [dict(h) for h in hits]}),              mock.patch.object(self.store, "recall", return_value={"memories": []}),              mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})):
+            packet = self.store.knowledge_recall("next", 10, delivered=given)
+        fresh = delivery.identity_key(hits[10])
+        with self.store.connect() as db:
+            row = db.execute("SELECT returned_count FROM recall_usage WHERE record_id=?", (fresh,)).fetchone()
+        self.assertEqual(row[0], 1)
+        self.assertIn("fresh", service.source_memory_ids(packet))
+
+    def test_a_ragged_index_is_not_rebuilt_on_every_query(self):
+        import numpy as np
+        ragged = {"a": [1.0, 0.0], "b": [1.0, 0.0, 0.0]}
+        cr._score_all(ragged, [1.0, 0.0])
+        with mock.patch.object(np, "asarray", wraps=np.asarray) as convert:
+            cr._score_all(ragged, [1.0, 0.0])
+        index_rebuilds = [c for c in convert.call_args_list
+                          if c.args and isinstance(c.args[0], list) and c.args[0] and isinstance(c.args[0][0], list)]
+        self.assertEqual(index_rebuilds, [])
+
+    def test_three_full_excerpts_with_long_sources_all_reach_the_agent(self):
+        import xkb_agent_hook as hook
+        items = [{"record_type": "knowledge_card", "title": f"title {i}", "summary": "x" * delivery.EXCERPT_CHARS,
+                  "source_url": "https://example.test/" + "p" * 500} for i in range(3)]
+        self.assertEqual(hook.render(items).count("title "), 3)
+
+    def test_report_tolerates_a_database_without_the_outcomes_table(self):
+        import sqlite3
+        import xkb_delivery_report as report
+        path = Path(self.tmp.name) / "old.sqlite"
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE turns(retrieval_json TEXT, started_at TEXT, status TEXT)")
+        db.commit(); db.close()
+        self.assertEqual(report.report(path, 7)["suggestions"], 0)
+
+    def test_the_excerpt_label_does_not_count_against_reuse(self):
+        session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
+        given = {"records": [], "delivery": {"records": [
+            {"evidence_key": "ev1:x", "summary": "單一鏡頭只安排一個核心動作\n（節錄）"}]}}
+        with mock.patch.object(self.store, "knowledge_recall", return_value=given):
+            self.store.start_turn({"session_id": session, "turn_id": "t", "query": "q"})
+        self.store.complete_turn("t", {"session_id": session, "query": "q", "answer": "單一鏡頭只安排一個核心動作"})
+        with self.store.connect() as db:
+            overlap = db.execute("SELECT overlap FROM delivery_outcomes").fetchone()[0]
+        self.assertEqual(overlap, 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

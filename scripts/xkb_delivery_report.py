@@ -11,20 +11,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import xkb_paths
 from xkb_evidence import identity_source
 
 
 def report(db_path: Path, days: int) -> dict:
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    rows = db.execute("SELECT evidence_key, overlap FROM delivery_outcomes WHERE recorded_at>=?", (since,)).fetchall()
+    try:
+        rows = db.execute("SELECT evidence_key, overlap FROM delivery_outcomes WHERE recorded_at>=?", (since,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = []  # 服務還沒用新版重啟過，表還沒建：沒有紀錄，不是錯誤
     turns = db.execute("SELECT retrieval_json FROM turns WHERE started_at>=? AND status='succeeded'", (since,)).fetchall()
     suggested = sum(1 for (r,) in turns if ((json.loads(r or "{}").get("delivery") or {}).get("records")))
     buckets = {"<0.2": 0, "0.2-0.4": 0, "0.4-0.6": 0, ">=0.6": 0}
@@ -43,7 +46,7 @@ def report(db_path: Path, days: int) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--db", default=os.getenv("XKB_SERVICE_DB", str(Path.home() / ".xkb-runtime" / "knowledge.sqlite")))
+    parser.add_argument("--db", default=str(xkb_paths.SERVICE_DB))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     result = report(Path(args.db), args.days)
