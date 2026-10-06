@@ -210,6 +210,13 @@ UserPromptSubmit → turns/start → 把召回的知識注入上下文
 Stop             → turns/complete → 對話成為 L1 證據
 ```
 
+`turns/start` 除了 `query`，hook 還會帶兩個選填欄位：
+
+- `conversation`：最近的對話（最多保留四則），讓「那個」「再一段」這類接續的話有前文可解。
+- `context_since`：Claude Code 上次壓縮對話的時間（從對話紀錄讀出）。在這之後已經主動給過的建議、以及這段對話自己的紀錄，回答者都還看得到，所以不會再送；更早的可以再送、也可以被召回。沒帶時視為整段對話都還看得到。
+
+注入的只有回傳結果裡的 `delivery`：最多三條判定相關的知識，不呼叫生成模型，由回答的 agent 自己判斷是否適用。`claude -p` 這類排程（Claude Code 標記為無人值守）不會觸發召回，也不寫入對話紀錄。
+
 安裝（目前支援 Claude Code）：
 
 ```bash

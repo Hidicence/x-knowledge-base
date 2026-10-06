@@ -67,7 +67,7 @@ python3 scripts/recall_router.py "agent memory" --json
 
 本地匯入會同時寫入卡片與搜尋索引，這裡不需要另外重建索引。匯入新增卡片時的結束碼是 `2`，沒有新增時是 `0`；這是「資料有變動」的訊號，不代表失敗。
 
-關鍵字召回不需要 embedding。需要語意搜尋時，再依照[向量設定指南](./docs/embedding-configuration.md)設定。Jev 相關性判斷是選用能力，供應商須另外支援 `/systemone`，只有 chat-completions 端點並不足夠。判斷服務不可用時會保留候選並回報狀態；也可設定 `XKB_JEV_DECIDE=0` 主動關閉。
+關鍵字召回不需要 embedding。需要語意搜尋時，再依照[向量設定指南](./docs/embedding-configuration.md)設定；安裝 NumPy 可以大幅加快 wiki 相似度搜尋，沒有安裝時結果相同，只是比較慢。Jev 相關性判斷是選用能力，供應商須另外支援 `/systemone`，只有 chat-completions 端點並不足夠。判斷服務不可用時會保留候選並回報狀態；也可設定 `XKB_JEV_DECIDE=0` 主動關閉。
 
 若要根據找回的證據生成回答：
 
@@ -118,7 +118,7 @@ XKB_NAMESPACE=private
 | --- | --- |
 | MCP 用戶端 | 透過 `xkb_recall` 按需召回。 |
 | HTTP 用戶端／OpenClaw 串接 | 召回，以及明確呼叫服務 API 的 session、turn 擷取。 |
-| Claude Code hook 安裝器 | 安裝後，在 `UserPromptSubmit` 召回、`Stop` 擷取對話。 |
+| Claude Code hook 安裝器 | 安裝後，在 `UserPromptSubmit` 召回、`Stop` 擷取對話。排程執行的 `claude -p`（Claude Code 會標記為無人值守）會跳過。 |
 
 `python3 scripts/xkb_install_agent_hook.py --install` 修改的是 **Claude Code 設定**，不會安裝 Codex／Orca hook。Hook 的服務連線需要另外設定，並不沿用 MCP 設定。
 
@@ -137,6 +137,7 @@ Doctor 會驗證 MCP 初始化、工具清單與一次真正的呼叫，區分 `
 3. **判斷相關性。** 設定完成後，Jev 會判斷每筆候選是否回答了問題。失敗或缺少判斷，不會被記成「不相關」。
 4. **合併與排序。** 證據身分包含 namespace，文件也區分段落。同文件的不同段落會保留，同一證據經不同路徑命中不會重複累計。
 5. **回傳可查驗的結果。** 證據、來源、搜尋模式、各來源狀態、judge 狀態與警告，透過 MCP、HTTP 與預設 CLI 一起回傳。
+6. **挑出要主動提起的。** 回傳結果中的 `delivery` 最多放三條判定相關的知識。這一步不呼叫生成模型：正在回答這一輪的 agent 看得到整段對話，由它判斷建議是否適用。在已擷取的對話裡，Claude Code 上次壓縮之後已經給過的建議，以及這段對話自己最近的紀錄，不會再提供；內容有更新的 wiki 段落或筆記則可以再給。
 
 反覆收到明確負面判斷的證據可以降權，但不刪除來源；一次正面判斷就能解除降權。「被回傳」「被判定相關」「被最終答案使用」是不同事件。
 

@@ -69,7 +69,7 @@ python3 scripts/recall_router.py "agent memory" --json
 
 Local ingestion writes both cards and the search index; a separate index rebuild is unnecessary here. Its exit code is `2` when new cards were added, `0` when none were added. That is a change signal, not a failure.
 
-Keyword recall works without embeddings. Enable semantic retrieval using the [embedding configuration guide](./docs/embedding-configuration.md). Jev relevance judging is optional and requires a provider that also serves `/systemone`; a chat-completions endpoint alone is insufficient. An unavailable judge is reported and retains candidates. Set `XKB_JEV_DECIDE=0` to disable it deliberately.
+Keyword recall works without embeddings. Enable semantic retrieval using the [embedding configuration guide](./docs/embedding-configuration.md); installing NumPy makes wiki similarity search much faster, with identical results when it is absent. Jev relevance judging is optional and requires a provider that also serves `/systemone`; a chat-completions endpoint alone is insufficient. An unavailable judge is reported and retains candidates. Set `XKB_JEV_DECIDE=0` to disable it deliberately.
 
 To generate an answer from the recalled evidence:
 
@@ -120,7 +120,7 @@ Keep keys outside the repository. Configure server-side tokens as described in t
 | --- | --- |
 | MCP clients | On-demand recall through `xkb_recall`. |
 | HTTP clients / OpenClaw integrations | Recall, plus explicit session and turn capture through the service API. |
-| Claude Code hook installer | `UserPromptSubmit` recall and `Stop` capture after installation. |
+| Claude Code hook installer | `UserPromptSubmit` recall and `Stop` capture after installation. Scheduled `claude -p` runs (marked unattended by Claude Code) are skipped. |
 
 `python3 scripts/xkb_install_agent_hook.py --install` targets **Claude Code settings**. It does not install a Codex/Orca hook. Configure its service connection separately; MCP settings are not hook settings.
 
@@ -139,6 +139,7 @@ Doctor verifies MCP initialization, tool discovery and a real call. `ready`, `de
 3. **Check relevance.** When configured, Jev judges whether each candidate answers the query. A failed or missing verdict is not counted as rejection.
 4. **Merge and rank.** Evidence identity includes namespace and, for documents, section. Different sections remain distinct; duplicate retrieval paths do not inflate usage counts.
 5. **Return an inspectable packet.** Records, source references, search mode, per-source status, judge status and warnings travel together through MCP, HTTP and the default CLIs.
+6. **Choose what to bring up unasked.** The packet's `delivery` holds at most three judged-relevant items. No generation model is called for this: the agent answering the turn already sees the whole conversation and decides whether a suggestion applies. Within a captured session, items already suggested since Claude Code last compacted it, and the session's own recent traces, are not offered again; an edited wiki section or note can be.
 
 Repeated explicit negative verdicts can lower an item's rank. Demotion never deletes the source; one positive verdict lifts it. Returned evidence, judged relevance and use in a final answer are different events.
 
