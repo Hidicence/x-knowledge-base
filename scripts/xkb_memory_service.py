@@ -1119,24 +1119,6 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_stage_status ON jobs(stage, status);
                 CREATE INDEX IF NOT EXISTS jobs_updated ON jobs(updated_at);
-                CREATE TABLE IF NOT EXISTS candidates (
-                  candidate_id TEXT PRIMARY KEY,
-                  candidate_key TEXT NOT NULL,
-                  candidate_value TEXT NOT NULL,
-                  source_trace_ids_json TEXT NOT NULL,
-                  episode_ids_json TEXT NOT NULL,
-                  confidence REAL NOT NULL DEFAULT 0.0,
-                  status TEXT NOT NULL DEFAULT 'pending',
-                  reject_reasons_json TEXT NOT NULL DEFAULT '[]',
-                  analysis_json TEXT NOT NULL DEFAULT '{}',
-                  expires_at TEXT,
-                  created_at TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS candidates_key
-                  ON candidates(candidate_key);
-                CREATE INDEX IF NOT EXISTS candidates_status
-                  ON candidates(status, updated_at);
                 CREATE TABLE IF NOT EXISTS knowledge_usage (
                   record_id TEXT PRIMARY KEY,
                   considered_count INTEGER NOT NULL DEFAULT 0,
@@ -1189,9 +1171,6 @@ class Store:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(turns)").fetchall()}
             if "retrieval_json" not in columns:
                 db.execute("ALTER TABLE turns ADD COLUMN retrieval_json TEXT")
-            candidate_columns = {row["name"] for row in db.execute("PRAGMA table_info(candidates)").fetchall()}
-            if "analysis_json" not in candidate_columns:
-                db.execute("ALTER TABLE candidates ADD COLUMN analysis_json TEXT NOT NULL DEFAULT '{}'")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

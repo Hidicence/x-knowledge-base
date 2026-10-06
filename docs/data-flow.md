@@ -47,7 +47,10 @@ failure behavior, see [recall validation](./recall-validation.md).
 
 ## Detailed Data Flow by Script
 
-### X/Twitter Bookmarks (`fetch_and_summarize.sh`)
+### X/Twitter Bookmarks (`run_bookmark_worker.py`)
+
+A scheduled job fetches bookmarks into the inbox; `run_bookmark_worker.py` queues
+them (`sync_tiege_queue.py`) and generates the cards.
 
 ```
 Your X account

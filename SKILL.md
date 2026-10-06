@@ -467,7 +467,6 @@ they do not carry pipelines.
 
 | Tool | When you would reach for it |
 | --- | --- |
-| `xkb_import_l1_traces.py` | A machine other than this one wrote conversation traces into `runtime/l1-traces/`; this carries them into the shared knowledge service. Nothing on the VPS has written there since 2026-08-24, when Hermes replaced OpenClaw as the scheduler — conversations now reach the service directly through the agent hook. |
 
 
 Everything else in `scripts/` is either on a schedule or called by something
@@ -482,7 +481,6 @@ with no caller is indistinguishable from one that was forgotten.
 | `xkb_synthesize_topic.py` | When a topic page has accumulated more bullets than anyone will read. Writes a review draft; `--apply` merges it back. The daily summary reports how many pages are past that point. |
 | `topic_guide_generator.py` | To produce a domain guide from the cards — terminology, reading order, where the consensus is and where it is missing. |
 | `setup_xbrain.sh` | Once per machine, to install the hybrid search runtime. |
-| `full_sync_v2.py` | To rebuild a workspace from its sources. |
 | `build_release_package.sh` | To package the skill for publication, with a secret scan and an allowlist. |
 | `xkb_jev_shadow_report.py` | Read historical or optional shadow comparisons between cosine and Jev. Jev now decides relevance at the merged recall boundary by default (`XKB_JEV_DECIDE=1`); shadow collection is available when that final judge is off. This report does not describe current delivery counts. |
 | `xkb_recategorize.py` | When the daily report says knowledge is sitting outside the taxonomy. Reclassifies those items with the existing LLM classifier and rebuilds the index; previews by default, `--apply` writes. A genuinely new category is not opened on one card: the classifier's proposal is counted, and the category opens only once the same name has been proposed `PROMOTE_AFTER` times — the same rule the wiki topic layer already uses. Cards waiting on a proposal keep the proposed name and get gathered when it opens. Cards whose content is broken (an LLM template leaked into the file, a failed fetch) are listed separately and left alone — classifying one only makes a broken card look fine. |

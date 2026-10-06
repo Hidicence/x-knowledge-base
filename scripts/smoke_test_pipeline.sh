@@ -81,10 +81,6 @@ check "review-decisions.json has absorb records" "$out" "^decisions=[0-9]+$" "$r
 count=$(grep -c 'topics/.*\.md' "$WORKSPACE_DIR/wiki/index.md" 2>/dev/null || echo 0)
 check "wiki index.md has topic links" "links=$count" "links=[1-9]"
 
-# 10. fetch_and_summarize.sh has Step 7 (wiki sync)
-count=$(grep -c '步驟7' "$SKILL_DIR/scripts/fetch_and_summarize.sh" 2>/dev/null || echo 0)
-check "fetch_and_summarize.sh has wiki sync step" "count=$count" "count=[1-9]"
-
 # --- Summary ---
 echo ""
 echo "─────────────────────────────────────"
