@@ -1428,8 +1428,11 @@ class Store:
                     "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT 100",
                     (session_id,)):
                 try:
-                    delivered.update(item.get("evidence_key") for item in
-                                     ((json.loads(earlier or "{}").get("delivery") or {}).get("records") or [])
+                    # (key, 內容指紋)：來源更新後可以再送。舊紀錄沒有指紋就只用
+                    # key，維持原本「送過就不送」的行為。
+                    delivered.update((item["evidence_key"], item["content_fingerprint"])
+                                     if item.get("content_fingerprint") else item["evidence_key"]
+                                     for item in ((json.loads(earlier or "{}").get("delivery") or {}).get("records") or [])
                                      if isinstance(item, dict) and item.get("evidence_key"))
                 except (ValueError, AttributeError):
                     continue
@@ -1507,7 +1510,8 @@ class Store:
             # gone is the pretence that a transcript was a candidate fact.
         return {"schema": SCHEMA, "turn_id": turn_id, "trace_id": trace_id, "status": status, "stored": True, "deduplicated": False, "retrieval": retrieval}
 
-    def recall(self, query: str, limit: int = 5, namespace: str = "private") -> dict[str, Any]:
+    def recall(self, query: str, limit: int = 5, namespace: str = "private", *,
+               exclude_session: str | None = None) -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=5, minimum=1, maximum=50)
@@ -1540,8 +1544,12 @@ class Store:
                 "SELECT turns.* FROM turns JOIN sessions ON sessions.session_id=turns.session_id "
                 "WHERE turns.status!='cancelled' AND turns.answer IS NOT NULL AND sessions.namespace=? "
                 f"{marker_clause} "
+                # 排除目前 session 要在 500 筆視窗與結果數量之前：之後才濾的話，
+                # 自己最近的十輪就能占滿名額，別的 session 的相關回答永遠進不來
+                # （2026-10-06 Codex 審查重現）。
+                f"{'AND turns.session_id != ? ' if exclude_session else ''}"
                 "ORDER BY turns.completed_at DESC LIMIT 500",
-                (namespace, *marker_params),
+                (namespace, *marker_params, *([exclude_session] if exclude_session else [])),
             ).fetchall()
         # 命中詞數不是相關度。
         #
@@ -1679,15 +1687,13 @@ class Store:
         conversation = {"memories": []}
         if opts["conversations"]:
             try:
-                conversation = self.recall(query, limit, namespace)
+                # 同一段對話的軌跡不是「既有知識」：2026-10-05 召回把 Claude
+                # 七分鐘前自己說的「兩支都下載完成了」當成建議送回來。最近
+                # 幾輪本來就由 conversation 參數帶著，不需要從這裡再撈一次。
+                conversation = self.recall(query, limit, namespace, exclude_session=session_id)
                 for search_query in queries[1:]:
-                    conversation = {"memories": conversation["memories"] + self.recall(search_query, limit, namespace)["memories"]}
-                if session_id:
-                    # 同一段對話的軌跡不是「既有知識」：2026-10-05 召回把 Claude
-                    # 七分鐘前自己說的「兩支都下載完成了」當成建議送回來。最近
-                    # 幾輪本來就由 conversation 參數帶著，不需要從這裡再撈一次。
-                    conversation = {"memories": [m for m in conversation["memories"]
-                                                 if m.get("session_id") != session_id]}
+                    conversation = {"memories": conversation["memories"] + self.recall(
+                        search_query, limit, namespace, exclude_session=session_id)["memories"]}
                 conversation_state.update(used=bool(conversation["memories"]),
                                           status="used" if conversation["memories"] else "empty")
             except sqlite3.Error as err:
@@ -1796,7 +1802,10 @@ class Store:
             "warnings": warnings,
         }
         delivery_started = time.monotonic()
-        packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent, query=query,
+        # Delivery chooses from every ACL- and quota-checked candidate, not the
+        # response limit: when the top ten were already suggested this session,
+        # the eleventh relevant one must still be able to take a slot.
+        packet["delivery"] = xkb_delivery.select(records, judge_note, recent, query=query,
                                                  delivered=delivered)
         finished = time.monotonic()
         packet["timing_ms"] = {"retrieval": round((retrieved-started)*1000),

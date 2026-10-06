@@ -139,3 +139,87 @@ class ScheduledAgentsSkipRecall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFindings20261006(unittest.TestCase):
+    """Codex 審查（tmp/opus-review-oct06/REVIEW.md）重現的三個漏召回。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = service.Store(Path(self.tmp.name) / "knowledge.sqlite")
+        env = mock.patch.dict(os.environ, {"XKB_JEV_DECIDE": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_eleventh_candidate_fills_the_slot_when_top_ten_were_already_given(self):
+        hits = [{**record(f"old{i}", 0.9, f"already given step {i}"), "record_type": "knowledge_card"}
+                for i in range(10)] + [{**record("fresh", 0.8, "a new relevant step"), "record_type": "knowledge_card"}]
+        given = frozenset(delivery.identity_key(h) for h in hits[:10])
+        with mock.patch.object(self.store.catalog, "search", return_value={"records": [dict(h) for h in hits]}), \
+             mock.patch.object(self.store, "recall", return_value={"memories": []}), \
+             mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})):
+            packet = self.store.knowledge_recall("next step", 10, delivered=given)
+        self.assertEqual(len(packet["records"]), 10)  # the response contract is unchanged
+        self.assertEqual([r["id"] for r in packet["delivery"]["records"]], ["fresh"])
+
+    def _turn(self, session, turn_id, query, answer, at):
+        with self.store.connect() as db:
+            db.execute("INSERT INTO turns(turn_id,session_id,query,answer,status,trace_id,started_at,completed_at) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (turn_id, session, query, answer, "succeeded", "trace:" + turn_id, at, at))
+
+    def test_own_session_cannot_crowd_other_sessions_out_of_the_result_limit(self):
+        mine = self.store.open_session({"source": "test", "session_key": "mine"})["session_id"]
+        other = self.store.open_session({"source": "test", "session_key": "other"})["session_id"]
+        self._turn(other, "o1", "download video", "Use ffprobe to verify duration and codec.", "2026-10-01T00:00:00")
+        for i in range(10):
+            self._turn(mine, f"m{i}", "download video", f"downloaded file {i}", f"2026-10-06T00:00:{i:02d}")
+        answers = [m["answer"] for m in self.store.recall("download video", 10, exclude_session=mine)["memories"]]
+        self.assertEqual(answers, ["Use ffprobe to verify duration and codec."])
+
+    def test_recall_path_keeps_other_sessions_when_own_turns_are_newer(self):
+        mine = self.store.open_session({"source": "test", "session_key": "mine"})["session_id"]
+        other = self.store.open_session({"source": "test", "session_key": "other"})["session_id"]
+        self._turn(other, "o1", "download video", "Use ffprobe to verify duration and codec.", "2026-10-01T00:00:00")
+        for i in range(10):
+            self._turn(mine, f"m{i}", "download video", f"downloaded file {i}", f"2026-10-06T00:00:{i:02d}")
+        with mock.patch.object(self.store.catalog, "search", return_value={"records": []}),              mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})):
+            packet = self.store.knowledge_recall("download video", 10, session_id=mine)
+        answers = [r.get("answer") for r in packet["records"] if r.get("record_type") == "conversation_trace"]
+        self.assertEqual(answers, ["Use ffprobe to verify duration and codec."])
+
+    def test_own_session_cannot_fill_the_500_row_window(self):
+        mine = self.store.open_session({"source": "test", "session_key": "mine"})["session_id"]
+        other = self.store.open_session({"source": "test", "session_key": "other"})["session_id"]
+        self._turn(other, "o1", "download video", "Use ffprobe to verify duration and codec.", "2026-09-01T00:00:00")
+        with self.store.connect() as db:
+            db.executemany("INSERT INTO turns(turn_id,session_id,query,answer,status,trace_id,started_at,completed_at) "
+                           "VALUES(?,?,?,?,?,?,?,?)",
+                           [(f"m{i}", mine, "unrelated chatter", "ok", "succeeded", f"trace:m{i}",
+                             "2026-10-06T00:00:00", f"2026-10-06T{i // 3600:02d}:{i // 60 % 60:02d}:{i % 60:02d}")
+                            for i in range(500)])
+        answers = [m["answer"] for m in self.store.recall("download video", 10, exclude_session=mine)["memories"]]
+        self.assertEqual(answers, ["Use ffprobe to verify duration and codec."])
+
+    def test_updated_source_can_be_delivered_again_but_the_same_content_cannot(self):
+        old = record("guide", 0.9, "Use version 1")
+        sent = delivery.select([old], {"status": "judged"}, [], query="q")["records"][0]
+        given = frozenset({(sent["evidence_key"] if "evidence_key" in sent else delivery.identity_key(old),
+                            sent["content_fingerprint"])})
+        same = delivery.select([record("guide", 0.9, "Use  version 1")], {"status": "judged"}, [],
+                               query="q", delivered=given)
+        self.assertEqual(same["records"], [])
+        updated = delivery.select([record("guide", 0.9, "Version 1 is obsolete; use version 2")],
+                                  {"status": "judged"}, [], query="q", delivered=given)
+        self.assertEqual([r["summary"] for r in updated["records"]], ["Version 1 is obsolete; use version 2"])
+
+    def test_turn_start_carries_fingerprints_and_keeps_legacy_keys_blocking(self):
+        session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
+        packets = [{"records": [], "delivery": {"records": [{"evidence_key": "ev1:new", "content_fingerprint": "abc"}]}},
+                   {"records": [], "delivery": {"records": [{"evidence_key": "ev1:legacy"}]}}]
+        for i, packet in enumerate(packets):
+            with mock.patch.object(self.store, "knowledge_recall", return_value=packet):
+                self.store.start_turn({"session_id": session, "turn_id": f"t{i}", "query": f"q{i}"})
+        with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
+            self.store.start_turn({"session_id": session, "turn_id": "t9", "query": "next"})
+        self.assertEqual(run.call_args.kwargs["delivered"], frozenset({("ev1:new", "abc"), "ev1:legacy"}))

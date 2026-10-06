@@ -13,6 +13,7 @@ local rules decide what to show; nothing here calls a generation model.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import unicodedata
@@ -104,12 +105,23 @@ def excerpt(body: str, limit: int = EXCERPT_CHARS) -> str:
     return kept + "\n（節錄）"
 
 
+def content_fingerprint(body: str) -> str:
+    """Version of the delivered knowledge, independent of its identity.
+
+    Taken from the normalized source body, before excerpting, so titles,
+    whitespace and the excerpt label cannot lift session deduplication; an
+    edited source can. Evidence identity keeps meaning "which document".
+    """
+    return hashlib.sha256(claim_text(body).encode("utf-8")).hexdigest()[:16]
+
+
 def select(records: list[dict], judge: dict, conversation: list[dict], *, query: str = "",
            delivered: frozenset = frozenset()) -> dict:
     """Pick at most three judged-relevant records the session has not seen.
 
-    ``delivered`` holds evidence keys already suggested earlier in this
-    session. A partial judgement still delivers its positive verdicts: the
+    ``delivered`` holds what this session was already given: ``(key,
+    fingerprint)`` pairs, or a bare key from turns recorded before
+    fingerprints existed (those keep blocking every version of that source). A partial judgement still delivers its positive verdicts: the
     answering agent filters, and withholding them would make one failed batch
     erase everything. The packet is marked degraded so the gap stays visible.
     No adopted/rejected preference is inferred from presentation or silence.
@@ -122,6 +134,7 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
         key = identity_key(record)
         body = fields(record)[1]
         claim = claim_text(body)
+        fingerprint = content_fingerprint(body)
         in_reply = len(claim) >= 40 and any(claim in text for text in previous)
         if in_reply:
             presented.append(key)
@@ -132,7 +145,7 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
             reason = "weak_relevance"
         elif record.get("excerpt_truncated"):
             reason = "incomplete_source_excerpt"
-        elif key and key in delivered:
+        elif key and (key in delivered or (key, fingerprint) in delivered):
             reason = "delivered_earlier_in_session"
         elif in_reply:
             reason = "already_in_conversation"
@@ -146,7 +159,8 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
             withheld.append({"evidence_key": key, "reason": reason})
             continue
         seen.add(claim)
-        selected.append({**record, "title": display_title(record), "summary": excerpt(body)})
+        selected.append({**record, "title": display_title(record), "summary": excerpt(body),
+                         "content_fingerprint": fingerprint})
     return {"mode": "suggest" if selected else "background" if records else "none",
             "policy": "jev-direct", "records": selected, "context": render_context(selected),
             "floor": DELIVERY_FLOOR, "limit": MAX_SUGGESTIONS, "withheld": withheld,

@@ -17,14 +17,22 @@ merged candidates once against the utterance with its dialogue; `xkb_delivery`
 then applies local rules and calls no generation model:
 
 - verdict at least 0.5 (`DELIVERY_FLOOR`), at most three items;
-- nothing already suggested earlier in the same session (evidence keys are read
-  from that session's stored turns);
-- none of the session's own conversation traces;
+- nothing already suggested earlier in the same session with the same content:
+  each suggestion stores a fingerprint of its normalized source body, so an
+  edited source can be suggested again (turns recorded before fingerprints
+  existed keep blocking that source by evidence key);
+- none of the session's own conversation traces, excluded in the conversation
+  query itself so that recent own turns cannot fill its 500-row window or
+  result limit;
 - no exact duplicate text and nothing already quoted in a recent assistant reply;
 - display-only truncated snippets are never injected;
 - a title with no letters (bookmark cards titled by tweet ID) is replaced by the
   first sentence of the body; long bodies keep whole paragraphs and are labelled
   as excerpts.
+
+Delivery chooses from every candidate that passed ACL and per-layer quotas, not
+only from the response's `limit`: if the top ten were already suggested, the
+eleventh relevant candidate can still be delivered. `records` keeps its limit.
 
 A partial judgement still delivers its positive verdicts and marks the packet
 degraded; no judgement delivers nothing and marks it degraded. The hook header
