@@ -1061,18 +1061,35 @@ def redact(value: Any) -> Any:
     return value
 
 
-# 一段對話裡送過的建議與這段對話自己的軌跡，整段都不再當成新知識：Claude Code
-# 在壓縮之前保留整段對話。曾改成只看最近 10 輪，第二輪審查指出那會在內容還在
-# 畫面上時就重送——正是 10/5 實際發生的兩件事。代價：壓縮或明確要求複習之後，
-# hook 不會再主動送同一條。
-SESSION_DELIVERY_SCAN = 200
+def context_since(value) -> str:
+    """Start of what the answering agent can still see, as a turns.started_at bound.
+
+    Suggestions given and the session's own traces are excluded only within
+    that range. The hook reports Claude Code's last compaction boundary; with
+    no boundary the whole session is still in view. Three review rounds moved
+    a turn-count window back and forth (whole session / 10 turns / whole
+    session) because a count only guesses at visibility; the boundary is the
+    fact itself.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 def source_memory_ids(retrieval: dict) -> list:
     """Returned records plus suggestions picked from beyond the response limit."""
-    ids = [item.get("id") for item in retrieval.get("records", [])]
-    extra = [item.get("id") for item in ((retrieval.get("delivery") or {}).get("records") or [])]
-    return ids + [i for i in extra if i and i not in ids]
+    ids = []
+    for item in retrieval.get("records", []) + ((retrieval.get("delivery") or {}).get("records") or []):
+        ref = item.get("id") or item.get("trace_id")
+        if ref and ref not in ids:
+            ids.append(ref)
+    return ids
 
 
 class Store:
@@ -1437,21 +1454,17 @@ class Store:
                 recent = conversation_messages([
                     {"role": role, "content": row[column]} for row in reversed(previous)
                     for role, column in (("user", "query"), ("assistant", "answer")) if row[column]])
-            delivered = set()
-            for (earlier,) in db.execute(
-                    "SELECT retrieval_json FROM turns WHERE session_id=? ORDER BY started_at DESC, rowid DESC LIMIT ?",
-                    (session_id, SESSION_DELIVERY_SCAN)):
-                try:
-                    # (key, 內容指紋)：來源更新後可以再送。舊紀錄沒有指紋就只用
-                    # key，維持原本「送過就不送」的行為。
-                    delivered.update((item["evidence_key"], item["content_fingerprint"])
-                                     if item.get("content_fingerprint") else item["evidence_key"]
-                                     for item in ((json.loads(earlier or "{}").get("delivery") or {}).get("records") or [])
-                                     if isinstance(item, dict) and item.get("evidence_key"))
-                except (ValueError, AttributeError):
-                    continue
+            since = context_since(body.get("context_since"))
+            # (key, 內容指紋)：來源更新後可以再送；沒有指紋的只用 key。SQLite 直接
+            # 取出這兩個欄位，不必每輪把整段對話的封包都解析一次，也沒有輪數上限。
+            delivered = {(key, fingerprint) if fingerprint else key for key, fingerprint in db.execute(
+                "SELECT json_extract(value,'$.evidence_key'), json_extract(value,'$.content_fingerprint') "
+                "FROM turns, json_each(CASE WHEN json_valid(turns.retrieval_json) THEN turns.retrieval_json ELSE '{}' END, "
+                "'$.delivery.records') WHERE turns.session_id=? AND turns.started_at>=?",
+                (session_id, since)) if key}
             retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace, conversation=recent,
-                                              session_id=session_id, delivered=frozenset(delivered))
+                                              session_id=session_id, delivered=frozenset(delivered),
+                                              context_since=since)
             db.execute(
                 "INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
                 (turn_id, session_id, query, "started", json.dumps(retrieval, ensure_ascii=False), now()),
@@ -1525,7 +1538,7 @@ class Store:
         return {"schema": SCHEMA, "turn_id": turn_id, "trace_id": trace_id, "status": status, "stored": True, "deduplicated": False, "retrieval": retrieval}
 
     def recall(self, query: str, limit: int = 5, namespace: str = "private", *,
-               exclude_session: str | None = None) -> dict[str, Any]:
+               exclude_session: str | None = None, exclude_since: str = "") -> dict[str, Any]:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query is required")
         limit = bounded_int(limit, name="limit", default=5, minimum=1, maximum=50)
@@ -1561,9 +1574,10 @@ class Store:
                 # 排除目前 session 要在 500 筆視窗與結果數量之前：之後才濾的話，
                 # 自己最近的十輪就能占滿名額，別的 session 的相關回答永遠進不來
                 # （2026-10-06 Codex 審查重現）。
-                f"{'AND turns.session_id != ? ' if exclude_session else ''}"
+                # 只排除回答者還看得到的那段（上次壓縮之後）；更早的決定仍可召回。
+                f"{'AND NOT (turns.session_id = ? AND turns.started_at >= ?) ' if exclude_session else ''}"
                 "ORDER BY turns.completed_at DESC LIMIT 500",
-                (namespace, *marker_params, *([exclude_session] if exclude_session else [])),
+                (namespace, *marker_params, *([exclude_session, exclude_since] if exclude_session else [])),
             ).fetchall()
         # 命中詞數不是相關度。
         #
@@ -1644,11 +1658,13 @@ class Store:
         return _noise_kind(query)
 
     def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None,
-                         session_id: str | None = None, delivered: frozenset = frozenset()) -> dict[str, Any]:
+                         session_id: str | None = None, delivered: frozenset = frozenset(),
+                         context_since: str = "") -> dict[str, Any]:
         """Shared recall core.
 
-        ``session_id`` excludes this session's own traces; ``delivered`` lists
-        evidence already suggested earlier in it.
+        ``session_id`` excludes this session's own traces since
+        ``context_since`` (the whole session when empty); ``delivered`` lists
+        evidence already suggested in that range.
         """
         started = time.monotonic()
         if not isinstance(query, str) or not query.strip():
@@ -1701,13 +1717,14 @@ class Store:
         conversation = {"memories": []}
         if opts["conversations"]:
             try:
-                # 同一段對話的軌跡不是「既有知識」：2026-10-05 召回把 Claude
-                # 七分鐘前自己說的「兩支都下載完成了」當成建議送回來。最近
-                # 幾輪本來就由 conversation 參數帶著，不需要從這裡再撈一次。
-                conversation = self.recall(query, limit, namespace, exclude_session=session_id)
+                # 回答者還看得到的軌跡不是「既有知識」：2026-10-05 召回把 Claude
+                # 七分鐘前自己說的「兩支都下載完成了」當成建議送回來。
+                conversation = self.recall(query, limit, namespace, exclude_session=session_id,
+                                           exclude_since=context_since)
                 for search_query in queries[1:]:
                     conversation = {"memories": conversation["memories"] + self.recall(
-                        search_query, limit, namespace, exclude_session=session_id)["memories"]}
+                        search_query, limit, namespace, exclude_session=session_id,
+                        exclude_since=context_since)["memories"]}
                 conversation_state.update(used=bool(conversation["memories"]),
                                           status="used" if conversation["memories"] else "empty")
             except sqlite3.Error as err:
@@ -1767,7 +1784,7 @@ class Store:
         # the eleventh relevant one must still be able to take a slot.
         delivery_started = time.monotonic()
         delivery = xkb_delivery.select(records, judge_note, recent, query=query, delivered=delivered)
-        delivered_keys = {item.get("evidence_key") for item in delivery["records"]}
+        delivered_keys = {key for item in delivery["records"] if (key := item.get("evidence_key"))}
         delivery_done = time.monotonic()
         try:
             # Delivery can reach past the response limit; what it injects was

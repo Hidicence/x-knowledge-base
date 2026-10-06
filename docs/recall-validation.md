@@ -17,17 +17,23 @@ merged candidates once against the utterance with its dialogue; `xkb_delivery`
 then applies local rules and calls no generation model:
 
 - verdict at least 0.5 (`DELIVERY_FLOOR`), at most three items;
-- nothing already suggested earlier in the same session. Claude Code keeps the
-  whole conversation until it compacts it, so a 10-turn window was tried and
-  rejected: it re-sent suggestions while they were still on screen. The cost is
-  that after compaction, or on an explicit recap request, the hook does not
-  volunteer the same item again. Wiki sections, notes and traces also store a
+- nothing already suggested in this session since Claude Code last compacted
+  it. The hook reads the last `compact_boundary` timestamp from the transcript
+  (backward, matching the serialized field so a message that merely mentions
+  compaction does not count) and sends it as `context_since`; without one the
+  whole session is still in view. A turn-count window was tried in both
+  directions and rejected: 10 turns re-sent suggestions still on screen, the
+  whole session forever hid decisions lost to compaction. Delivered keys are
+  read with SQLite's JSON functions, so there is no turn limit and no per-turn
+  parsing of whole packets. Wiki sections, notes and traces also store a
   fingerprint of their normalized body, so an edited source can be suggested
-  again. Cards do not: each retrieval returns whichever chunk matched, so
-  their text is not a version. An unknown version on either side (cards,
-  older turns) blocks;
-- none of the session's own conversation traces, excluded in the conversation
-  query itself so that they cannot fill its 500-row window or result limit;
+  again. Cards do not: each retrieval returns whichever chunk matched, so their
+  text is not a version. An unknown version on either side (cards, older
+  turns) blocks;
+- none of the session's own conversation traces within the same visible range,
+  excluded in the conversation query itself so that they cannot fill its
+  500-row window or result limit; decisions from before the last compaction
+  remain recallable;
 - no exact duplicate text and nothing already quoted in a recent assistant reply;
 - display-only truncated snippets are never injected;
 - a title with no letters (bookmark cards titled by tweet ID) is replaced by the
@@ -44,11 +50,12 @@ tells the agent to ignore unrelated items without mentioning them. All
 candidates remain inspectable in `records`. Presentation does not imply
 acceptance, and silence does not imply rejection.
 
-The hook skips unattended sessions: interactive Claude Code sets
-`CLAUDE_CODE_SESSION_ATTENDED=1`, while `claude -p` scheduled agents set `0`.
-Without that flag only `CLAUDE_CODE_ENTRYPOINT=sdk-cli` (print mode) is
-skipped; interactive front ends built on the Agent SDK report `sdk-ts` or
-`sdk-py` and keep recall. Skipped turns neither recall nor write a trace. Suggestions picked from beyond the
+The hook skips only sessions explicitly marked unattended: interactive Claude
+Code sets `CLAUDE_CODE_SESSION_ATTENDED=1`, while `claude -p` scheduled agents
+set `0`. The entry point is not used as a guess: front ends that drive the CLI
+with stream-json also report `sdk-cli`. An older `claude -p` without the flag
+therefore recalls (one extra Jev call) rather than an interactive session
+being silently dropped. Skipped turns neither recall nor write a trace. Suggestions picked from beyond the
 response limit count as returned in usage accounting and `source_memory_ids`.
 
 When a turn completes, `delivery_outcomes` records, for each suggestion, the

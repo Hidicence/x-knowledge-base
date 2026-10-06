@@ -131,12 +131,12 @@ class ScheduledAgentsSkipRecall(unittest.TestCase):
         self.assertFalse(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "0", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
         self.assertTrue(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "1", "CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
-    def test_without_an_attendance_flag_only_print_mode_is_skipped(self):
+    def test_without_an_explicit_flag_nothing_is_skipped(self):
+        # stream-json 互動前端也回報 sdk-cli；不能靠 ENTRYPOINT 猜。
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
-            self.assertFalse(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
-            self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-ts"}))
-            self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "cli"}))
+            for entrypoint in ("sdk-cli", "sdk-ts", "cli"):
+                self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": entrypoint}))
 
 
 if __name__ == "__main__":
@@ -287,14 +287,15 @@ class CodeReviewFindings20261006(unittest.TestCase):
         with self.assertRaises(sqlite3.OperationalError):
             report.report(path, 7)
 
-    def test_source_ids_never_include_missing_ids(self):
-        packet = {"records": [{"id": "a"}], "delivery": {"records": [{"trace_id": "trace:x"}, {"id": "b"}]}}
-        self.assertEqual(service.source_memory_ids(packet), ["a", "b"])
+    def test_source_ids_cover_traces_and_never_include_missing_ids(self):
+        packet = {"records": [{"id": "a"}, {"trace_id": "trace:r"}, {}],
+                  "delivery": {"records": [{"trace_id": "trace:x"}, {"id": "a"}, {}]}}
+        self.assertEqual(service.source_memory_ids(packet), ["a", "trace:r", "trace:x"])
 
     def test_a_cut_source_reference_is_marked(self):
         import xkb_agent_hook as hook
         rendered = hook.render([{"title": "t", "summary": "body", "source_url": "https://example.test/" + "p" * 400}])
-        self.assertIn("…（網址過長已截斷）", rendered)
+        self.assertIn("p [來源過長，以上已截斷]", rendered)
 
     def test_a_delivered_record_beyond_the_limit_counts_as_returned(self):
         hits = [{**record(f"old{i}", 0.9, f"given step {i}"), "record_type": "knowledge_card"} for i in range(10)]                + [{**record("fresh", 0.8, "new step"), "record_type": "knowledge_card"}]
@@ -342,6 +343,82 @@ class CodeReviewFindings20261006(unittest.TestCase):
         with self.store.connect() as db:
             overlap = db.execute("SELECT overlap FROM delivery_outcomes").fetchone()[0]
         self.assertEqual(overlap, 1.0)
+
+
+
+class CompactionBoundsWhatIsStillVisible(unittest.TestCase):
+    """第三輪審查：輪數視窗在「整段」與「10 輪」之間來回，因為輪數只是在猜。
+    回答者看得到什麼，由上次壓縮決定。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = service.Store(Path(self.tmp.name) / "knowledge.sqlite")
+        self.session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
+
+    def _turn(self, turn_id, at, retrieval=None, answer="a", query="q"):
+        with self.store.connect() as db:
+            db.execute("INSERT INTO turns(turn_id,session_id,query,answer,status,trace_id,retrieval_json,started_at,completed_at) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (turn_id, self.session, query, answer, "succeeded", "trace:" + turn_id,
+                                                     json.dumps(retrieval or {}), at, at))
+
+    def _delivered(self, **body):
+        import uuid
+        with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
+            self.store.start_turn({"session_id": self.session, "turn_id": f"now-{uuid.uuid4()}", "query": "next", **body})
+        return run.call_args.kwargs
+
+    def test_suggestions_before_the_last_compaction_may_return(self):
+        given = lambda key: {"records": [], "delivery": {"records": [{"evidence_key": key}]}}
+        self._turn("before", "2026-10-06T01:00:00+00:00", given("ev1:before"))
+        self._turn("after", "2026-10-06T03:00:00+00:00", given("ev1:after"))
+        kwargs = self._delivered(context_since="2026-10-06T02:00:00.000Z")
+        self.assertEqual(kwargs["delivered"], frozenset({"ev1:after"}))
+        self.assertEqual(kwargs["context_since"], "2026-10-06T02:00:00+00:00")
+        self.assertEqual(self._delivered()["delivered"], frozenset({"ev1:before", "ev1:after"}))
+
+    def test_no_turn_count_limit_inside_the_visible_range(self):
+        self._turn("first", "2026-10-06T00:00:00+00:00", {"records": [], "delivery": {"records": [{"evidence_key": "ev1:first"}]}})
+        with self.store.connect() as db:
+            db.executemany("INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
+                           [(f"t{i}", self.session, "q", "succeeded", "not json", f"2026-10-06T01:{i // 60:02d}:{i % 60:02d}+00:00")
+                            for i in range(250)])
+        self.assertIn("ev1:first", self._delivered()["delivered"])
+
+    def test_own_decisions_before_the_last_compaction_are_recallable(self):
+        self._turn("early", "2026-10-06T01:00:00+00:00", answer="Agreed: record the coefficient version.",
+                   query="coefficient version")
+        self._turn("late", "2026-10-06T03:00:00+00:00", answer="still on screen", query="coefficient version")
+        visible = self.store.recall("coefficient version", 10, exclude_session=self.session,
+                                    exclude_since="2026-10-06T02:00:00+00:00")
+        self.assertEqual([m["answer"] for m in visible["memories"]], ["Agreed: record the coefficient version."])
+
+    def test_hook_reads_only_a_real_compaction_boundary(self):
+        import xkb_agent_hook as hook
+        path = Path(self.tmp.name) / "t.jsonl"
+        talk = {"type": "user", "timestamp": "2026-10-06T05:00:00Z",
+                "message": {"role": "user", "content": 'it logs "subtype":"compact_boundary" lines'}}
+        lines = [{"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-06T01:00:00Z"},
+                 {"type": "user", "message": {"role": "user", "content": "x" * 3_000_000}},
+                 {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-06T04:00:00Z"},
+                 {"type": "user", "message": {"role": "user", "content": "y" * 1_500_000}},
+                 talk]
+        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+        self.assertEqual(hook.last_compaction(str(path)), "2026-10-06T04:00:00Z")
+        path.write_text(json.dumps(talk) + "\n", encoding="utf-8")
+        self.assertEqual(hook.last_compaction(str(path)), "")
+        self.assertEqual(hook.last_compaction(str(Path(self.tmp.name) / "missing.jsonl")), "")
+
+    def test_anonymous_delivery_does_not_mark_other_anonymous_records_returned(self):
+        records = [{**record(f"r{i}", 0.9, f"step {i}"), "record_type": "knowledge_card"} for i in range(2)]
+        anonymous = [{"summary": f"anonymous step {i}", "judge": 0.6, "score": 0.5, "namespace": "private"} for i in range(3)]
+        with mock.patch.object(self.store.catalog, "search", return_value={"records": records + anonymous}), \
+             mock.patch.object(self.store, "recall", return_value={"memories": []}), \
+             mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})), \
+             mock.patch.object(self.store, "record_recall_usage") as usage:
+            self.store.knowledge_recall("next", 1)
+        returned = usage.call_args.args[2]
+        self.assertEqual([r.get("evidence_key") for r in returned if not r.get("evidence_key")], [])
 
 
 if __name__ == "__main__":

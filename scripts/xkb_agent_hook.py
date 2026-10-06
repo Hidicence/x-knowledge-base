@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -147,7 +148,7 @@ def render(records: list[dict]) -> str:
         if body:
             entry.append(f"  {body}")
         if source:
-            entry.append(f"  來源：{source if len(source) <= 300 else source[:300] + '…（網址過長已截斷）'}")
+            entry.append(f"  來源：{source}" if len(source) <= 300 else f"  來源：{source[:300]} [來源過長，以上已截斷]")
         # The service selected a complete evidence paragraph. Cutting at 600
         # characters here could silently remove its condition or negation.
         if len("\n".join(lines + entry + [footer])) <= MAX_CONTEXT_CHARS:
@@ -215,6 +216,46 @@ def recent_conversation(transcript: str, current_prompt: str) -> list[dict[str, 
     return conversation_messages(messages[-4:])
 
 
+# The exact serialized field: inside a message the same words are escaped
+# (\"subtype\":...), so talking about compaction never looks like one.
+COMPACT_MARKER = re.compile(rb'"subtype"\s*:\s*"compact_boundary"')
+
+
+def last_compaction(transcript: str, budget: int = 64 * 1024 * 1024) -> str:
+    """Timestamp of Claude Code's last compaction, read backward from the end.
+
+    Everything after it is still in the answering agent's context; the
+    service uses it to decide what not to repeat. No marker within the budget
+    means the whole session is still in view.
+    """
+    try:
+        with Path(transcript).open("rb") as stream:
+            stream.seek(0, 2)
+            end = stream.tell()
+            carry, scanned = b"", 0
+            while end > 0 and scanned < budget:
+                start = max(0, end - 1024 * 1024)
+                stream.seek(start)
+                block = stream.read(end - start) + carry
+                found = list(COMPACT_MARKER.finditer(block))
+                at = found[-1].start() if found else -1
+                newline = block.rfind(b"\n", 0, at) if at >= 0 else -1
+                if at >= 0 and (newline >= 0 or start == 0):
+                    line_end = block.find(b"\n", at)
+                    line = block[newline + 1:line_end if line_end >= 0 else len(block)]
+                    entry = json.loads(line)
+                    return str(entry.get("timestamp") or "") if entry.get("subtype") == "compact_boundary" else ""
+                # Keep the partial first line so a record split across blocks
+                # is read whole on the next pass.
+                first = block.find(b"\n")
+                carry = block[:first] if first >= 0 else block
+                scanned += end - start
+                end = start
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return ""
+
+
 def on_prompt(event: dict, cfg: dict) -> None:
     prompt = str(event.get("prompt") or event.get("user_prompt") or "").strip()
     if not prompt:
@@ -240,12 +281,15 @@ def on_prompt(event: dict, cfg: dict) -> None:
     }, cfg)
     ordinal = next_ordinal(key)
     current = turn_id(key, prompt, ordinal)
-    recent = recent_conversation(str(event.get("transcript_path") or ""), prompt)
+    transcript = str(event.get("transcript_path") or "")
+    recent = recent_conversation(transcript, prompt)
+    since = last_compaction(transcript) if transcript else ""
     turn = call("/v1/turns/start", {
         "session_id": session["session_id"],
         "turn_id": current,
         "query": prompt,
         **({"conversation": recent} if recent else {}),
+        **({"context_since": since} if since else {}),
     }, cfg)
 
     # Remember which turn is open so Stop can close this exact one.
@@ -348,10 +392,10 @@ def unattended() -> bool:
     """
     # 有明確旗標就照旗標。沒有時只把 sdk-cli（`claude -p`）當排程：建在
     # Agent SDK 上的互動前端回報 sdk-ts／sdk-py，不能被安靜地丟掉。
-    attended = os.getenv("CLAUDE_CODE_SESSION_ATTENDED")
-    if attended is not None:
-        return attended.strip() == "0"
-    return os.getenv("CLAUDE_CODE_ENTRYPOINT", "") == "sdk-cli"
+    # 只認明確的旗標。用 ENTRYPOINT 猜會誤判用 stream-json 驅動 CLI 的互動
+    # 前端（也回報 sdk-cli），安靜地丟掉它們的召回。沒有旗標的舊版 `claude -p`
+    # 因此會照常召回：多付一次 jev，但不會有人的對話被無聲丟掉。
+    return os.getenv("CLAUDE_CODE_SESSION_ATTENDED", "").strip() == "0"
 
 
 def main() -> int:
