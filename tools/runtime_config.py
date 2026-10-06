@@ -55,3 +55,26 @@ def runtime_env(env_file: str | Path | None = None) -> dict[str, str]:
             continue
         merged[key] = value
     return merged
+
+
+def llm_service_env(service: str, env_file: str | Path | None = None) -> dict[str, str]:
+    """Resolve generation/judge independently; never mix scoped and legacy auth.
+
+    Process > explicit env-file applies within each variable name. A scoped
+    endpoint or credential opts into an isolated route and suppresses legacy
+    LLM_* even when inherited from an old parent process. Legacy callers with
+    no scoped route retain their previous behavior. Embedding is unaffected.
+    """
+    if service not in {"generation", "judge"}:
+        raise ValueError("Unknown XKB LLM service")
+    values = runtime_env(env_file)
+    prefix = "XKB_" + service.upper() + "_"
+    scoped = any(values.get(prefix + field) for field in ("API_URL", "API_KEY"))
+    if scoped:
+        for field in ("API_URL", "API_KEY", "MODEL"):
+            values.pop("LLM_" + field, None)
+            if values.get(prefix + field):
+                values["LLM_" + field] = values[prefix + field]
+    elif values.get(prefix + "MODEL"):
+        values["LLM_MODEL"] = values[prefix + "MODEL"]
+    return values

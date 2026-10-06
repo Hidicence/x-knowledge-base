@@ -25,20 +25,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_failures
-from runtime_config import runtime_env
+from runtime_config import runtime_env, llm_service_env
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = _SKILL_DIR / "config" / "llm.json"
 
-# 設定壞掉時退回的模型。它的職責是「在你修設定的期間讓事情繼續動」，
-# 所以它必須是活的——原本寫的是 sub2api-gpt/gpt-5.5，而那個模型在這台機器上
-# 回 server_error，於是一個打錯字的設定會表現成「每次呼叫模型都失敗」。
-# 這個值跟 Hermes 的主模型一致（config.yaml: gpt-6-luna @ api.tu-zi.com）。
-FALLBACK_MODEL = "gpt-6-luna"
+# Non-secret default only; endpoint and credentials come from the isolated
+# generation service route, never from the judge route.
+FALLBACK_MODEL = "gpt-6-astra"
 
 def _runtime_settings() -> dict[str, str]:
     """Read credentials from process env or explicit XKB_ENV_FILE only."""
-    return runtime_env()
+    return llm_service_env("generation")
 
 
 def _load_model() -> str:

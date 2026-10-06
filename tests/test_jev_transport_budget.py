@@ -7,7 +7,7 @@ import xkb_jev as j
 class Transport(unittest.TestCase):
 
     def test_nested_answers(self):
-        with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"data":{"answers":{"q":{"noul":0}}}}')):
+        with patch.object(j,'llm_service_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"data":{"answers":{"q":{"noul":0}}}}')):
             self.assertEqual(j.judge('s',{'q':{'type':'noul'}}),{'q':{'noul':0}})
 
     def test_unicode_batches_are_bounded_and_complete(self):
@@ -16,7 +16,7 @@ class Transport(unittest.TestCase):
             sizes.append(len(req.data)); self.assertLessEqual(len(req.data),32768)
             body=json.loads(req.data)
             return io.BytesIO(json.dumps({'answers':{q:{'noul':0.8} for q in body['questions']}}).encode())
-        with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',side_effect=respond):
+        with patch.object(j,'llm_service_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',side_effect=respond):
             out=j.relevance('中文問題😀',[(str(i),str(i)+'中😀\\\"'*300) for i in range(25)])
         self.assertEqual(len(out),25); self.assertGreater(len(sizes),1)
 
@@ -30,7 +30,7 @@ class Transport(unittest.TestCase):
         size=len(j._body('',questions))
         for delta in [0,1]:
             state='a'*(32768-size+delta)
-            with patch.object(j,'runtime_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"answers":{"q":{"noul":0}}}')) as call:
+            with patch.object(j,'llm_service_env',return_value={'LLM_API_URL':'https://example/v1','LLM_API_KEY':'placeholder'}), patch.object(j.urllib.request,'urlopen',return_value=io.BytesIO(b'{"answers":{"q":{"noul":0}}}')) as call:
                 result=j.judge(state,questions)
                 self.assertEqual(call.call_count,1 if delta==0 else 0)
 
@@ -99,7 +99,7 @@ class Transport(unittest.TestCase):
                     self.assertEqual(runtime_env(f)['LLM_API_KEY'],'process-placeholder')
                     self.assertEqual(runtime_env()['LLM_API_KEY'],'process-placeholder')
                 with self.assertRaises(FileNotFoundError):runtime_env(Path(d)/'absent')
-            with patch.object(j,'runtime_env',return_value={}),patch.object(j.urllib.request,'urlopen') as call:
+            with patch.object(j,'llm_service_env',return_value={}),patch.object(j.urllib.request,'urlopen') as call:
                 self.assertIsNone(j.judge('s',{'q':{'type':'noul'}}));call.assert_not_called()
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 {
-  "_comment": "XKB unified LLM config. Change model here to switch all scripts at once. Credentials come from LLM_API_URL / LLM_API_KEY (process env or XKB_ENV_FILE).",
-  "model": "gpt-5.6-luna",
+  "_comment": "Generation: XKB_GENERATION_API_URL/API_KEY/MODEL; judge: XKB_JUDGE_API_URL/API_KEY/MODEL. Process overrides env-file within each key. Scoped routes never borrow generic LLM credentials; legacy LLM_* only applies when no scoped route exists.",
+  "model": "gpt-6-astra",
   "_examples": {
     "tuzi_gpt_5_6_luna": "gpt-5.6-luna",
     "sub2api_claude_sonnet": "sub2api-claude/claude-sonnet-4-6",

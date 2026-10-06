@@ -45,14 +45,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 import xkb_failures
-from runtime_config import runtime_env
+from runtime_config import runtime_env, llm_service_env
 
 _SKILL_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = _SKILL_DIR / "config" / "llm.json"
 
-# 判斷模型跟生成模型是兩回事，所以是另一個設定鍵。共用一把金鑰與 base URL
-# （兔子 API 兩個端點都在 LLM_API_URL 底下），但模型名不共用——把 llm.json 的
-# model 改成 jev 會讓所有生成腳本一起壞掉，因為那個端點根本不存在。
+# Judge has its own XKB_JUDGE_API_URL/API_KEY route, independent of generation.
+# Legacy LLM_* is supported only when no scoped judge endpoint/key is set.
 DEFAULT_JUDGE_MODEL = "jev-1.13"
 JUDGE_PATH = "/systemone"
 
@@ -76,7 +75,7 @@ def judge_model() -> str:
 
 def available() -> bool:
     """有沒有可用的憑證。沒有的話呼叫端要當作「沒跑」，不是「判斷為否」。"""
-    settings = runtime_env()
+    settings = llm_service_env("judge")
     return bool(settings.get("LLM_API_URL") and settings.get("LLM_API_KEY"))
 
 
@@ -97,7 +96,7 @@ def judge(state: str, questions: dict[str, dict],
     """
     if not state or not questions or not available():
         return None
-    settings = runtime_env()
+    settings = llm_service_env("judge")
     url = settings["LLM_API_URL"].rstrip("/") + JUDGE_PATH
     body = _body(state, questions)
     if len(body) > MAX_BODY_BYTES:
