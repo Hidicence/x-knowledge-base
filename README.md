@@ -8,7 +8,7 @@
 
 # XKB · Knowledge your agents can return to
 
-**Bring useful knowledge into an ongoing conversation—even when the user has not asked a question or requested a search.**
+**Bring useful knowledge into an ongoing conversation, even when the user has not asked a question or requested a search.**
 
 XKB keeps source-linked Markdown cards, wiki topics and captured conversation traces under your control. MCP, HTTP and the default CLI clients use one recall core, so connected agents can search the same library with the same access rules and relevance checks.
 
