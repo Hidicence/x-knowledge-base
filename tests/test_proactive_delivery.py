@@ -110,6 +110,17 @@ class ProactiveDelivery(unittest.TestCase):
             card = {**record('x', .9, 'Body.'), 'title': title}
             self.assertEqual(self.select([card], {'status': 'judged'}, [])['records'][0]['title'], title)
 
+    def test_card_form_fields_are_not_suggested(self):
+        chunk = lambda key, body: {**record(key, .82, body), 'record_type': 'knowledge_chunk', 'title': '2101602734004953114'}
+        fields_only = [chunk('claim', '## 2. Claim 等級\n- **等級**：Attested\n  - Attested：原文直接引用'),
+                       chunk('rel', '## 6. 與現有知識的關係\n- **2043234633408798932**：無法判定關聯。'),
+                       chunk('rel-tail', '- **2023473551412801929**：看似相關。\n- **2030931033693241543**：無法判定')]
+        knowledge = chunk('k', '## 3. 關鍵論點\n- **單一主要動作**：一個鏡頭只放一個動作，比較穩定。')
+        result = self.select(fields_only + [knowledge], {'status': 'judged'}, [])
+        self.assertEqual([r['id'] for r in result['records']], ['k'])
+        self.assertEqual(result['records'][0]['title'], '單一主要動作：一個鏡頭只放一個動作，比較穩定')
+        self.assertEqual({w['reason'] for w in result['withheld']}, {'card_metadata_section'})
+
     def test_long_bodies_keep_whole_paragraphs_and_are_labelled(self):
         body = 'First complete paragraph.\n\n' + 'later detail. ' * 200
         shown = delivery.excerpt(body)

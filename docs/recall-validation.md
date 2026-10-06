@@ -43,7 +43,11 @@ then applies local rules and calls no generation model:
   500-row window or result limit; decisions from before the last compaction
   remain recallable;
 - no exact duplicate text and nothing already quoted in a recent assistant reply;
-- display-only truncated snippets are never injected;
+- display-only truncated snippets are never injected, and neither are card
+  form fields: of a card's ten sections, "2. Claim 等級", "6. 與現有知識的關係"
+  (a list of other card IDs) and "9. 原始來源" are metadata. Cards are retrieved
+  section by section, and Jev scored such sections 0.57 and 0.82 on 2026-10-07.
+  Explicit recall still returns them;
 - a title with no letters (bookmark cards titled by tweet ID), or a short prefix
   plus a hash such as `Xkb Case 6769...`, is replaced by the first sentence of
   the body; long bodies keep whole paragraphs and are labelled

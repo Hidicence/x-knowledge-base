@@ -98,14 +98,43 @@ _SENTENCE_END = re.compile(r"[。！？!?]|\.(?:\s|$)|\n")
 _ID_TITLE = re.compile(r"[A-Za-z ]{0,16}(?=[0-9A-Fa-f_-]*\d)[0-9A-Fa-f_-]{8,}")
 
 
+_HEADING = re.compile(r"^\s*#{1,6}\s")
+_LINE_MARKERS = re.compile(r"^[\s>\-\*\d.)、]+")
+
+
 def display_title(record: dict) -> str:
     title, body, _ = fields(record)
     if any(c.isalpha() for c in title) and not _ID_TITLE.fullmatch(title.strip()):
         return title[:120]
-    text = re.sub(r"^[#>\-\*\s]+", "", body.strip())
-    match = _SENTENCE_END.search(text)
-    first = text[:match.start()] if match else text
-    return (first.strip()[:60] or title)[:120]
+    # Card chunks open with a numbered section heading ("## 2. ..."), so the
+    # first "sentence" used to be just "2". Use the first real content line.
+    for line in body.splitlines():
+        if not line.strip() or _HEADING.match(line):
+            continue
+        text = _LINE_MARKERS.sub("", line).replace("**", "").strip()
+        match = _SENTENCE_END.search(text)
+        first = (text[:match.start()] if match else text).strip()
+        if len(first) >= 4:
+            return first[:60]
+    return title[:120]
+
+
+# 卡片固定的十個段落裡，有三段是欄位不是知識：2. Claim 等級（可信度標記）、
+# 6. 與現有知識的關係（一串其他卡片 ID，多半寫「無法判定關聯」）、9. 原始來源
+# （網址）。卡片是逐段被檢索的，2026-10-07 jev 給這兩種段落 0.57 與 0.82，於是
+# 「關係清單」被當成建議送出。明確查詢仍拿得到它們；主動建議不送。
+_CARD_META_HEADING = re.compile(r"^\s*#{1,6}\s*(?:2\.\s*Claim|6\.\s*與現有知識的關係|9\.\s*原始來源)")
+_CARD_META_LINE = re.compile(
+    r"^\s*-\s*(?:\*\*\d{12,}\*\*|\*\*等級\*\*|(?:Attested|Scholarship|Inference|Speculation)\s*[:：])")
+
+
+def card_metadata(record: dict, body: str) -> bool:
+    if record.get("record_type") not in {"knowledge_card", "knowledge_chunk"}:
+        return False
+    if _CARD_META_HEADING.match(body):
+        return True
+    lines = [line for line in body.splitlines() if line.strip() and not _HEADING.match(line)]
+    return bool(lines) and sum(bool(_CARD_META_LINE.match(line)) for line in lines) * 2 >= len(lines)
 
 
 def excerpt(body: str, limit: int = EXCERPT_CHARS) -> str:
@@ -176,6 +205,8 @@ def select(records: list[dict], judge: dict, conversation: list[dict], *, query:
             reason = "weak_relevance"
         elif record.get("excerpt_truncated"):
             reason = "incomplete_source_excerpt"
+        elif card_metadata(record, body):
+            reason = "card_metadata_section"
         elif key in given and (fingerprint is None or None in given[key] or fingerprint in given[key]):
             reason = "delivered_earlier_in_session"
         elif in_reply:
