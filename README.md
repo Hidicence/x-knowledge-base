@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="XKB: sourced cards, wiki knowledge and captured conversations, retrieved through one shared core for your AI agents.">
+  <img src="./assets/readme/hero.svg" width="100%" alt="XKB: someone states a plan without asking; XKB searches cards, wiki and past conversations, and up to three source-linked items reach the answering agent.">
 </p>
 
 # XKB · Knowledge your agents can return to

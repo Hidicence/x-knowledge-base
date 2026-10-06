@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="XKB：證據卡、wiki 知識與已擷取的對話，透過同一個召回核心供 AI agent 取用。">
+  <img src="./assets/readme/hero.svg" width="100%" alt="XKB：有人在對話中說出計畫、沒有發問；XKB 搜尋卡片、wiki 與過去的對話，最多三條附來源的知識送到回答的 agent 面前。">
 </p>
 
 # XKB · 讓 Agent 找回你累積的知識
