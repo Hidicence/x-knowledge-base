@@ -1,15 +1,17 @@
 {
-  "description": "Local-first knowledge for AI agents: turn sources into evidence cards and wiki knowledge, then retrieve cards, notes and captured conversations through one shared MCP/HTTP recall service.",
+  "description": "Self-hosted knowledge for AI agents that brings relevant notes, cards and past conversations into an ongoing chat, even when nobody asked. One shared MCP/HTTP recall service; sources stay as linked Markdown you control.",
   "topics": [
+    "agent-memory",
     "ai-agents",
+    "claude-code",
     "knowledge-base",
-    "personal-knowledge-management",
-    "model-context-protocol",
-    "semantic-search",
-    "rag",
-    "python",
-    "self-hosted",
     "markdown",
+    "model-context-protocol",
+    "personal-knowledge-management",
+    "python",
+    "rag",
+    "self-hosted",
+    "semantic-search",
     "wiki"
   ]
 }
