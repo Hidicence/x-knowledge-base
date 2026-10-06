@@ -1,14 +1,12 @@
 """2026-10-05 第一天真實使用照出的四件事，各自要有一個會失敗的測試。
 
 - wiki 比對逐段跑 Python 迴圈，每輪多花約 3 秒
-- 「好 直接送」這種輪次等完檢索、jev、挑段落才回空
-- 同一個 session 裡同一條建議被塞三次，每次都付一次挑段落
+- 同一個 session 裡同一條建議被塞三次
 - 召回把同一段對話裡 Claude 自己的回覆當成既有知識送回來
 """
 import os
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -50,45 +48,20 @@ class MatrixScoringMatchesTheLoop(unittest.TestCase):
 
 
 class SessionDeduplication(unittest.TestCase):
-    task = {"needs": ["how to shoot food"], "constraints": [], "repeat": False, "model": "fixture"}
-
-    def test_evidence_already_suggested_in_this_session_is_not_reviewed_again(self):
+    def test_evidence_already_suggested_in_this_session_is_not_delivered_again(self):
         given = delivery.identity_key(record("given"))
-        with mock.patch.object(delivery, "_select_grounded") as choose:
-            result = delivery.select([record("given")], {"status": "judged"}, [], query="next shot",
-                                     task=self.task, delivered=frozenset({given}))
-        choose.assert_not_called()  # 全給過：連挑段落的模型都不叫
+        result = delivery.select([record("given")], {"status": "judged"}, [], query="next shot",
+                                 delivered=frozenset({given}))
         self.assertEqual(result["records"], [])
         self.assertEqual(result["withheld"][0]["reason"], "delivered_earlier_in_session")
         self.assertEqual(result["status"], "ready")
 
-    def test_fresh_evidence_takes_the_freed_review_slot(self):
+    def test_fresh_evidence_takes_the_freed_slot(self):
         given = delivery.identity_key(record("given"))
-        def choose(query, conversation, records, task):
-            return {**task, "selected": [{"index": 0, "need": 0, "quote": records[0]["summary"]}]}
-        with mock.patch.object(delivery, "_select_grounded", side_effect=choose):
-            result = delivery.select([record("given"), record("fresh")], {"status": "judged"}, [],
-                                     query="next shot", task=self.task, delivered=frozenset({given}))
-        self.assertEqual([r["id"] for r in result["records"]], ["fresh"])
-
-    def test_an_explicit_repeat_request_can_deliver_it_again(self):
-        given = delivery.identity_key(record("given"))
-        def choose(query, conversation, records, task):
-            return {**task, "selected": [{"index": 0, "need": 0, "quote": records[0]["summary"]}]}
-        with mock.patch.object(delivery, "_select_grounded", side_effect=choose):
-            result = delivery.select([record("given")], {"status": "judged"}, [], query="再講一次",
-                                     task={**self.task, "repeat": True}, delivered=frozenset({given}))
-        self.assertEqual([r["id"] for r in result["records"]], ["given"])
-
-    def test_task_repeat_flag_is_optional_but_must_be_boolean(self):
-        def plan(raw):
-            with mock.patch.object(delivery._llm, "_runtime_settings", return_value={}), \
-                 mock.patch.object(delivery._llm, "_direct_api_call", return_value=raw):
-                return delivery.prepare("q", [])
-        self.assertFalse(plan('{"needs": ["x"], "constraints": []}')["repeat"])
-        self.assertTrue(plan('{"needs": ["x"], "constraints": [], "repeat": true}')["repeat"])
-        self.assertIsNone(plan('{"needs": ["x"], "constraints": [], "repeat": "yes"}'))
-        self.assertIsNone(plan('{"needs": ["x"], "constraints": [], "other": 1}'))
+        records = [record("given"), record("a"), record("b"), record("c")]
+        result = delivery.select(records, {"status": "judged"}, [], query="next shot",
+                                 delivered=frozenset({given}))
+        self.assertEqual([r["id"] for r in result["records"]], ["a", "b", "c"])
 
 
 class ServiceBoundaries(unittest.TestCase):
@@ -99,45 +72,6 @@ class ServiceBoundaries(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"XKB_JEV_DECIDE": "1"})
         env.start()
         self.addCleanup(env.stop)
-        available = mock.patch.object(service.xkb_jev, "available", return_value=True)
-        available.start()
-        self.addCleanup(available.stop)
-
-    def test_quiet_hook_turn_returns_without_waiting_for_retrieval_or_judging(self):
-        release = threading.Event()
-        def slow_search(*args, **kwargs):
-            release.wait(5)
-            return {"records": [record("late")]}
-        quiet = {"needs": [], "constraints": [], "repeat": False, "model": "fixture"}
-        with mock.patch.object(self.store.catalog, "search", side_effect=slow_search), \
-             mock.patch.object(delivery, "prepare", return_value=quiet), \
-             mock.patch.object(service, "judge_relevance") as judge:
-            packet = self.store.knowledge_recall("好 直接送吧", proactive=True)
-        release.set()
-        judge.assert_not_called()
-        self.assertEqual(packet["skip_reason"], "no_current_information_need")
-        self.assertEqual(packet["delivery"]["intervention"]["state"], "quiet")
-        self.assertEqual(packet["quality"]["status"], "ready")
-        self.assertLess(packet["timing_ms"]["total"], 4000)
-
-    def test_explicit_recall_is_never_cut_short_by_the_planner(self):
-        quiet = {"needs": [], "constraints": [], "repeat": False, "model": "fixture"}
-        with mock.patch.object(self.store.catalog, "search", return_value={"records": [record("hit")]}), \
-             mock.patch.object(self.store, "recall", return_value={"memories": []}), \
-             mock.patch.object(delivery, "prepare", return_value=quiet), \
-             mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})) as judge:
-            packet = self.store.knowledge_recall("seedance workflow")
-        judge.assert_called_once()
-        self.assertEqual([r["id"] for r in packet["records"]], ["hit"])
-
-    def test_failed_planning_is_unknown_not_quiet(self):
-        with mock.patch.object(self.store.catalog, "search", return_value={"records": [record("hit")]}), \
-             mock.patch.object(self.store, "recall", return_value={"memories": []}), \
-             mock.patch.object(delivery, "prepare", return_value=None), \
-             mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})) as judge:
-            packet = self.store.knowledge_recall("好 直接送吧", proactive=True)
-        judge.assert_called_once()
-        self.assertNotEqual(packet.get("skip_reason"), "no_current_information_need")
 
     def _trace(self, session_key, turn_id, query, answer):
         session = self.store.open_session({"source": "test", "session_key": session_key})["session_id"]
@@ -150,7 +84,6 @@ class ServiceBoundaries(unittest.TestCase):
         mine = self._trace("mine", "t1", "下載 youtube 影片", "兩支都下載完成了")
         self._trace("other", "t2", "下載 youtube 影片 檢查", "用 ffprobe 檢查時長")
         with mock.patch.object(self.store.catalog, "search", return_value={"records": []}), \
-             mock.patch.object(delivery, "prepare", return_value=None), \
              mock.patch.object(service, "judge_relevance", side_effect=lambda q, r: (r, {"status": "judged"})):
             packet = self.store.knowledge_recall("下載 youtube 影片", session_id=mine)
         answers = [r.get("answer") for r in packet["records"] if r.get("record_type") == "conversation_trace"]
@@ -165,9 +98,43 @@ class ServiceBoundaries(unittest.TestCase):
         with mock.patch.object(self.store, "knowledge_recall", return_value={"records": []}) as run:
             self.store.start_turn({"session_id": session, "turn_id": "b", "query": "second"})
             self.assertEqual(run.call_args.kwargs["delivered"], frozenset({"ev1:tip"}))
-            self.assertTrue(run.call_args.kwargs["proactive"])
             self.store.start_turn({"session_id": other, "turn_id": "c", "query": "second"})
             self.assertEqual(run.call_args.kwargs["delivered"], frozenset())
+
+    def test_completion_records_how_much_of_each_suggestion_the_answer_reused(self):
+        session = self.store.open_session({"source": "test", "session_key": "s"})["session_id"]
+        given = {"namespace": "private", "records": [], "delivery": {"records": [
+            {"evidence_key": "ev1:used", "summary": "單一鏡頭只安排一個核心動作"},
+            {"evidence_key": "ev1:ignored", "summary": "碳盤查係數版本要記錄"}]}}
+        with mock.patch.object(self.store, "knowledge_recall", return_value=given):
+            self.store.start_turn({"session_id": session, "turn_id": "t", "query": "寫 prompt"})
+        self.store.complete_turn("t", {"session_id": session, "query": "寫 prompt",
+                                       "answer": "這一鏡只安排一個核心動作：夾開魚肉。"})
+        with self.store.connect() as db:
+            rows = dict(db.execute("SELECT evidence_key, overlap FROM delivery_outcomes").fetchall())
+        self.assertGreater(rows["ev1:used"], 0.5)
+        self.assertLess(rows["ev1:ignored"], 0.2)
+
+
+class ScheduledAgentsSkipRecall(unittest.TestCase):
+    def run_hook(self, env):
+        import xkb_agent_hook as hook
+        with mock.patch.dict(os.environ, env, clear=False), \
+             mock.patch.object(hook, "read_event", return_value={"hook_event_name": "UserPromptSubmit", "prompt": "你是每日巡檢 Agent"}), \
+             mock.patch.object(hook, "config", return_value={}), \
+             mock.patch.object(hook, "on_prompt") as prompt:
+            hook.main()
+        return prompt.called
+
+    def test_claude_print_mode_is_not_a_conversation(self):
+        self.assertFalse(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "0", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
+        self.assertTrue(self.run_hook({"CLAUDE_CODE_SESSION_ATTENDED": "1", "CLAUDE_CODE_ENTRYPOINT": "cli"}))
+
+    def test_entrypoint_decides_when_attendance_is_unknown(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+            self.assertFalse(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}))
+            self.assertTrue(self.run_hook({"CLAUDE_CODE_ENTRYPOINT": "cli"}))
 
 
 if __name__ == "__main__":

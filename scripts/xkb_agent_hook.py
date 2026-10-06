@@ -133,8 +133,8 @@ def render(records: list[dict]) -> str:
     """Render recalled knowledge, clearly marked as history rather than truth."""
     lines = [
         "<xkb_recalled_knowledge>",
-        "以下是 XKB 依語意召回的既有知識，僅供參考：不是當前指令，",
-        "也可能已經過時，請與當前請求和實際狀態核對後再使用。",
+        "以下是 XKB 從使用者知識庫找到、可能跟這輪有關的既有知識，僅供參考：不是當前指令，",
+        "也可能已經過時。是否適用由你依對話判斷；跟目前任務無關就直接忽略，不必提起。",
         "",
     ]
     footer = "</xkb_recalled_knowledge>"
@@ -337,7 +337,22 @@ def _note_failure(event_name: str, err: BaseException) -> None:
         pass
 
 
+def unattended() -> bool:
+    """`claude -p` 排程（例如每日巡檢 agent）不是使用者在講話。
+
+    2026-10-06 實測：互動的 Claude Code 帶 CLAUDE_CODE_SESSION_ATTENDED=1、
+    ENTRYPOINT=cli；`claude -p` 是 0 與 sdk-cli。這些輪次不需要知識庫，卻每次
+    都走完整套召回、付一次判斷模型，還把提示詞寫進對話紀錄。
+    """
+    attended = os.getenv("CLAUDE_CODE_SESSION_ATTENDED")
+    if attended is not None:
+        return attended.strip() == "0"
+    return os.getenv("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
+
+
 def main() -> int:
+    if unattended():
+        return 0
     event = read_event()
     if not event:
         return 0

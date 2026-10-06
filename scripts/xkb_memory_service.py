@@ -1160,6 +1160,17 @@ class Store:
                   last_considered_at TEXT NOT NULL,
                   PRIMARY KEY(namespace, record_id)
                 );
+                -- Did the answer reuse what the hook suggested? overlap is the
+                -- share of the excerpt's terms that reappear in the answer: a
+                -- lexical proxy, not proof of use or of usefulness.
+                CREATE TABLE IF NOT EXISTS delivery_outcomes (
+                  turn_id TEXT NOT NULL,
+                  namespace TEXT NOT NULL,
+                  evidence_key TEXT NOT NULL,
+                  overlap REAL NOT NULL,
+                  recorded_at TEXT NOT NULL,
+                  PRIMARY KEY(turn_id, evidence_key)
+                );
                 -- Optional shadow mode: kept is the cosine decision, not Jev's.
                 CREATE TABLE IF NOT EXISTS relevance_shadow (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1444,7 +1455,7 @@ class Store:
                 except (ValueError, AttributeError):
                     continue
             retrieval = self.knowledge_recall(query, retrieval_limit, session_namespace, conversation=recent,
-                                              session_id=session_id, delivered=frozenset(delivered), proactive=True)
+                                              session_id=session_id, delivered=frozenset(delivered))
             db.execute(
                 "INSERT INTO turns(turn_id,session_id,query,status,retrieval_json,started_at) VALUES(?,?,?,?,?,?)",
                 (turn_id, session_id, query, "started", json.dumps(retrieval, ensure_ascii=False), now()),
@@ -1487,6 +1498,17 @@ class Store:
                 (text(body.get("episode_id") or body.get("episodeId")) or f"episode:{turn_id}", query, answer, status, trace_id, json.dumps(payload, ensure_ascii=False), now(), turn_id),
             )
             retrieval = json.loads(existing["retrieval_json"] or "{}")
+            # 系統原本只知道「送出去了」，不知道回答有沒有用上。這裡記一個粗略
+            # 的訊號，累積後才看得出哪類建議常被用、哪類從來沒用過。
+            answer_terms = set(query_terms(answer))
+            for item in ((retrieval.get("delivery") or {}).get("records") or []):
+                if not isinstance(item, dict) or not item.get("evidence_key"):
+                    continue
+                terms = set(query_terms(str(item.get("summary") or "")))
+                if terms:
+                    db.execute("INSERT OR IGNORE INTO delivery_outcomes VALUES(?,?,?,?,?)",
+                               (turn_id, retrieval.get("namespace") or "private", item["evidence_key"],
+                                round(len(terms & answer_terms) / len(terms), 4), now()))
             # A turn used to also become a "candidate" here — the answer
             # truncated to 2,000 characters, confidence hard-coded to zero —
             # plus a job to analyse it. Promotion required the same claim in
@@ -1621,16 +1643,11 @@ class Store:
         return _noise_kind(query)
 
     def knowledge_recall(self, query: str, limit: int = 10, namespace: str = "private", *, options=None, conversation=None,
-                         session_id: str | None = None, delivered: frozenset = frozenset(),
-                         proactive: bool = False) -> dict[str, Any]:
+                         session_id: str | None = None, delivered: frozenset = frozenset()) -> dict[str, Any]:
         """Shared recall core.
 
-        ``proactive`` is only set by the prompt hook's turn start: nobody asked
-        a question there, so a turn the task planner calls quiet can stop before
-        relevance judging and paragraph selection. An explicit MCP/HTTP/CLI
-        recall is itself a request and never stops early. ``session_id``
-        excludes this session's own traces; ``delivered`` lists evidence already
-        suggested earlier in it.
+        ``session_id`` excludes this session's own traces; ``delivered`` lists
+        evidence already suggested earlier in it.
         """
         started = time.monotonic()
         if not isinstance(query, str) or not query.strip():
@@ -1651,61 +1668,33 @@ class Store:
         reset = getattr(self.catalog, "_reset_request_stats", None)
         if callable(reset):
             reset()
-        def skipped_packet(reason: str, task=None) -> dict[str, Any]:
+        skipped = self._skip_reason(query)
+        if skipped:
             packet = {
                 "schema": SCHEMA, "query": query, "namespace": namespace, **context_receipt,
                 "request_namespace": namespace, "acl_policy": self.catalog._acl_policy(namespace),
                 "records": [], "count": 0, "unfiltered_count": 0,
                 "filtered_counts": filter_stats(), "context": "",
-                "retrieval_mode": "skipped", "skip_reason": reason, "options": opts,
+                "retrieval_mode": "skipped", "skip_reason": skipped, "options": opts,
                 "backends": {k: {"status": "not_attempted", "attempted": False, "used": False} for k in ("cards", "wiki", "conversation")},
                 "semantic_retrieval_attempted": False,
                 "semantic_backend": {"status": "not_attempted"},
                 "dropped_as_irrelevant": 0, "warnings": [],
             }
-            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent, query=query,
-                                                     **({"task": task} if task is not None else {}))
+            packet["delivery"] = xkb_delivery.select([], {"status": "no_records"}, recent, query=query)
             packet["quality"] = recall_quality(packet)
             packet["timing_ms"] = {"total": round((time.monotonic() - started) * 1000)}
             return packet
-        skipped = self._skip_reason(query)
-        if skipped:
-            return skipped_packet(skipped)
         # Keep current-utterance candidates even when old dialogue is longer or
         # contains stronger keywords. Context resolves references and the final
         # sentence gives a new topic its own pre-judge candidate budget.
         search_options = {"options": opts} if options is not None else {}
-        # Prepare the task independently while bounded source reads run. The
-        # planner never sees retrieved text; selection cannot change this task.
         from concurrent.futures import ThreadPoolExecutor
-        try:
-            can_prepare = os.getenv('XKB_JEV_DECIDE', '1') != '0' and xkb_jev.available()
-        except Exception as err:
-            # A broken provider config must not erase locally available evidence.
-            can_prepare = False
-            xkb_failures.note('delivery preparation configuration', ValueError(type(err).__name__))
-        pool = ThreadPoolExecutor(max_workers=len(queries) + int(can_prepare))
-        try:
-            pending_task = pool.submit(xkb_delivery.prepare, query, recent) if can_prepare else None
-            searches = [pool.submit(self.catalog.search, text, limit, namespace, **search_options) for text in queries]
-            task = pending_task.result() if pending_task else None
-            # 2026-10-05 實測：「好 直接送」這種輪次要等 11 秒，最後什麼都不給。
-            # 任務規劃看不到證據，它說沒有資訊需求，挑段落那步本來就會全部
-            # 否決（見 xkb_delivery.select）；所以不必等檢索、jev 與挑段落。
-            # 規劃失敗（None）是「不知道」，不是安靜，照常走完。
-            if proactive and isinstance(task, dict) and not task["needs"]:
-                for search in searches:
-                    search.cancel()
-                return skipped_packet("no_current_information_need", task)
-            branches = [search.result() for search in searches]
-            retrieved = time.monotonic()
-            delivery_options = {'task': task} if pending_task else {}
-        finally:
-            # 提早收工時不等還在跑的檢索；它們只讀索引，跑完就丟。
-            pool.shutdown(wait=False)
+        with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+            branches = list(pool.map(lambda text: self.catalog.search(text, limit, namespace, **search_options), queries))
+        retrieved = time.monotonic()
         knowledge = {**branches[0], "records": [r for branch in branches for r in branch["records"]]}
         context_knowledge = branches[1] if len(branches) > 1 else None
-        prepared = time.monotonic()
         conversation_state = {"backend": "conversation_keyword", "attempted": opts["conversations"],
                               "used": False, "status": "disabled"}
         conversation = {"memories": []}
@@ -1829,11 +1818,10 @@ class Store:
         }
         delivery_started = time.monotonic()
         packet["delivery"] = xkb_delivery.select(packet["records"], judge_note, recent, query=query,
-                                                 delivered=delivered, **delivery_options)
+                                                 delivered=delivered)
         finished = time.monotonic()
         packet["timing_ms"] = {"retrieval": round((retrieved-started)*1000),
-                               "task_wait": round((prepared-retrieved)*1000),
-                               "conversation_merge": round((merged-prepared)*1000),
+                               "conversation_merge": round((merged-retrieved)*1000),
                                "relevance": round((judged-merged)*1000),
                                "fusion_and_usage": round((delivery_started-judged)*1000),
                                "delivery": round((finished-delivery_started)*1000),

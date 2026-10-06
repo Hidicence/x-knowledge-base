@@ -194,7 +194,7 @@ cd demo/xkb-demo-ui && npm run dev       # → http://localhost:3000
 
 **可跳過 recall：** 純問候（早安、哈哈）、單字確認（好、收到、OK）、笑話。
 
-`xkb_recall` 共用服務會進行檢索、Jev 判斷與原文段落選擇，可能產生模型費用與數秒以上延遲。用 `delivery` 判斷本輪可提供的知識，並檢查 degraded 診斷；命中文件不代表選出的內容足以推進對話。詳見 [驗證與限制](docs/recall-validation.md)。
+`xkb_recall` 共用服務會進行檢索與 Jev 相關性判斷（每次一個便宜的判斷呼叫，不呼叫生成模型）。`delivery` 是最多三條、本段對話還沒給過的建議；適不適用由回答者自己判斷，並檢查 degraded 診斷。詳見 [驗證與限制](docs/recall-validation.md)。
 
 ---
 
@@ -397,14 +397,14 @@ conversation has already settled. The MCP tool requires an agent to invoke it;
 the Claude prompt hook automates invocation.
 
 The common recall core distinguishes `records` (inspectable candidates) from
-`delivery.records` (at most two proactive suggestions). Consult `delivery.status`
-and withholding reasons; missing judgement is not a negative verdict. Ranking
-and delivery selection live in `scripts/xkb_delivery.py`; the hook uses that
-shared decision rather than treating every retrieved candidate as an instruction.
-The experimental intervention decision distinguishes current response need,
-applicability, new information and repeated advice. `xkb_eval.py --live
---intervention` evaluates frozen evidence separately from full MCP retrieval;
-require both layers and visible outage handling before claiming readiness.
+`delivery.records` (at most three proactive suggestions). Delivery uses only
+Jev's per-turn verdict and local rules: verdict floor, no evidence already
+suggested earlier in the session, none of the session's own traces, no exact
+duplicates. It calls no generation model; deciding applicability is left to
+the answering agent, which sees the whole conversation. Consult
+`delivery.status` and withholding reasons; missing judgement is not a negative
+verdict. `scripts/xkb_delivery_report.py` reports how much of each suggestion
+reappeared in the answer, a lexical proxy rather than proof of use.
 
 ## Before you push
 
