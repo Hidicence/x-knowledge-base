@@ -8,7 +8,9 @@ npm run dev -- --port 4173
 npm run build
 ```
 
-Deploy `dist/` to a static host. The current local preview is http://127.0.0.1:4173.
+Deploy: `npm run build && firebase deploy --only hosting` (Firebase project `xkb-living-archive`, configured in `firebase.json` and `.firebaserc`). Live site: https://xkb-living-archive.web.app. The local preview is http://127.0.0.1:4173.
+
+The films in `public/media/` are built elsewhere (`xkb-film/`): `xkb-keynote.mp4` (English, 48 s) and `xkb-demo-zh.mp4` (Traditional Chinese, 49 s), web encodes under 10 MB.
 
 ## Experience
 

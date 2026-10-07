@@ -10,6 +10,11 @@
 
 **Bring useful knowledge into an ongoing conversation, even when the user has not asked a question or requested a search.**
 
+<p align="center">
+  <a href="./site/public/media/xkb-keynote.mp4"><img src="./assets/readme/xkb-keynote-poster.jpg" width="80%" alt="Watch the 48-second XKB film: an agent starts from zero, XKB brings back the buried answer with its source."></a>
+</p>
+<p align="center"><sub>48-second film · English narration · <a href="https://xkb-living-archive.web.app">Website</a> (with a Traditional Chinese version)</sub></p>
+
 XKB keeps source-linked Markdown cards, wiki topics and captured conversation traces under your control. MCP, HTTP and the default CLI clients use one recall core, so connected agents can search the same library with the same access rules and relevance checks.
 
 The goal is timely knowledge reuse: notice a plan, obstacle, constraint or decision,

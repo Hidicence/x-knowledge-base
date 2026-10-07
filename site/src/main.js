@@ -1,9 +1,9 @@
 import './scrollcraft.css';
 import './style.css';
 import './scrollcraft.js';
-import { createIcons, ArrowUpRight, Bookmark, FileText, MessagesSquare, Fingerprint, Link, ScanLine, Quote, CornerDownRight, Plus, History, Network, Split, Copy, Check } from 'lucide';
+import { createIcons, ArrowUpRight, Bookmark, FileText, MessagesSquare, MessageSquare, Layers, ListChecks, Fingerprint, Link, ScanLine, Quote, CornerDownRight, Plus, Copy, Check } from 'lucide';
 
-const icons = { ArrowUpRight, Bookmark, FileText, MessagesSquare, Fingerprint, Link, ScanLine, Quote, CornerDownRight, Plus, History, Network, Split, Copy, Check };
+const icons = { ArrowUpRight, Bookmark, FileText, MessagesSquare, MessageSquare, Layers, ListChecks, Fingerprint, Link, ScanLine, Quote, CornerDownRight, Plus, Copy, Check };
 createIcons({ icons });
 const engine = window.ScrollCraft.mount(document.querySelector('#page'));
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
@@ -101,7 +101,7 @@ const setupModes={
   local:{code:'git clone https://github.com/Hidicence/x-knowledge-base.git\ncd x-knowledge-base\npython3 scripts/xkb_init.py',label:'TERMINAL / 初次設定',note:'接著配置模型，再匯入第一份筆記。',url:'https://github.com/Hidicence/x-knowledge-base#quick-start'},
   service:{code:'python3 scripts/xkb_knowledge_service.py\n\n# Local endpoint\n# http://127.0.0.1:18972',label:'TERMINAL / 已完成初次設定',note:'依照文件設定存取權限，再接入你的 Agent。',url:'https://github.com/Hidicence/x-knowledge-base#share-it-across-agents'}
 };
-const tabs=[...document.querySelectorAll('[role="tab"]')];
+const tabs=[...document.querySelectorAll('.setup-tabs [role="tab"]')];
 function setMode(tab){
   const mode=setupModes[tab.dataset.mode];
   tabs.forEach(el=>{el.setAttribute('aria-selected',String(el===tab));el.tabIndex=el===tab?0:-1;});
@@ -130,4 +130,29 @@ $('#copy-command').addEventListener('click',async()=>{
     $('#copy-status').textContent='瀏覽器未允許剪貼簿存取，已選取指令。';
     const selection=getSelection(),range=document.createRange();range.selectNodeContents($('#setup-command'));selection.removeAllRanges();selection.addRange(range);$('#code-panel').focus();
   }
+});
+
+// the film: two versions of the same explanation, one player
+const FILMS = {
+  en: { src: '/media/xkb-keynote.mp4', poster: '/media/xkb-keynote-poster.jpg', note: '英文旁白，字幕燒入畫面。聊天內容與檔名為示意。' },
+  zh: { src: '/media/xkb-demo-zh.mp4', poster: '/media/xkb-demo-zh-poster.jpg', note: '繁中旁白與字幕。畫面中的對話與來源為示意。' },
+};
+const filmVideo = document.querySelector('#film-video'), filmNote = document.querySelector('#film-note');
+const filmTabs = [...document.querySelectorAll('.film-tabs [role="tab"]')];
+function selectFilm(tab, focus) {
+  const f = FILMS[tab.dataset.film];
+  filmTabs.forEach((t) => { const on = t === tab; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1; });
+  if (focus) tab.focus();
+  if (filmVideo.dataset.film === tab.dataset.film) return;
+  filmVideo.dataset.film = tab.dataset.film;
+  filmVideo.pause(); filmVideo.poster = f.poster; filmVideo.querySelector('source').src = f.src; filmVideo.load();
+  filmVideo.setAttribute('aria-labelledby', tab.id); filmNote.textContent = f.note;
+}
+filmVideo.dataset.film = 'en';
+filmTabs.forEach((tab, i) => {
+  tab.addEventListener('click', () => selectFilm(tab));
+  tab.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault(); selectFilm(filmTabs[(i + (e.key === 'ArrowRight' ? 1 : filmTabs.length - 1)) % filmTabs.length], true);
+  });
 });

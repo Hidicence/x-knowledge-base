@@ -10,6 +10,11 @@
 
 **在正常討論中辨識需求，主動帶回有用的既有知識；不用等使用者提問或要求搜尋。**
 
+<p align="center">
+  <a href="./site/public/media/xkb-keynote.mp4"><img src="./assets/readme/xkb-keynote-poster.jpg" width="80%" alt="觀看 48 秒的 XKB 介紹片：Agent 從零開始，XKB 帶回被埋住的答案與來源。"></a>
+</p>
+<p align="center"><sub>48 秒介紹片（英文旁白）· 繁中演示版在<a href="https://xkb-living-archive.web.app/#film">網站</a>上</sub></p>
+
 XKB 將帶有來源的 Markdown 卡片、wiki 主題與已擷取的對話軌跡保存在你控制的環境。MCP、HTTP 與預設 CLI 共用同一個召回核心，讓接入的 agent 以相同的權限規則與相關性檢查，搜尋同一份知識。
 
 目標是在討論計畫、困難、限制或決策時，適時帶回能推進當前工作的證據。
